@@ -32,13 +32,15 @@ def _silence(n):
 
 async def main() -> int:
     cfg = Config(silence_ms=900, min_speech_ms=250)
-    frames = _speech(15) + _silence(35)  # one utterance, then stream ends -> shutdown
+    # TWO utterances back to back -> proves the events generator resumes across
+    # turns and mute/unmute cycles correctly. Then the stream ends -> shutdown.
+    frames = _speech(15) + _silence(35) + _speech(15) + _silence(35)
 
     mic = FakeMic(frames, sample_rate=SR)
     speaker = FakeSpeaker(SR)
-    stt = FakeSTT(["what is two plus two"])
+    stt = FakeSTT(["what is two plus two", "thanks"])
     tts = FakeTTS()
-    backend = FakeBackend(["Two plus two is four. Anything else?"])
+    backend = FakeBackend(["Two plus two is four. Anything else?", "You're welcome."])
     vad = EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012)
 
     orch = Orchestrator(
@@ -46,15 +48,20 @@ async def main() -> int:
     )
     await asyncio.wait_for(orch.run(), timeout=10)
 
-    transcribed = stt.calls == 1
-    sent_right = backend.sent == ["what is two plus two"]
-    # two sentences -> two TTS chunks spoken
-    spoke = tts.spoken == ["Two plus two is four.", "Anything else?"]
-    muted_then_unmuted = mic.muted_log[:1] == [True] and mic.muted_log[-1:] == [False]
+    two_turns = stt.calls == 2
+    sent_right = backend.sent == ["what is two plus two", "thanks"]
+    spoke = tts.spoken == [
+        "Two plus two is four.",
+        "Anything else?",
+        "You're welcome.",
+    ]
+    # mute on each turn's first speech, unmute at each turn's end: T,F,T,F
+    mute_cycled = mic.muted_log == [True, False, True, False]
     closed = backend.closed and not mic.started
 
-    ok = transcribed and sent_right and spoke and muted_then_unmuted and closed
-    print(f"transcribed={transcribed} sent={backend.sent} spoken={tts.spoken}")
+    ok = two_turns and sent_right and spoke and mute_cycled and closed
+    print(f"turns={stt.calls} sent={backend.sent}")
+    print(f"spoken={tts.spoken}")
     print(f"mute_log={mic.muted_log} closed={closed} -> {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

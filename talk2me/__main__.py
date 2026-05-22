@@ -33,9 +33,14 @@ def _parse_args(argv: list[str]) -> Config:
         "--vocab-file", default=None,
         help="file of bias terms, one per line or comma-separated",
     )
+    p.add_argument(
+        "--debug", action="store_true",
+        help="print VAD speech/turn transitions (for tuning --energy-threshold)",
+    )
     p.add_argument("claude_args", nargs="*", help="extra args passed to `claude`")
     a = p.parse_args(argv)
     return Config(
+        debug=a.debug,
         model=a.model,
         cwd=a.cwd,
         permission_mode=a.permission_mode,

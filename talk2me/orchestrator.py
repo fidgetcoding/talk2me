@@ -55,17 +55,20 @@ class Orchestrator:
         await self.backend.start()
         self.mic.start()
         events = self.backend.events()
-        print("talk2me ready — start talking. Ctrl-C to quit.\n", flush=True)
+        print("talk2me ready — start talking. Ctrl-C to quit.", flush=True)
         try:
+            print("\n🎧 listening…", flush=True)
             async for utterance in segment_utterances(
                 self.mic.frames(), self.vad, self.cfg
             ):
                 text = await self.stt.transcribe(utterance, self.mic.sample_rate)
                 if not text:
+                    print("🎧 listening…", flush=True)
                     continue
                 print(f"\n🗣  you: {text}", flush=True)
                 await self.backend.send(text)
                 await self._consume_turn(events)
+                print("\n🎧 listening…", flush=True)
         finally:
             self.mic.stop()
             await self.backend.close()

@@ -40,6 +40,8 @@ async def segment_utterances(
             if not in_speech:
                 in_speech = True
                 vad.reset()
+                if cfg.debug:
+                    print("  ▶ speech", flush=True)
             buf.append(frame)
             speech_frames += 1
             trailing_silence = 0
@@ -50,7 +52,15 @@ async def segment_utterances(
             buf.append(frame)
             trailing_silence += 1
             if trailing_silence >= silence_frames_needed:
-                if speech_frames >= min_speech_frames:
+                emitted = speech_frames >= min_speech_frames
+                if cfg.debug:
+                    dur_ms = int(speech_frames * frame_ms)
+                    print(
+                        f"  ⏹ turn end: ~{dur_ms}ms speech -> "
+                        f"{'transcribing' if emitted else 'ignored (too short)'}",
+                        flush=True,
+                    )
+                if emitted:
                     yield np.concatenate(buf).astype(np.float32)
                 # Reset for the next turn regardless of whether we emitted.
                 buf = []

@@ -41,3 +41,4 @@ class Config:
 
     # --- misc ---
     extra_claude_args: list[str] = field(default_factory=list)
+    debug: bool = False  # print VAD speech/turn transitions for threshold tuning
