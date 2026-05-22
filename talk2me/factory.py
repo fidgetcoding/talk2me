@@ -35,6 +35,14 @@ def build_vad(cfg: Config) -> VAD:
             threshold=cfg.silero_threshold,
             model_path=cfg.silero_model_path,
         )
+    if cfg.vad == "webrtc":
+        from .vad.webrtc import WebrtcVAD
+
+        return WebrtcVAD(
+            sample_rate=cfg.sample_rate,
+            frame_samples=frame_samples(cfg),
+            aggressiveness=cfg.vad_aggressiveness,
+        )
     raise ValueError(f"unknown vad: {cfg.vad!r}")
 
 

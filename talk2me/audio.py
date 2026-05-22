@@ -22,6 +22,63 @@ except Exception:  # pragma: no cover - import-time hardware/portaudio issues
 _MIC_QUEUE_MAXSIZE = 100
 
 
+def list_devices() -> list[dict]:
+    """All PortAudio devices (raw dicts). Empty if portaudio is unavailable."""
+    if sd is None:
+        return []
+    return list(sd.query_devices())
+
+
+def devices_of_kind(kind: str) -> list[tuple[int, str]]:
+    """(index, name) for every device that can do `kind` ('input' | 'output')."""
+    if sd is None:
+        return []
+    key = "max_input_channels" if kind == "input" else "max_output_channels"
+    return [
+        (i, d["name"]) for i, d in enumerate(sd.query_devices()) if d.get(key, 0) > 0
+    ]
+
+
+def resolve_device(spec: str | int | None, kind: str) -> int | None:
+    """Map a device spec to a PortAudio index.
+
+    None -> None (system default). An int (or all-digit string) -> that index.
+    Any other string -> the first `kind` device whose name contains it
+    (case-insensitive). Raises ValueError if a name spec matches nothing — better
+    a clean startup error than silently capturing the wrong device.
+    """
+    if spec is None:
+        return None
+    if isinstance(spec, int):
+        return spec
+    s = spec.strip()
+    if s.lstrip("-").isdigit():
+        return int(s)
+    needle = s.lower()
+    for i, name in devices_of_kind(kind):
+        if needle in name.lower():
+            return i
+    raise ValueError(f"no {kind} device matching {spec!r}")
+
+
+def format_device_table() -> str:
+    """Human-readable input/output listing for `--list-devices`."""
+    if sd is None:
+        return "sounddevice/portaudio unavailable — no devices to list."
+    try:
+        default_in, default_out = sd.default.device
+    except Exception:  # pragma: no cover - portaudio without a default device
+        default_in = default_out = None
+    lines = ["INPUT devices (mic):"]
+    for i, name in devices_of_kind("input"):
+        lines.append(f"{'  *' if i == default_in else '   '} [{i}] {name}")
+    lines.append("OUTPUT devices (playback):")
+    for i, name in devices_of_kind("output"):
+        lines.append(f"{'  *' if i == default_out else '   '} [{i}] {name}")
+    lines.append("(* = system default. Pass an index or a name substring.)")
+    return "\n".join(lines)
+
+
 class Mic:
     """Streams float32 mono frames of `frame_samples` length onto an asyncio queue.
 
@@ -30,11 +87,14 @@ class Mic:
     sees recent audio rather than chewing through a stale backlog.
     """
 
-    def __init__(self, sample_rate: int, frame_samples: int) -> None:
+    def __init__(
+        self, sample_rate: int, frame_samples: int, device: int | None = None
+    ) -> None:
         if sd is None:
             raise RuntimeError("sounddevice/portaudio unavailable")
         self.sample_rate = sample_rate
         self.frame_samples = frame_samples
+        self.device = device  # PortAudio index, or None for the system default
         self._queue: asyncio.Queue[np.ndarray] = asyncio.Queue(
             maxsize=_MIC_QUEUE_MAXSIZE
         )
@@ -77,25 +137,44 @@ class Mic:
             except asyncio.QueueFull:  # pragma: no cover - racing consumer refilled
                 self.dropped_frames += 1
 
-    def start(self) -> None:
-        # Bind the loop here (always called from the running loop in run()), not in
-        # __init__ — get_event_loop() is deprecated and a Mic built off-loop would
-        # otherwise capture a loop that never ticks.
-        self._loop = asyncio.get_running_loop()
+    def _open_stream(self) -> None:
+        """Open + start an InputStream on the current device. Shared by start()
+        and switch_device() so the two can't drift on stream config."""
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,
             channels=1,
             dtype="float32",
             blocksize=self.frame_samples,
+            device=self.device,
             callback=self._callback,
         )
         self._stream.start()
+
+    def start(self) -> None:
+        # Bind the loop here (always called from the running loop in run()), not in
+        # __init__ — get_event_loop() is deprecated and a Mic built off-loop would
+        # otherwise capture a loop that never ticks.
+        self._loop = asyncio.get_running_loop()
+        self._open_stream()
 
     def stop(self) -> None:
         if self._stream:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+
+    def switch_device(self, device: int | None) -> None:
+        """Repoint the mic at `device`, reopening the stream if it's running.
+
+        Mute state and the bound event loop are preserved, so cycling capture
+        devices live (e.g. by hotkey) drops at most a frame or two rather than
+        restarting the loop. A no-op-safe close precedes the reopen.
+        """
+        self.device = device
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream.close()
+            self._open_stream()
 
     def set_muted(self, muted: bool) -> None:
         self._muted = muted
@@ -115,10 +194,11 @@ class Speaker:
     error mid-write), so the device handle never leaks across a session.
     """
 
-    def __init__(self, sample_rate: int) -> None:
+    def __init__(self, sample_rate: int, device: int | None = None) -> None:
         if sd is None:
             raise RuntimeError("sounddevice/portaudio unavailable")
         self.sample_rate = sample_rate
+        self.device = device  # PortAudio index, or None for the system default
         self._cancel = asyncio.Event()
         self._stream: sd.OutputStream | None = None
 
@@ -126,7 +206,10 @@ class Speaker:
         """Lazily open the shared OutputStream, reusing it across play() calls."""
         if self._stream is None:
             stream = sd.OutputStream(
-                samplerate=self.sample_rate, channels=1, dtype="float32"
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="float32",
+                device=self.device,
             )
             try:
                 stream.start()
@@ -144,6 +227,13 @@ class Speaker:
         if stream is not None:
             stream.stop()
             stream.close()
+
+    def switch_device(self, device: int | None) -> None:
+        """Repoint playback at `device`. Closes the current stream; the next
+        play() lazily reopens on the new device — so a live output switch takes
+        effect on the next spoken sentence, with no click between turns."""
+        self.device = device
+        self.close()
 
     def stop(self) -> None:
         self._cancel.set()

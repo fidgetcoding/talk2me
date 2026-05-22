@@ -19,12 +19,20 @@ class Config:
     # --- audio ---
     sample_rate: int = 16000  # mic / STT rate
     frame_ms: int = 30  # VAD frame size
+    # Capture / playback device selection. Each is an index or a case-insensitive
+    # name substring (e.g. "MacBook", "AirPods"); None = system default. Keeping
+    # input and output independent is what lets the "BT headphones out + laptop
+    # mic in" topology dodge the Bluetooth HFP trap (opening a BT mic forces the
+    # whole headset into mono telephone-quality Hands-Free Profile).
+    input_device: str | None = None
+    output_device: str | None = None
 
     # --- VAD / turn detection ---
-    vad: str = "energy"  # "energy" | "silero"
+    vad: str = "energy"  # "energy" | "silero" | "webrtc"
     energy_threshold: float = 0.012  # RMS; tune per mic
     silero_threshold: float = 0.5  # speech-probability cutoff (0..1), silero only
     silero_model_path: str | None = None  # ONNX path; None → env/sibling default
+    vad_aggressiveness: int = 2  # webrtc only: 0 (lenient) .. 3 (aggressive filtering)
     silence_ms: int = 900  # trailing silence that ends a turn
     min_speech_ms: int = 250  # ignore blips shorter than this
 

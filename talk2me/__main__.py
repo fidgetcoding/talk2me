@@ -62,8 +62,28 @@ def _parse_args(argv: list[str]) -> Config:
     p.add_argument("--whisper-model", default="base.en")
     p.add_argument("--tts", default="say", choices=["say", "null"])
     p.add_argument("--voice", default=None, help="`say` voice id")
+    p.add_argument(
+        "--vad", default="energy", choices=["energy", "silero", "webrtc"],
+        help="voice-activity detector. webrtc is more robust across mics (BT).",
+    )
+    p.add_argument(
+        "--vad-aggressiveness", type=int, default=2, choices=[0, 1, 2, 3],
+        help="webrtc only: 0 (lenient) .. 3 (aggressive noise filtering)",
+    )
     p.add_argument("--energy-threshold", type=float, default=0.012)
     p.add_argument("--silence-ms", type=int, default=900)
+    p.add_argument(
+        "--list-devices", action="store_true",
+        help="print available input/output audio devices and exit",
+    )
+    p.add_argument(
+        "--input-device", default=None,
+        help="mic device: PortAudio index or name substring (e.g. MacBook)",
+    )
+    p.add_argument(
+        "--output-device", default=None,
+        help="playback device: index or name substring (e.g. AirPods)",
+    )
     p.add_argument(
         "--vocab", action="append", default=[],
         help="bias term for STT (repeatable): --vocab Lorecraft --vocab Morgen",
@@ -78,6 +98,14 @@ def _parse_args(argv: list[str]) -> Config:
     )
     p.add_argument("claude_args", nargs="*", help="extra args passed to `claude`")
     a = p.parse_args(argv)
+
+    # --list-devices is a pure query: print the device table and exit before any
+    # provider/agent is built. Kept here (not in main) so it shares one parser.
+    if a.list_devices:
+        from .audio import format_device_table
+
+        print(format_device_table())
+        raise SystemExit(0)
 
     input_mode = "text" if a.text else "voice"
     permission_mode = a.permission_mode
@@ -104,8 +132,12 @@ def _parse_args(argv: list[str]) -> Config:
         whisper_model=a.whisper_model,
         tts=a.tts,
         voice=a.voice,
+        vad=a.vad,
+        vad_aggressiveness=a.vad_aggressiveness,
         energy_threshold=a.energy_threshold,
         silence_ms=a.silence_ms,
+        input_device=a.input_device,
+        output_device=a.output_device,
         vocab=_collect_vocab(p, a.vocab, a.vocab_file),
         extra_claude_args=a.claude_args,
     )
@@ -192,8 +224,18 @@ def _collect_vocab(
 
 
 async def _run_voice(cfg: Config) -> int:
-    from .audio import Mic, Speaker
+    from .audio import Mic, Speaker, resolve_device
     from .orchestrator import Orchestrator
+
+    # Resolve name/index specs to PortAudio indices up front so a typo'd device
+    # fails with a clean message before the agent process spins up. Independent
+    # input/output indices are what enable the "BT out + laptop mic in" topology.
+    try:
+        input_idx = resolve_device(cfg.input_device, "input")
+        output_idx = resolve_device(cfg.output_device, "output")
+    except ValueError as exc:
+        print(f"[device] {exc}\n\nRun `talk2me --list-devices` to see options.", flush=True)
+        return 2
 
     tts = factory.build_tts(cfg)
     orch = Orchestrator(
@@ -202,8 +244,8 @@ async def _run_voice(cfg: Config) -> int:
         vad=factory.build_vad(cfg),
         stt=factory.build_stt(cfg),
         tts=tts,
-        mic=Mic(cfg.sample_rate, factory.frame_samples(cfg)),
-        speaker=Speaker(tts.sample_rate),
+        mic=Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx),
+        speaker=Speaker(tts.sample_rate, device=output_idx),
     )
     await orch.run()
     return 0

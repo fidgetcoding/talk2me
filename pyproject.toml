@@ -16,6 +16,12 @@ dependencies = [
     "faster-whisper>=1.0",
 ]
 
+[project.optional-dependencies]
+# WebRTC VAD (more robust than the RMS energy default across mics, esp. Bluetooth).
+# webrtcvad-wheels ships prebuilt wheels; the original `webrtcvad` sdist fails to
+# build on modern Python. Install with: pip install talk2me[webrtc]
+webrtc = ["webrtcvad-wheels>=2.0"]
+
 [project.scripts]
 talk2me = "talk2me.__main__:main"
 
