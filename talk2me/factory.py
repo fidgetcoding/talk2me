@@ -26,6 +26,15 @@ def build_vad(cfg: Config) -> VAD:
             frame_samples=frame_samples(cfg),
             threshold=cfg.energy_threshold,
         )
+    if cfg.vad == "silero":
+        from .vad.silero import SileroVAD
+
+        return SileroVAD(
+            sample_rate=cfg.sample_rate,
+            frame_samples=frame_samples(cfg),
+            threshold=cfg.silero_threshold,
+            model_path=cfg.silero_model_path,
+        )
     raise ValueError(f"unknown vad: {cfg.vad!r}")
 
 
@@ -45,6 +54,10 @@ def build_tts(cfg: Config) -> TTS:
         from .tts import SayTTS
 
         return SayTTS(voice=cfg.voice)
+    if cfg.tts == "kitten":
+        from .tts.kitten import KittenTTS
+
+        return KittenTTS(voice=cfg.voice)
     if cfg.tts == "null":
         from .tts.null import NullTTS
 

@@ -23,6 +23,8 @@ class Config:
     # --- VAD / turn detection ---
     vad: str = "energy"  # "energy" | "silero"
     energy_threshold: float = 0.012  # RMS; tune per mic
+    silero_threshold: float = 0.5  # speech-probability cutoff (0..1), silero only
+    silero_model_path: str | None = None  # ONNX path; None → env/sibling default
     silence_ms: int = 900  # trailing silence that ends a turn
     min_speech_ms: int = 250  # ignore blips shorter than this
 
@@ -36,8 +38,11 @@ class Config:
     voice: str | None = None  # engine-specific voice id
 
     # --- duplex / barge-in ---
-    barge_in: bool = True  # full-duplex; requires headphones to avoid echo
-    half_duplex: bool = False  # mute mic while speaking (no echo HW needed)
+    # Defaults match what the orchestrator actually does: half-duplex, mic muted
+    # while the agent speaks (no echo-cancellation hardware needed). Full-duplex
+    # barge-in (barge_in=True / half_duplex=False) is not implemented yet.
+    barge_in: bool = False  # full-duplex; requires headphones to avoid echo
+    half_duplex: bool = True  # mute mic while speaking (no echo HW needed)
 
     # --- misc ---
     extra_claude_args: list[str] = field(default_factory=list)

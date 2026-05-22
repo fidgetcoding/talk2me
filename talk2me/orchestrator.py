@@ -30,6 +30,26 @@ from .segment import segment_utterances
 
 _SENTENCE = re.compile(r"(.+?[.!?]+)(\s+|$)", re.DOTALL)
 
+# Tokens that LOOK like sentence ends but aren't — don't split right after these.
+# Compared lowercased, with the trailing period stripped by the chunker.
+_ABBREVIATIONS = frozenset(
+    {
+        "e.g",
+        "i.e",
+        "dr",
+        "mr",
+        "mrs",
+        "ms",
+        "vs",
+        "etc",
+        "st",
+        "jr",
+        "sr",
+        "prof",
+        "no",
+    }
+)
+
 
 class Orchestrator:
     def __init__(
@@ -50,6 +70,9 @@ class Orchestrator:
         self.tts = tts
         self.mic = mic
         self.speaker = speaker
+        # Set when a turn dies on a BackendError; tells run() to stop cleanly
+        # instead of looping forever against a dead backend process.
+        self._fatal = False
 
     async def run(self) -> None:
         await self.backend.start()
@@ -68,6 +91,9 @@ class Orchestrator:
                 print(f"\n🗣  you: {text}", flush=True)
                 await self.backend.send(text)
                 await self._consume_turn(events)
+                if self._fatal:
+                    print("\nbackend gone — shutting down.", flush=True)
+                    break
                 print("\n🎧 listening…", flush=True)
         finally:
             self.mic.stop()
@@ -87,39 +113,85 @@ class Orchestrator:
                 pending += ev.text
                 pending, ready = _drain_sentences(pending)
                 for sentence in ready:
-                    if not speaking:
-                        self.mic.set_muted(True)
-                        speaking = True
+                    speaking = self._begin_speaking(speaking)
                     await self._speak(sentence)
             elif isinstance(ev, ToolActivity):
                 print(f"\n   [tool] {ev.name}", flush=True)
             elif isinstance(ev, TurnComplete):
                 if pending.strip():
-                    if not speaking:
-                        self.mic.set_muted(True)
-                        speaking = True
+                    speaking = self._begin_speaking(speaking)
                     await self._speak(pending)
                 print(flush=True)
                 break
             elif isinstance(ev, SessionReady):
                 continue
             elif isinstance(ev, BackendError):
+                # Backend process is gone. Don't loop forever against a corpse —
+                # flag it so run() breaks the listen loop into its finally block.
                 print(f"\n[backend error] {ev.message}", flush=True)
+                self._fatal = True
                 break
 
         if speaking:
             self.mic.set_muted(False)
             self.vad.reset()
 
+    def _begin_speaking(self, speaking: bool) -> bool:
+        """Mark the start of agent speech, muting the mic in half-duplex mode.
+
+        Half-duplex (the default) mutes the mic so the agent's own voice can't
+        retrigger the VAD. Returns the updated `speaking` flag.
+        """
+        if speaking:
+            return True
+        if self.cfg.half_duplex:
+            self.mic.set_muted(True)
+        else:
+            # TODO: full-duplex barge-in — keep the mic live during playback and
+            # stop the Speaker when fresh speech is detected. Needs acoustic echo
+            # cancellation; not implemented, so we leave the mic untouched here.
+            pass
+        return True
+
     async def _speak(self, text: str) -> None:
         await self.speaker.play(self.tts.synthesize(text))
 
 
 def _drain_sentences(buf: str) -> tuple[str, list[str]]:
-    """Pull complete sentences out of `buf`; return (remainder, [sentences])."""
+    """Pull complete sentences out of `buf`; return (remainder, [sentences]).
+
+    Skips false sentence ends: abbreviations ("e.g.", "Dr.", "etc.") and
+    decimals ("3.14"). A candidate terminator only splits when the word it
+    follows isn't a known abbreviation and isn't a digit-period-digit run.
+    """
     out: list[str] = []
     last = 0
+    carry = ""  # text held back from a non-splitting terminator
     for m in _SENTENCE.finditer(buf):
-        out.append(m.group(1).strip())
+        sentence = carry + m.group(1)
+        if _is_false_terminator(buf, m):
+            # Hold this fragment and fold it into the next real sentence,
+            # keeping the inter-token whitespace the regex consumed.
+            carry = sentence + m.group(2)
+            continue
+        out.append(sentence.strip())
+        carry = ""
         last = m.end()
     return buf[last:], out
+
+
+def _is_false_terminator(buf: str, m: re.Match[str]) -> bool:
+    """True when the terminator at match `m` is an abbreviation or a decimal."""
+    chunk = m.group(1)
+    # A '.' between two digits (e.g. "3.14") — only fires for single-dot ends.
+    if chunk.endswith(".") and not chunk.endswith(".."):
+        after = buf[m.end(1) : m.end(1) + 1]
+        before = chunk[-2:-1]
+        if before.isdigit() and after.isdigit():
+            return True
+    # Trailing word (letters/dots) right before the terminator, periods stripped.
+    word = re.search(r"([A-Za-z][A-Za-z.]*)[.!?]+$", chunk)
+    if word is None:
+        return False
+    token = word.group(1).rstrip(".").lower()
+    return token in _ABBREVIATIONS
