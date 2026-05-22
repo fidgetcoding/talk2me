@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "talk2me"
+version = "0.1.0"
+description = "Hands-free voice loop for terminal coding agents (Claude Code by default)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Nate Davidovich" }]
+dependencies = [
+    "numpy>=1.24",
+    "sounddevice>=0.4",
+    "faster-whisper>=1.0",
+]
+
+[project.scripts]
+talk2me = "talk2me.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["talk2me*"]
+
+[tool.setuptools.package-data]
+talk2me = ["py.typed"]
