@@ -8,18 +8,57 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
 from . import factory
 from .config import Config
+
+# --- security caps / allowlists (security-audit.md M2, M3, H1, M1, L2) ---
+
+# Permission modes safe to forward to `claude` verbatim. `bypassPermissions`
+# (and any other auto-approve-everything mode) is deliberately excluded: under a
+# voice loop, ambient audio → whisper → unconfirmed tool execution makes a silent
+# bypass a full RCE-by-sound posture. See security-audit.md M2.
+SAFE_PERMISSION_MODES = ("default", "acceptEdits", "plan")
+
+# Substrings that, if present in a permission-mode value, indicate an
+# auto-approve-everything posture we never forward (defends gate #1 against a
+# value reaching argv via the positional passthrough). security-audit.md M3.
+_BYPASS_MODE_TOKENS = ("bypass", "skip")
+
+# Permission-affecting flags rejected from the positional `claude_args` tail so
+# they cannot smuggle a bypass posture past the --permission-mode allowlist.
+# security-audit.md M3.
+_BLOCKED_PASSTHROUGH_FLAGS = (
+    "--dangerously-skip-permissions",
+    "--add-dir",
+)
+
+# --vocab-file resource ceilings. security-audit.md H1 / M1 / L2.
+MAX_VOCAB_FILE_BYTES = 64 * 1024  # 64 KB on-disk cap; reject larger files.
+MAX_VOCAB_TERMS = 500  # cap accumulated bias terms; stop once reached.
 
 
 def _parse_args(argv: list[str]) -> Config:
     p = argparse.ArgumentParser(prog="talk2me", description=__doc__)
     p.add_argument("--model", default=None, help="claude model (e.g. haiku, sonnet)")
     p.add_argument("--cwd", default=None, help="working dir for the agent")
-    p.add_argument("--permission-mode", default="default")
+    p.add_argument(
+        "--permission-mode", default="default", choices=SAFE_PERMISSION_MODES,
+        help="permission posture forwarded to `claude` (bypass modes are blocked)",
+    )
     p.add_argument("--text", action="store_true", help="type instead of talk (no audio)")
+    p.add_argument(
+        "--dangerously-allow-tools", action="store_true",
+        help=(
+            "TEXT MODE ONLY. Forward --permission-mode bypassPermissions to "
+            "`claude`, auto-approving every tool call (Bash, Write, git push, MCP "
+            "mutations) with NO confirmation. Refused in voice mode: ambient audio "
+            "→ whisper → silent tool execution is a full RCE-by-sound posture. Use "
+            "only when you fully trust the typed input."
+        ),
+    )
     p.add_argument("--whisper-model", default="base.en")
     p.add_argument("--tts", default="say", choices=["say", "null"])
     p.add_argument("--voice", default=None, help="`say` voice id")
@@ -39,28 +78,116 @@ def _parse_args(argv: list[str]) -> Config:
     )
     p.add_argument("claude_args", nargs="*", help="extra args passed to `claude`")
     a = p.parse_args(argv)
+
+    input_mode = "text" if a.text else "voice"
+    permission_mode = a.permission_mode
+
+    # M2 escape hatch: bypass is only reachable via an explicit flag that ALSO
+    # requires --text. Refuse it in voice mode where the input is ambient audio.
+    if a.dangerously_allow_tools:
+        if input_mode != "text":
+            p.error(
+                "--dangerously-allow-tools requires --text mode; refusing to "
+                "auto-approve tools from ambient-audio (voice) input"
+            )
+        permission_mode = "bypassPermissions"
+
+    # M3: reject permission-affecting flags smuggled through the positional tail.
+    _reject_blocked_passthrough(p, a.claude_args)
+
     return Config(
         debug=a.debug,
         model=a.model,
         cwd=a.cwd,
-        permission_mode=a.permission_mode,
-        input_mode="text" if a.text else "voice",
+        permission_mode=permission_mode,
+        input_mode=input_mode,
         whisper_model=a.whisper_model,
         tts=a.tts,
         voice=a.voice,
         energy_threshold=a.energy_threshold,
         silence_ms=a.silence_ms,
-        vocab=_collect_vocab(a.vocab, a.vocab_file),
+        vocab=_collect_vocab(p, a.vocab, a.vocab_file),
         extra_claude_args=a.claude_args,
     )
 
 
-def _collect_vocab(terms: list[str], path: str | None) -> list[str]:
+def _reject_blocked_passthrough(
+    p: argparse.ArgumentParser, claude_args: list[str]
+) -> None:
+    """Fail cleanly if the passthrough tail carries a permission-bypass flag.
+
+    Guards against `--dangerously-skip-permissions`, `--add-dir`, or
+    `--permission-mode <bypass>` slipping past the --permission-mode allowlist
+    via the positional escape hatch. security-audit.md M3.
+    """
+    for i, raw in enumerate(claude_args):
+        # Split `--flag=value` so the flag name is matched independent of value.
+        flag = raw.split("=", 1)[0]
+        if flag in _BLOCKED_PASSTHROUGH_FLAGS:
+            p.error(f"refusing dangerous passthrough flag: {flag}")
+        if flag == "--permission-mode":
+            # value may be inline (--permission-mode=X) or the next token.
+            value = raw.split("=", 1)[1] if "=" in raw else (
+                claude_args[i + 1] if i + 1 < len(claude_args) else ""
+            )
+            if any(tok in value.lower() for tok in _BYPASS_MODE_TOKENS):
+                p.error(
+                    f"refusing --permission-mode bypass value in passthrough: "
+                    f"{value!r}"
+                )
+
+
+def _collect_vocab(
+    p: argparse.ArgumentParser, terms: list[str], path: str | None
+) -> list[str]:
+    """Load bias terms from CLI flags + an optional --vocab-file.
+
+    The file is validated and bounded: it must be an existing regular file (no
+    dirs, symlinks, devices, or FIFOs), under MAX_VOCAB_FILE_BYTES, and yields at
+    most MAX_VOCAB_TERMS terms. Any path/IO error is reported as a clean argparse
+    error, never a traceback. security-audit.md H1 / M1 / L2.
+    """
     out = list(terms)
-    if path:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                out += [t.strip() for t in line.split(",") if t.strip()]
+    if not path:
+        return out
+
+    # Expand ~ but do NOT realpath() before the lstat — realpath would follow a
+    # symlink and the S_ISLNK guard below would never fire (M1: reject symlinks).
+    expanded = os.path.expanduser(path)
+    try:
+        st = os.lstat(expanded)
+    except (FileNotFoundError, OSError) as exc:
+        p.error(f"--vocab-file not accessible: {path} ({exc.strerror or exc})")
+
+    # Reject symlinks, directories, devices, FIFOs — anything not a plain file.
+    import stat as _stat
+
+    if _stat.S_ISLNK(st.st_mode) or not _stat.S_ISREG(st.st_mode):
+        p.error(f"--vocab-file must be a regular file (not a symlink/dir/device): {path}")
+    if st.st_size > MAX_VOCAB_FILE_BYTES:
+        p.error(
+            f"--vocab-file too large: {st.st_size} bytes "
+            f"(max {MAX_VOCAB_FILE_BYTES})"
+        )
+
+    try:
+        # O_NOFOLLOW: refuse to open through a symlink even if it appeared between
+        # the lstat above and this open (TOCTOU hardening).
+        fd = os.open(expanded, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            # Bounded read: never pull more than the size cap into memory even if
+            # the file grew or has no newlines (a single unbroken "line").
+            data = fh.read(MAX_VOCAB_FILE_BYTES + 1)
+    except (FileNotFoundError, OSError, UnicodeDecodeError) as exc:
+        p.error(f"--vocab-file could not be read: {path} ({exc})")
+
+    for line in data.splitlines():
+        for term in line.split(","):
+            term = term.strip()
+            if term:
+                out.append(term)
+                if len(out) >= MAX_VOCAB_TERMS:
+                    return out
     return out
 
 
@@ -103,7 +230,11 @@ async def _run_text(cfg: Config) -> int:
             line = line.strip()
             if not line:
                 continue
-            await backend.send(line)
+            try:
+                await backend.send(line)
+            except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as exc:
+                print(f"\n[error] backend unavailable: {exc}", flush=True)
+                break
             async for ev in events:
                 if isinstance(ev, AssistantTextDelta):
                     sys.stdout.write(ev.text)

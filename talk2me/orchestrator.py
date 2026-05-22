@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import AsyncIterator
 
 from .audio import Mic, Speaker
 from .config import Config
 from .events import (
+    AgentEvent,
     AssistantTextDelta,
     BackendError,
     SessionReady,
@@ -89,7 +91,17 @@ class Orchestrator:
                     print("🎧 listening…", flush=True)
                     continue
                 print(f"\n🗣  you: {text}", flush=True)
-                await self.backend.send(text)
+                try:
+                    await self.backend.send(text)
+                except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
+                    # claude died after we started a turn: stdin is closed, so the
+                    # write raises (or events would never arrive). Don't crash with
+                    # a traceback or hang forever — flag fatal and exit cleanly via
+                    # the finally block. (The BackendError-event path sets _fatal too;
+                    # this guards the send call itself.)
+                    print(f"\n[backend send failed] {e}", flush=True)
+                    self._fatal = True
+                    break
                 await self._consume_turn(events)
                 if self._fatal:
                     print("\nbackend gone — shutting down.", flush=True)
@@ -97,9 +109,12 @@ class Orchestrator:
                 print("\n🎧 listening…", flush=True)
         finally:
             self.mic.stop()
+            # Release the audio output device at session end. stop() is a no-op-safe
+            # method on the real Speaker (and the fake), so this can't strand a handle.
+            self.speaker.stop()
             await self.backend.close()
 
-    async def _consume_turn(self, events) -> None:
+    async def _consume_turn(self, events: AsyncIterator[AgentEvent]) -> None:
         """Drive one agent turn: stream text to TTS, surface tools, end on result."""
         pending = ""
         speaking = False

@@ -68,3 +68,15 @@ async def segment_utterances(
                 trailing_silence = 0
                 in_speech = False
                 vad.reset()
+
+    # Stream ended (finite source, or mic stopped mid-utterance). If we were
+    # still mid-speech and it qualified, the silence-terminated path above never
+    # fired — flush the buffered final utterance so it isn't silently lost.
+    if in_speech and speech_frames >= min_speech_frames:
+        if cfg.debug:
+            dur_ms = int(speech_frames * frame_ms)
+            print(
+                f"  ⏹ stream end: ~{dur_ms}ms speech -> transcribing (flush)",
+                flush=True,
+            )
+        yield np.concatenate(buf).astype(np.float32)

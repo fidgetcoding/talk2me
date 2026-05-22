@@ -72,6 +72,16 @@ def test_tool_use_via_stream_event() -> bool:
 
 def test_tool_use_via_assistant_message() -> bool:
     b = _fresh()
+    # Simulate a partial having already streamed this turn, so the assistant
+    # message's text must be suppressed (no double-speak) and only the tool
+    # block surfaces.
+    b._translate({
+        "type": "stream_event",
+        "event": {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "already streamed"},
+        },
+    })
     obj = {
         "type": "assistant",
         "message": {
@@ -83,14 +93,67 @@ def test_tool_use_via_assistant_message() -> bool:
         },
     }
     got = b._translate(obj)
-    # Assistant-message path emits ONLY tool activity (text already streamed via
-    # deltas), so the text block must not produce an event.
+    # Text already streamed via deltas, so the text block must NOT re-emit;
+    # only the tool block produces an event.
     ok = (
         len(got) == 1
         and isinstance(got[0], ToolActivity)
         and got[0].name == "Read"
     )
-    return _report("assistant message tool_use block -> [ToolActivity], text dropped", ok)
+    return _report("assistant message (after partials) -> [ToolActivity], text suppressed", ok)
+
+
+def test_assistant_message_text_fallback() -> bool:
+    b = _fresh()
+    # No partials streamed this turn — a full assistant message carrying text
+    # must produce an AssistantTextDelta so the turn isn't silent dead-air
+    # (review I4). Text is also accumulated for the TurnComplete rollup.
+    obj = {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Hello "},
+                {"type": "text", "text": "world"},
+            ],
+        },
+    }
+    got = b._translate(obj)
+    emitted = got == [AssistantTextDelta(text="Hello world")]
+    accumulated = b._turn_text == ["Hello world"]
+    streamed_flag = b._turn_streamed is True
+    return _report(
+        "assistant message, no prior partials -> AssistantTextDelta fallback",
+        emitted and accumulated and streamed_flag,
+    )
+
+
+def test_assistant_message_no_double_speak() -> bool:
+    b = _fresh()
+    # A delta streams first, THEN the full assistant message arrives with the
+    # same text. The fallback must NOT fire (no double-speak).
+    b._translate({
+        "type": "stream_event",
+        "event": {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "Streamed text"},
+        },
+    })
+    obj = {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Streamed text"}],
+        },
+    }
+    got = b._translate(obj)
+    no_event = got == []
+    # _turn_text still holds only the streamed delta, not a duplicate.
+    no_dupe = b._turn_text == ["Streamed text"]
+    return _report(
+        "assistant message after partials -> no fallback, no double-speak",
+        no_event and no_dupe,
+    )
 
 
 def test_result_rollup_and_clear() -> bool:
@@ -132,6 +195,8 @@ def main() -> int:
         test_text_delta(),
         test_tool_use_via_stream_event(),
         test_tool_use_via_assistant_message(),
+        test_assistant_message_text_fallback(),
+        test_assistant_message_no_double_speak(),
         test_result_rollup_and_clear(),
         test_unknown_type(),
     ]

@@ -31,23 +31,49 @@ def _silence(n):
     return [np.zeros(FRAME, dtype=np.float32) for _ in range(n)]
 
 
+async def _segment(stream, cfg):
+    vad = EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012)
+    return [u async for u in segment_utterances(_frames(stream), vad, cfg)]
+
+
 async def main() -> int:
     cfg = Config(silence_ms=900, min_speech_ms=250)  # 30 silence / ~9 speech frames
-    vad = EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012)
 
+    # --- Case 1: normal silence-terminated turn (existing behavior) ---
     # 1 real utterance: 15 speech + 35 silence. Then a sub-min blip: 3 speech.
     stream = _speech(15) + _silence(35) + _speech(3) + _silence(35)
-    got = [u async for u in segment_utterances(_frames(stream), vad, cfg)]
+    got = await _segment(stream, cfg)
 
     one_utterance = len(got) == 1
     # buffer = 15 speech + 30 silence frames (fires at threshold) = 45 * 480
     right_len = one_utterance and got[0].shape[0] == 45 * FRAME
     blip_ignored = one_utterance  # the 3-frame blip never crossed min_speech
-
-    ok = one_utterance and right_len and blip_ignored
-    print(f"utterances={len(got)} "
+    case1 = one_utterance and right_len and blip_ignored
+    print(f"[case1 silence-terminated] utterances={len(got)} "
           f"len={(got[0].shape[0] if got else 0)} expected={45*FRAME} "
-          f"-> {'PASS' if ok else 'FAIL'}")
+          f"-> {'PASS' if case1 else 'FAIL'}")
+
+    # --- Case 2: stream ends mid-speech, no trailing silence (I5 fix) ---
+    # 15 speech frames, nothing after — must flush exactly one utterance.
+    eos_stream = _speech(15)
+    eos_got = await _segment(eos_stream, cfg)
+    eos_one = len(eos_got) == 1
+    eos_len = eos_one and eos_got[0].shape[0] == 15 * FRAME  # no silence padding
+    case2 = eos_one and eos_len
+    print(f"[case2 stream-end mid-speech] utterances={len(eos_got)} "
+          f"len={(eos_got[0].shape[0] if eos_got else 0)} expected={15*FRAME} "
+          f"-> {'PASS' if case2 else 'FAIL'}")
+
+    # --- Case 3: stream ends with too-few speech frames (still ignored) ---
+    # 3 speech frames < min_speech (~9) — must NOT emit even on stream end.
+    short_stream = _speech(3)
+    short_got = await _segment(short_stream, cfg)
+    case3 = len(short_got) == 0
+    print(f"[case3 stream-end too-short] utterances={len(short_got)} "
+          f"expected=0 -> {'PASS' if case3 else 'FAIL'}")
+
+    ok = case1 and case2 and case3
+    print(f"-> {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
 
