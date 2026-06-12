@@ -172,8 +172,13 @@ class Mic:
         """
         self.device = device
         if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
+            # Detach BEFORE closing/reopening: if _open_stream raises (bad index,
+            # device unplugged mid-switch), self._stream must not keep pointing
+            # at the already-closed old stream — a later stop() would double-close
+            # it and raise during shutdown.
+            stream, self._stream = self._stream, None
+            stream.stop()
+            stream.close()
             self._open_stream()
 
     def set_muted(self, muted: bool) -> None:

@@ -35,6 +35,11 @@ class Config:
     vad_aggressiveness: int = 2  # webrtc only: 0 (lenient) .. 3 (aggressive filtering)
     silence_ms: int = 900  # trailing silence that ends a turn
     min_speech_ms: int = 250  # ignore blips shorter than this
+    # Hard ceiling on one utterance. A stuck-open VAD (noisy room, threshold set
+    # below the noise floor) otherwise buffers audio forever: unbounded memory
+    # AND a loop that never yields a turn. At the cap the segmenter force-emits
+    # what it has, exactly as if silence had ended the turn. 0 disables.
+    max_utterance_ms: int = 90_000
 
     # --- STT ---
     stt: str = "whisper"

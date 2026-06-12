@@ -25,7 +25,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 # Generous per-line ceiling for the stdout/stderr StreamReaders. The default is
-# 64 KiB, past which readline() raises LimitOverrunError and wedges the stream
+# 64 KiB, past which readuntil() raises LimitOverrunError and wedges the stream
 # (security H2). A single JSON event — even one carrying a large tool result —
 # stays well under 16 MiB, while the cap still bounds memory against a runaway
 # or hostile line.
@@ -193,15 +193,26 @@ class ClaudeCodeBackend:
         try:
             while True:
                 try:
-                    raw = await stdout.readline()
-                except (ValueError, asyncio.LimitOverrunError):
-                    # An over-long line blew past the StreamReader limit. Rather
-                    # than wedge the stream, skip the offending bytes up to the
-                    # next newline and resync on the following line (security H2).
-                    await self._resync(stdout)
+                    raw = await stdout.readuntil(b"\n")
+                except asyncio.IncompleteReadError as e:
+                    # EOF. e.partial may carry a final unterminated line; process
+                    # it, then the next iteration raises again with b"" -> break.
+                    raw = e.partial
+                    if not raw:
+                        break  # EOF — process exited
+                except asyncio.LimitOverrunError as e:
+                    # An over-long line blew past the StreamReader limit. Discard
+                    # exactly the offending bytes and resync (security H2).
+                    # readuntil leaves the buffer untouched on overrun, so
+                    # e.consumed bytes are guaranteed buffered: if the newline was
+                    # already buffered the next readuntil starts at the following
+                    # valid line with nothing lost; if not, the line's remaining
+                    # tail parses as non-JSON noise below and is skipped. (The
+                    # previous readline()+feed_data resync could drop valid lines
+                    # — readline clears the buffer before raising — and tripped
+                    # "feed_data after feed_eof" when the process died mid-line.)
+                    await stdout.readexactly(e.consumed)
                     continue
-                if not raw:
-                    break  # EOF — process exited
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
@@ -211,42 +222,19 @@ class ClaudeCodeBackend:
                     continue  # non-JSON noise; ignore
                 for ev in self._translate(obj):
                     await self._events.put(ev)
+            # Natural EOF: claude closed stdout on its own, so the conversation
+            # cannot continue (a deliberate close() cancels this task before the
+            # process is touched, so we never get here on normal shutdown).
+            # `self._proc.returncode` is NOT authoritative yet — at pipe-EOF time
+            # the exit may not have been reaped, so it reads None and a crash
+            # would surface no event, leaving the orchestrator waiting forever.
+            # wait() gets the real code; any spontaneous exit is fatal (review I6).
+            rc = await self._proc.wait()
+            await self._events.put(BackendError(f"claude exited rc={rc}"))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # defensive: never let the reader die silently
             await self._events.put(BackendError(f"stdout reader: {exc!r}"))
-        finally:
-            # Non-zero returncode is the authoritative "backend died" signal
-            # (review I6); stderr is advisory diagnostics only.
-            rc = self._proc.returncode if self._proc else None
-            if rc not in (None, 0):
-                await self._events.put(BackendError(f"claude exited rc={rc}"))
-
-    @staticmethod
-    async def _resync(reader: asyncio.StreamReader) -> None:
-        """Discard buffered bytes through the next newline after a limit overrun.
-
-        readline()/readuntil() leave the over-long data in the buffer and keep
-        raising until it is consumed. We read fixed chunks until a newline shows
-        up (or EOF), throwing the partial line away so the next readline() starts
-        clean. Errors here are swallowed — resync is best-effort by definition.
-        """
-        while True:
-            try:
-                # read(n) returns up to n buffered/available bytes and is NOT
-                # bounded by the line limit, so it can never re-trigger the
-                # overrun while we drain the offending line.
-                chunk = await reader.read(64 * 1024)
-            except Exception:
-                return
-            if not chunk:
-                return  # EOF
-            nl = chunk.rfind(b"\n")
-            if nl != -1:
-                # Push back everything after the newline so the next readline()
-                # sees the start of a fresh line.
-                reader.feed_data(chunk[nl + 1:])
-                return
 
     async def _drain_stderr(self) -> None:
         assert self._proc and self._proc.stderr
@@ -254,14 +242,16 @@ class ClaudeCodeBackend:
         try:
             while True:
                 try:
-                    raw = await stderr.readline()
-                except (ValueError, asyncio.LimitOverrunError):
+                    raw = await stderr.readuntil(b"\n")
+                except asyncio.IncompleteReadError as e:
+                    raw = e.partial
+                    if not raw:
+                        break
+                except asyncio.LimitOverrunError as e:
                     # Bound the stderr reader the same way as stdout (security
-                    # H2): skip an over-long diagnostic line and keep draining.
-                    await self._resync(stderr)
+                    # H2): discard an over-long diagnostic line and keep draining.
+                    await stderr.readexactly(e.consumed)
                     continue
-                if not raw:
-                    break
                 # stderr is advisory diagnostics ONLY. We do NOT derive failure
                 # from a substring heuristic — "0 errors" false-positives and a
                 # silent crash false-negatives (review I6). The authoritative

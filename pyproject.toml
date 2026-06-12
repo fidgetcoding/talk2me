@@ -21,6 +21,9 @@ dependencies = [
 # webrtcvad-wheels ships prebuilt wheels; the original `webrtcvad` sdist fails to
 # build on modern Python. Install with: pip install talk2me[webrtc]
 webrtc = ["webrtcvad-wheels>=2.0"]
+# KittenTTS — local neural voice (cross-platform; the only built-in voice option
+# off macOS). Install with: pip install talk2me[kitten]
+kitten = ["kittentts>=0.1"]
 
 [project.scripts]
 talk2me = "talk2me.__main__:main"

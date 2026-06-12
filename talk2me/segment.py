@@ -27,6 +27,11 @@ async def segment_utterances(
     frame_ms = (vad.frame_samples / vad.sample_rate) * 1000.0
     silence_frames_needed = max(1, int(cfg.silence_ms / frame_ms))
     min_speech_frames = max(1, int(cfg.min_speech_ms / frame_ms))
+    # Force-emit ceiling (frames of buffered audio). Guards against a stuck-open
+    # VAD growing `buf` without bound and never ending a turn. 0 disables.
+    max_buf_frames = (
+        max(1, int(cfg.max_utterance_ms / frame_ms)) if cfg.max_utterance_ms > 0 else 0
+    )
 
     buf: list[np.ndarray] = []
     speech_frames = 0
@@ -45,6 +50,21 @@ async def segment_utterances(
             buf.append(frame)
             speech_frames += 1
             trailing_silence = 0
+            if max_buf_frames and len(buf) >= max_buf_frames:
+                # Ceiling hit mid-speech: emit what we have so the loop makes
+                # progress (and memory stays bounded) instead of buffering forever.
+                if cfg.debug:
+                    print(
+                        f"  ⏹ max utterance (~{int(len(buf) * frame_ms)}ms) -> "
+                        "force-emitting",
+                        flush=True,
+                    )
+                yield np.concatenate(buf).astype(np.float32)
+                buf = []
+                speech_frames = 0
+                trailing_silence = 0
+                in_speech = False
+                vad.reset()
             continue
 
         if in_speech:

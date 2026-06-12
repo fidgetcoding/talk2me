@@ -89,26 +89,37 @@ Every swappable part hides behind a contract: voice detection, transcription, th
 
 Out of the box:
 
-- **Ears (voice detection):** a simple loudness check. Good enough for a quiet room.
+- **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room. Two sharper options ship too: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file).
 - **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter.
-- **Voice:** the built-in macOS voice.
+- **Voice:** the built-in macOS voice by default. `--tts kitten` (install with `pip install -e ".[kitten]"`) is a local neural voice that works on any OS. `--tts null` keeps it text-only.
 - **The agent:** Claude Code.
 
 ## Not done yet
 
 Being honest about the edges, because shipping half-true READMEs is how trust dies:
 
-- **Cutting it off mid-sentence** (barge-in). Right now it finishes its thought before it listens again. Interrupting it is built but not wired on by default — it needs echo handling so it doesn't hear itself.
+- **Cutting it off mid-sentence** (barge-in). Right now it finishes its thought before it listens again. The playback side can be cancelled mid-utterance, but the detection side — hearing you over its own voice — needs echo handling that isn't written yet.
 - **Tool approvals by voice.** If the agent wants to run something that needs a yes, there's no way to say yes out loud yet. For now, keep early sessions conversational.
 - **Wispr hands-free.** I want to drive the dictation app I actually like instead of the basics. It's a real maybe — the keypress trick it needs isn't proven yet.
-- **Fancier ears and a better voice.** Hooks are in. Nobody's filled the slots.
+- **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 
 ## Requirements
 
-- **macOS** — the voice uses the built-in `say`. Other platforms can plug in their own; nobody has yet.
+Everywhere:
+
 - **`claude`** on your PATH.
 - **Python 3.11+**
 - **A microphone**, ideally close to your face.
+
+**macOS** — the platform this is built and daily-driven on. `pip install -e .` is all the setup there is: the audio library ships with PortAudio bundled, and the default voice is the built-in `say`.
+
+**Linux** — honestly: the headless tests pass in CI, the live mic loop is untested. What's known:
+
+- PortAudio is not bundled on Linux — install the system library first: `sudo apt-get install libportaudio2` (Debian/Ubuntu) or `sudo dnf install portaudio` (Fedora). It sits on top of ALSA/PulseAudio/PipeWire, whichever you have.
+- There is no `say` on Linux, and the default voice **degrades to silence** rather than erroring. Pick a voice explicitly: `--tts kitten` (local neural voice, `pip install -e ".[kitten]"`) or `--tts null` (answers stay on screen).
+- Whisper transcription and the `--text` mode are plain CPU Python and should work as-is.
+
+**Windows** — untested, no built-in voice path. `--text` mode should work; everything else is unverified.
 
 ## Tests
 
@@ -126,7 +137,7 @@ python -m tests.manual_backend_check  # one real cheap turn against Claude Code
 No. It only speaks the assistant's actual sentences. The boring machinery stays silent and on the screen.
 
 **Does it work on Windows or Linux?**
-The voice part is Mac-only today because it uses the built-in voice. Everything else is portable — the voice slot is swappable, it's just waiting on someone to fill it.
+The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voice that runs anywhere. On Linux you also need the system PortAudio library for the mic — see [Requirements](#requirements). Fair warning: the Linux mic loop is CI-tested, not human-tested.
 
 **Why not just type?**
 Because my hands are busy and my mouth isn't.

@@ -72,7 +72,19 @@ async def main() -> int:
     print(f"[case3 stream-end too-short] utterances={len(short_got)} "
           f"expected=0 -> {'PASS' if case3 else 'FAIL'}")
 
-    ok = case1 and case2 and case3
+    # --- Case 4: stuck-open VAD hits the max-utterance ceiling ---
+    # 50 continuous speech frames with a 600ms cap (20 frames @ 30ms) must
+    # force-emit bounded utterances instead of buffering forever: two full
+    # 20-frame emissions + a 10-frame tail flushed at stream end.
+    cap_cfg = Config(silence_ms=900, min_speech_ms=250, max_utterance_ms=600)
+    cap_got = await _segment(_speech(50), cap_cfg)
+    cap_lens = [u.shape[0] for u in cap_got]
+    case4 = cap_lens == [20 * FRAME, 20 * FRAME, 10 * FRAME]
+    print(f"[case4 max-utterance force-emit] lens={cap_lens} "
+          f"expected={[20*FRAME, 20*FRAME, 10*FRAME]} -> "
+          f"{'PASS' if case4 else 'FAIL'}")
+
+    ok = case1 and case2 and case3 and case4
     print(f"-> {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

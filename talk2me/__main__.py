@@ -60,8 +60,12 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument("--whisper-model", default="base.en")
-    p.add_argument("--tts", default="say", choices=["say", "null"])
-    p.add_argument("--voice", default=None, help="`say` voice id")
+    p.add_argument(
+        "--tts", default="say", choices=["say", "kitten", "null"],
+        help="speech engine: say (macOS built-in), kitten (local neural, "
+        "`pip install talk2me[kitten]`), null (no voice out)",
+    )
+    p.add_argument("--voice", default=None, help="engine-specific voice id")
     p.add_argument(
         "--vad", default="energy", choices=["energy", "silero", "webrtc"],
         help="voice-activity detector. webrtc is more robust across mics (BT).",
@@ -264,8 +268,12 @@ async def _run_text(cfg: Config) -> int:
     await backend.start()
     events = backend.events()
     print("talk2me (text mode) — type a message, Ctrl-D to quit.\n", flush=True)
+    # Mirrors Orchestrator._fatal: a BackendError means the process is gone, so
+    # stop the REPL outright instead of parking on readline against a corpse
+    # (the user would otherwise discover the death only after typing a line).
+    fatal = False
     try:
-        while True:
+        while not fatal:
             line = await asyncio.to_thread(sys.stdin.readline)
             if not line:
                 break
@@ -288,10 +296,11 @@ async def _run_text(cfg: Config) -> int:
                     break
                 elif isinstance(ev, BackendError):
                     print(f"\n[error] {ev.message}", flush=True)
+                    fatal = True
                     break
     finally:
         await backend.close()
-    return 0
+    return 1 if fatal else 0
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -48,13 +48,17 @@ class SayTTS:
         if path is None:
             return
         try:
-            for block in self._read_blocks(path):
-                yield block
+            # Read-back in a worker thread (file I/O must not block the event
+            # loop that drives the mic). _load_pcm returns None on a malformed
+            # WAV instead of raising — synthesis failure degrades to silence,
+            # never tears down the conversation loop.
+            pcm = await asyncio.to_thread(self._load_pcm, path)
         finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+            self._unlink(path)
+        if pcm is None:
+            return
+        for i in range(0, pcm.shape[0], _BLOCK):
+            yield pcm[i : i + _BLOCK]
 
     def _render(self, text: str) -> str | None:
         """Render `text` to a temp WAV and return its path, or None on failure.
@@ -95,10 +99,18 @@ class SayTTS:
         except OSError:
             pass
 
-    def _read_blocks(self, path: str):
-        with wave.open(path, "rb") as wf:
-            n = wf.getnframes()
-            raw = wf.readframes(n)
-        pcm = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-        for i in range(0, pcm.shape[0], _BLOCK):
-            yield pcm[i : i + _BLOCK]
+    @staticmethod
+    def _load_pcm(path: str) -> np.ndarray | None:
+        """Read the rendered WAV back as float32 mono, or None if it's malformed.
+
+        `say` exiting 0 *should* guarantee a valid file, but a full disk or a
+        mid-write kill can leave a truncated/garbage WAV; wave.open raises on
+        those. Returning None lets synthesize() skip the sentence — a corrupt
+        render must not crash the broker (blocking; runs off-loop).
+        """
+        try:
+            with wave.open(path, "rb") as wf:
+                raw = wf.readframes(wf.getnframes())
+        except (wave.Error, EOFError, OSError):
+            return None
+        return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
