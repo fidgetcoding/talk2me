@@ -16,6 +16,8 @@ from talk2me.orchestrator import (
     _drain_overflow,
     _seems_unfinished,
     collapse_stutter,
+    control_intent,
+    looks_hallucinated,
 )
 from talk2me.vad import EnergyVAD
 
@@ -104,6 +106,66 @@ def test_collapse_stutter() -> None:
     )
 
 
+def test_hallucination_and_controls() -> None:
+    check(
+        "hallucination: Okay x26 -> noise",
+        looks_hallucinated(". ".join(["Okay"] * 26) + "."),
+    )
+    check(
+        "hallucination: Building x10 -> noise",
+        looks_hallucinated(" ".join(["Building"] * 10)),
+    )
+    check(
+        "hallucination: real sentence passes",
+        not looks_hallucinated("Build me a game of pong please."),
+    )
+    check(
+        "hallucination: short emphasis passes",
+        not looks_hallucinated("no no no"),
+    )
+    cases = [
+        ("Pause listening.", "pause"),
+        ("Go to sleep.", "pause"),
+        ("Wake up!", "resume"),
+        ("I'm back.", "resume"),
+        ("pause listening to him and focus", None),  # embedded, not whole
+        ("What time is it?", None),
+    ]
+    for text, want in cases:
+        got = control_intent(text)
+        check(f"control {text!r} -> {want}", got == want, f"got={got}")
+
+
+async def test_voice_pause_resume() -> None:
+    cfg = Config(silence_ms=900, min_speech_ms=250)
+    frames = (_speech(15) + _silence(35)) * 4
+    backend = FakeBackend(replies=["Hi there!"])
+    tts = FakeTTS()
+    orch = Orchestrator(
+        cfg=cfg,
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(
+            ["Pause listening.", "What is two plus two?", "Wake up.", "Hello there?"]
+        ),
+        tts=tts,
+        mic=FakeMic(frames, sample_rate=SR),
+        speaker=FakeSpeaker(SR),
+    )
+    await asyncio.wait_for(orch.run(), timeout=15)
+    check(
+        "pause: only post-resume turn sent",
+        backend.sent == ["Hello there?"],
+        str(backend.sent),
+    )
+    check(
+        "pause: spoken confirmations",
+        any("Paused" in s for s in tts.spoken)
+        and any("back" in s for s in tts.spoken),
+        str(tts.spoken),
+    )
+
+
 async def test_presend_stitch() -> None:
     # Two utterances: an unfinished fragment, then the rest after a pause.
     cfg = Config(silence_ms=900, min_speech_ms=250)
@@ -152,6 +214,8 @@ async def main() -> int:
     test_seems_unfinished()
     test_overflow()
     test_collapse_stutter()
+    test_hallucination_and_controls()
+    await test_voice_pause_resume()
     await test_presend_stitch()
     await test_presend_timeout_sends_fragment()
 

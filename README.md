@@ -17,7 +17,7 @@ You say something. It hears you, types it to your coding agent, reads the answer
 | [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) | [Tuning the ears](#tuning-the-ears) |
 | [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) | [The debugging playbook](#the-debugging-playbook) |
 | [Tests](#tests) | [Ways to run it](#ways-to-run-it) | [Under the hood](#under-the-hood) |
-| [FAQ](#faq) | | [Not done yet](#not-done-yet) |
+| [FAQ](#faq) | [Pausing the ears](#pausing-the-ears) | [Not done yet](#not-done-yet) |
 
 ---
 
@@ -108,6 +108,8 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `⏹ … ignored (too short)` *(debug)* | It heard a blip under ~250ms (a cough, a key-click) and threw it away. | Nothing. This is noise rejection working. |
 | `(…waiting for the rest)` | **Not a bug. Not stuck.** Your sentence sounded unfinished ("so what do you call…"), so it's holding the turn and giving you up to ~6 seconds to keep going. It'll do this up to 3 times. | Finish your sentence. Or stay silent and it sends what it has. |
 | `🗣 you: …` | What it heard, final. This is exactly what the agent receives. | If it's wrong, just say "no, I said…" — it's a conversation. |
+| `(ignored — transcription noise)` | The transcript looked like a machine artifact (one word looped), not speech. Dropped. | Nothing — that's the noise filter working. |
+| `⏸ paused — say 'wake up'…` | You voice-paused it. Hearing everything, sending nothing. | Say "wake up" / "I'm back" to resume. |
 | `🤖` followed by streaming text | The agent is answering. Speech starts at the first clause, not the end. | Listen. |
 | `[tool] Bash` etc. | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
 | *a soft "tink" every ~8s* | The working tick: it's mid-tool-run and fine, just busy. The audible version of a spinner. | Nothing. Silence + no tick + no marker is the bad combo. (`--no-ticks` disables.) |
@@ -186,6 +188,20 @@ Old voice tools send the fragment, and the agent answers garbage. talk2me listen
 ```
 
 You get ~6 seconds per pause, up to 3 pauses. Once you start talking again it always hears you out — the window only limits the silence, never cuts a started sentence.
+
+## Pausing the ears
+
+Someone walks in, the phone rings, you need to think out loud without a transcriptionist. Say:
+
+> **"pause listening"** (or "stop listening", "go to sleep", "take a break")
+
+It confirms out loud, prints `⏸ paused`, and from then on it hears everything and sends **nothing** — no agent turns, no transcript entries, no reactions. Until you say:
+
+> **"wake up"** (or "resume listening", "I'm back")
+
+The commands only trigger as a complete utterance — saying "pause listening to him" mid-sentence won't trip it. And a note for the observant: the mic hardware stays open while paused (that's how it hears "wake up"); "paused" means nothing leaves the loop, not that the microphone is off. Ctrl-C is the off switch.
+
+Related: transcripts that look like machine noise (the same word looped five-plus times — a known transcription artifact on fan hum and silence) get discarded automatically with an `(ignored — transcription noise)` note, so phantom "Okay. Okay. Okay." turns never reach the agent.
 
 ## Hear Claude Code itself (hook mode)
 

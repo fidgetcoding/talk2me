@@ -156,6 +156,9 @@ class Orchestrator:
         # Set when a turn dies on a BackendError; tells run() to stop cleanly
         # instead of looping forever against a dead backend process.
         self._fatal = False
+        # Voice-commanded pause: while True, transcripts are heard but never
+        # sent — only a resume command gets through.
+        self._paused = False
         # Barge-in state, reset per turn: the monitor task watching the live
         # mic, and whether it already cut this turn's playback.
         self._barge_task: asyncio.Task[str | None] | None = None
@@ -224,16 +227,50 @@ class Orchestrator:
                 self.mic.frames(), self.vad, self.cfg
             ):
                 t_captured = time.monotonic()
-                text = collapse_stutter(
-                    await self.stt.transcribe(utterance, self.mic.sample_rate)
-                )
+                raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
                 if self.cfg.debug:
                     print(
                         f"  [t] stt {time.monotonic() - t_captured:.2f}s",
                         flush=True,
                     )
+                if raw and looks_hallucinated(raw):
+                    # Non-speech audio (fan hum, ambient) hallucinates as
+                    # looped words — often the agent's own vocabulary, because
+                    # the STT is context-seeded with it. Never send those.
+                    print("   (ignored — transcription noise)", flush=True)
+                    raw = ""
+                text = collapse_stutter(raw)
                 if not text:
                     print("🎧 listening…", flush=True)
+                    continue
+                # Voice controls for the loop itself: "pause listening" mutes
+                # the conversation (everything heard, nothing sent) until a
+                # "wake up" arrives.
+                intent = control_intent(text)
+                if self._paused:
+                    if intent == "resume":
+                        self._paused = False
+                        print("\n▶️  awake — listening again", flush=True)
+                        if self.log:
+                            self.log.event("listening resumed by voice")
+                        await self._speak_confirm("I'm back.")
+                        print("\n🎧 listening…", flush=True)
+                    else:
+                        if self.cfg.debug:
+                            print(f"   (paused — ignored: {text})", flush=True)
+                        print("⏸  still paused — say 'wake up'", flush=True)
+                    continue
+                if intent == "pause":
+                    self._paused = True
+                    print(
+                        "\n⏸  paused — say 'wake up' when you need me",
+                        flush=True,
+                    )
+                    if self.log:
+                        self.log.event("listening paused by voice")
+                    await self._speak_confirm(
+                        "Paused. Say wake up when you need me."
+                    )
                     continue
                 # An unfinished-sounding transcript is NOT sent yet: keep the
                 # mic open and stitch the rest on BEFORE the agent ever sees a
@@ -552,10 +589,12 @@ class Orchestrator:
         if not cut or not buf:
             return None
         utterance = np.concatenate(buf).astype(np.float32)
-        text = collapse_stutter(
-            await self.stt.transcribe(utterance, self.mic.sample_rate)
-        )
-        return text or None
+        raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
+        if raw and looks_hallucinated(raw):
+            # A noise-triggered cut with a hallucinated transcript: returning
+            # None routes into the repeat-your-question recovery upstream.
+            return None
+        return collapse_stutter(raw) or None
 
     def _begin_speaking(self, speaking: bool) -> bool:
         """Mark the start of agent speech, muting the mic in half-duplex mode.
@@ -577,6 +616,15 @@ class Orchestrator:
         """Direct, serial speech — used by the permission gate's prompts. Turn
         prose goes through the render/play pipeline instead."""
         await self.speaker.play(self.tts.synthesize(text))
+
+    async def _speak_confirm(self, text: str) -> None:
+        """Speak a short status line with the half-duplex mute held, so the
+        confirmation itself can't retrigger the ears."""
+        if self.cfg.half_duplex:
+            self.mic.set_muted(True)
+        await self._speak(text)
+        self.mic.set_muted(False)
+        self.vad.reset()
 
     # ---- speech pipeline -------------------------------------------------
 
@@ -908,6 +956,40 @@ _STUTTER = re.compile(r"\b(\S+)((?:[\s.,!?]+\1\b){3,})", re.IGNORECASE)
 def collapse_stutter(text: str) -> str:
     """Collapse >3 consecutive repeats of the same word down to three."""
     return _STUTTER.sub(lambda m: " ".join([m.group(1)] * 3), text)
+
+
+def looks_hallucinated(raw: str) -> bool:
+    """True for transcripts that are machine noise, not speech.
+
+    Whisper hallucinates on non-speech audio (silence, TTS bleed, fan hum) —
+    live-observed as "Okay." ×26 and "Building" ×10 while the user said
+    nothing. Signature: a long utterance built from one or two unique words.
+    Real speech with that shape ("no no no no no") is vanishingly rare past
+    five words; deliberate short emphasis passes untouched.
+    """
+    words = re.findall(r"[a-z']+", raw.lower())
+    return len(words) >= 5 and len(set(words)) <= 2
+
+
+# Whole-utterance voice controls for the listening loop itself. Matched only
+# when the ENTIRE utterance is the command (normalized), so "pause listening
+# to him and focus" never triggers it.
+_PAUSE_COMMANDS = frozenset(
+    ("pause listening", "stop listening", "go to sleep", "take a break")
+)
+_RESUME_COMMANDS = frozenset(
+    ("wake up", "resume listening", "start listening", "im back")
+)
+
+
+def control_intent(text: str) -> str | None:
+    """Map a whole utterance to "pause" / "resume" / None."""
+    normalized = " ".join(re.findall(r"[a-z]+", text.lower().replace("'", "")))
+    if normalized in _PAUSE_COMMANDS:
+        return "pause"
+    if normalized in _RESUME_COMMANDS:
+        return "resume"
+    return None
 
 
 def match_intent(text: str) -> str | None:
