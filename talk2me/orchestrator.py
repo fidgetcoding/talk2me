@@ -174,9 +174,11 @@ class Orchestrator:
         self._render_task: asyncio.Task[None] | None = None
         self._play_task: asyncio.Task[None] | None = None
         # Working-tick state: last time anything was audible, whether the
-        # current turn has run a tool, and whether afplay proved unavailable.
+        # current turn has run a tool (and how many), and whether afplay
+        # proved unavailable.
         self._last_audible = 0.0
         self._saw_tool = False
+        self._tool_count = 0
         self._ticks_broken = False
 
     async def run(self) -> None:
@@ -192,6 +194,13 @@ class Orchestrator:
             print("(loading the ears…)", flush=True)
             await asyncio.to_thread(self.stt.warmup)
         print("talk2me ready — start talking. Ctrl-C to quit.", flush=True)
+        print(
+            f"   model: {self.cfg.model or 'claude default'} · "
+            f"ears: {self.cfg.stt} · voice: {self.cfg.voice or 'system'} "
+            f"@{self.cfg.rate_wpm or 'default'}wpm · "
+            f"barge-in: {'ON' if self.cfg.barge_in else 'off'}",
+            flush=True,
+        )
         if self.cfg.half_duplex:
             print(
                 "   (half-duplex: talking over the agent mid-speech is ignored "
@@ -309,6 +318,7 @@ class Orchestrator:
         self._barge_task = asyncio.create_task(self._barge_monitor())
         self._start_speech_pipeline()
         self._saw_tool = False
+        self._tool_count = 0
         self._last_audible = time.monotonic()
         ticker: asyncio.Task[None] | None = None
         if self.cfg.working_ticks:
@@ -358,6 +368,7 @@ class Orchestrator:
             elif isinstance(ev, ToolActivity):
                 print(f"\n   [tool] {ev.name}", flush=True)
                 self._saw_tool = True
+                self._tool_count += 1
                 if self.log:
                     self.log.tool(ev.name)
             elif isinstance(ev, PermissionRequest):
@@ -429,11 +440,20 @@ class Orchestrator:
         try:
             while True:
                 await asyncio.sleep(2)
-                if self._interrupted or not self._saw_tool or self._ticks_broken:
+                if self._interrupted or not self._saw_tool:
                     continue
                 if time.monotonic() - self._last_audible < WORKING_TICK_QUIET_S:
                     continue
                 self._last_audible = time.monotonic()
+                # Screen companion to the audible tick — a long silent build
+                # shows life in BOTH channels.
+                print(
+                    f"   ⚙ still working… ({self._tool_count} tool "
+                    f"call{'s' if self._tool_count != 1 else ''} so far)",
+                    flush=True,
+                )
+                if self._ticks_broken:
+                    continue
                 try:
                     subprocess.Popen(
                         ["afplay", "-v", "0.4", _TICK_SOUND],
@@ -441,7 +461,7 @@ class Orchestrator:
                         stderr=subprocess.DEVNULL,
                     )
                 except (FileNotFoundError, OSError):
-                    self._ticks_broken = True  # no afplay (Linux) — stay quiet
+                    self._ticks_broken = True  # no afplay (Linux) — screen only
         except asyncio.CancelledError:
             raise
 
