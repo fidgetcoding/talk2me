@@ -15,13 +15,13 @@ from __future__ import annotations
 from talk2me.backends import ClaudeCodeBackend
 from talk2me.config import Config
 from talk2me.factory import (
-    _vocab_prompt,
     build_backend,
     build_stt,
     build_tts,
     build_vad,
     frame_samples,
 )
+from talk2me.orchestrator import _context_terms
 from talk2me.protocols import STT, TTS, VAD, AgentBackend
 from talk2me.stt import WhisperSTT
 from talk2me.tts import SayTTS
@@ -90,16 +90,15 @@ def test_build_stt() -> bool:
         isinstance(stt, WhisperSTT)
         and isinstance(stt, STT)  # runtime Protocol check (transcribe present)
         and stt._model is None  # lazy: nothing loaded on construction
-        and stt._initial_prompt is None  # default empty vocab -> no prompt
+        and stt._hotwords() is None  # default empty vocab -> no biasing
         and vocab_stt._model is None
-        and vocab_stt._initial_prompt
-        == "Proper nouns and domain terms: Lorecraft, Morgen."
+        and vocab_stt._hotwords() == "Lorecraft, Morgen"
     )
     return _line(
         "build_stt",
         ok,
         f"stt={type(stt).__name__} model_loaded={stt._model is not None} "
-        f"prompt={stt._initial_prompt!r}",
+        f"hotwords={vocab_stt._hotwords()!r}",
     )
 
 
@@ -121,17 +120,26 @@ def test_build_backend() -> bool:
     )
 
 
-def test_vocab_prompt() -> bool:
-    empty = _vocab_prompt([])
-    filled = _vocab_prompt(["Lorecraft", "Morgen"])
+def test_hotword_context() -> bool:
+    # Live context merges after static vocab, deduped case-insensitively.
+    stt = WhisperSTT(vocab=["Lorecraft"])
+    stt.set_context(["useAuthStore", "lorecraft", "magma.js"])
+    merged = stt._hotwords()
+    # Identifier-ish extraction from agent prose.
+    terms = _context_terms(
+        "I updated useAuthStore in magma.js and the sync_helpers module for Morgen."
+    )
     ok = (
-        empty is None
-        and filled == "Proper nouns and domain terms: Lorecraft, Morgen."
+        merged == "Lorecraft, useAuthStore, magma.js"
+        and "useAuthStore" in terms
+        and "magma.js" in terms
+        and "sync_helpers" in terms
+        and "Morgen" in terms
     )
     return _line(
-        "_vocab_prompt",
+        "hotword context seeding",
         ok,
-        f"empty={empty!r} filled={filled!r}",
+        f"merged={merged!r} terms={terms}",
     )
 
 
@@ -147,7 +155,7 @@ def main() -> int:
         test_build_vad(),
         test_build_stt(),
         test_build_backend(),
-        test_vocab_prompt(),
+        test_hotword_context(),
         test_frame_samples(),
     ]
     overall = all(results)

@@ -194,6 +194,12 @@ class Orchestrator:
                 if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
                     await self._speak(pending)
+                # Feed proper nouns / identifiers from the agent's reply to the
+                # STT as live hotword context — terms the user is likely to say
+                # back next turn. Duck-typed: engines without set_context are
+                # simply not seeded.
+                if ev.text and hasattr(self.stt, "set_context"):
+                    self.stt.set_context(_context_terms(ev.text))
                 print(flush=True)
                 break
             elif isinstance(ev, SessionReady):
@@ -404,6 +410,33 @@ def _drain_sentences(buf: str) -> tuple[str, list[str]]:
         carry = ""
         last = m.end()
     return buf[last:], out
+
+
+# Words that look like things a user would echo back: CamelCase / snake_case
+# identifiers, dotted filenames, and Capitalized proper nouns (which we only
+# keep when they're not sentence-initial dictionary words — cheap heuristic:
+# length >= 4).
+_CONTEXT_TERM = re.compile(
+    r"[A-Za-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+"  # CamelCase / mixedCase
+    r"|[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+"  # snake_case
+    r"|[\w-]+\.[A-Za-z]{1,4}\b"  # file.ext
+    r"|[A-Z][a-z]{3,}"  # Proper nouns
+)
+
+
+def _context_terms(text: str, limit: int = 30) -> list[str]:
+    """Extract identifier-ish terms from agent prose for STT hotword seeding."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _CONTEXT_TERM.finditer(text):
+        term = m.group(0)
+        key = term.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(term)
+            if len(out) >= limit:
+                break
+    return out
 
 
 def match_intent(text: str) -> str | None:

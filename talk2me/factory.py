@@ -50,9 +50,11 @@ def build_stt(cfg: Config) -> STT:
     if cfg.stt == "whisper":
         from .stt import WhisperSTT
 
+        # Vocab rides as faster-whisper hotwords (whole-utterance biasing);
+        # see the module docstring in stt/whisper.py for why not initial_prompt.
         return WhisperSTT(
             model=cfg.whisper_model,
-            initial_prompt=_vocab_prompt(cfg.vocab),
+            vocab=cfg.vocab,
         )
     raise ValueError(f"unknown stt: {cfg.stt!r}")
 
@@ -92,12 +94,3 @@ def build_backend(cfg: Config) -> AgentBackend:
     )
 
 
-def _vocab_prompt(vocab: list[str]) -> str | None:
-    """Bias terms whisper toward names it would otherwise mangle.
-
-    Decoupled by design: talk2me knows nothing about any vault. A 2ndBrain user
-    feeds aliases in via `--vocab-file`; everyone else passes their own terms.
-    """
-    if not vocab:
-        return None
-    return "Proper nouns and domain terms: " + ", ".join(vocab) + "."
