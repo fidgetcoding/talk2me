@@ -336,7 +336,7 @@ You SSH into your machine from Blink (or any iOS terminal), run `t2m --phone`, a
 The trick: SSH can't carry audio, so the audio rides your SSH tunnel instead. talk2me serves a one-tap page on `localhost` only (never your network), and the phone reaches it through a port-forward:
 
 1. In Blink, add a port forward to the host: `-L 8765:localhost:8765`
-2. On the Mac (over SSH): `t2m --phone`
+2. On the Mac (over SSH): `t2m --phone` (different port: `--phone-port 9000`, and match it in step 1 and 3)
 3. On the phone, open **http://localhost:8765** in Safari and tap connect
 
 That's it. `localhost` counts as a secure context, so the mic works with zero certificates, and everything is encrypted because it's literally inside your SSH connection. Keep the Safari page open (it IS the audio hardware) — split it with Blink or glance between them; the conversation renders in the terminal as always.
