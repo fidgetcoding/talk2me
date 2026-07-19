@@ -105,7 +105,9 @@ def build_backend(cfg: Config) -> AgentBackend:
             # Keep the CLI from preferring a logged-in Anthropic account.
             extra_env["ANTHROPIC_API_KEY"] = key
 
-    return ClaudeCodeBackend(
+    from .continuity import save_last_session
+
+    backend = ClaudeCodeBackend(
         claude_bin=cfg.claude_bin,
         model=cfg.model,
         cwd=cfg.cwd,
@@ -119,6 +121,10 @@ def build_backend(cfg: Config) -> AgentBackend:
             VOICE_SYSTEM_PROMPT if cfg.input_mode == "voice" else None
         ),
         extra_env=extra_env or None,
+        resume_session_id=cfg.resume_session_id,
     )
+    # Record this session for `--continue` next time, keyed by working dir.
+    save_last_session(cfg.cwd, backend._session_id)
+    return backend
 
 

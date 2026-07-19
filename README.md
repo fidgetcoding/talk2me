@@ -112,6 +112,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m` (or `talk2me`) | The whole thing, defaults on. Talk. |
 | `Ctrl-C` | Done. (Transcript, if enabled, is already saved — it writes live.) |
 | *type anything + Enter* | Works mid-session, any time — paste an error log, type an exact path, or intervene precisely. Multi-line pastes arrive as one message; "pause" and friends work typed too. |
+| `t2m --continue` (or `-c`) | Pick up where you left off — resumes this folder's last session, memory intact. No more "what game?". |
 | `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default; it auto-disarms on open-air speakers anyway). |
 | `t2m --gated` | Spoken approvals before any non-read tool runs (default is auto-approve, with the nasty stuff hard-blocked either way). |
 | `t2m --stt parakeet` | GPU ears — faster + more accurate (Apple Silicon; `pip install -e ".[parakeet]"` first). |

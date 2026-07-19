@@ -136,6 +136,9 @@ class Config:
     # key itself is never written to disk.
     backend_base_url: str | None = None
     backend_auth_env: str | None = None
+    # `--continue`: resume the last agent session for this working dir
+    # (resolved to a concrete session id at parse time; None = fresh).
+    resume_session_id: str | None = None
     # Audio kept from just BEFORE speech onset and prepended to the utterance.
     # Energy VADs miss quiet first phonemes, and without this the transcript
     # starts mid-word (live-run: "count down to fifty" -> "down to 50").

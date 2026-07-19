@@ -145,12 +145,16 @@ class ClaudeCodeBackend:
         setting_sources: str | None = None,
         append_system_prompt: str | None = None,
         extra_env: dict[str, str] | None = None,
+        resume_session_id: str | None = None,
     ) -> None:
         self._bin = claude_bin
         self._model = model
         self._cwd = cwd
         self._permission_mode = permission_mode
-        self._session_id = session_id or str(uuid.uuid4())
+        # Resuming keeps the SAME session id (spike-verified) — record it as
+        # ours so continuity state stays consistent across resumed launches.
+        self._resume_session_id = resume_session_id
+        self._session_id = resume_session_id or session_id or str(uuid.uuid4())
         self._extra_args = extra_args or []
         # Wire `--permission-prompt-tool stdio`: an unresolved tool call pauses
         # the turn and surfaces here as a control_request instead of a silent
@@ -195,8 +199,12 @@ class ClaudeCodeBackend:
             "--include-partial-messages",
             "--replay-user-messages",
             "--verbose",  # required for stream-json to emit the full event stream
-            "--session-id",
-            self._session_id,
+        ]
+        if self._resume_session_id:
+            argv += ["--resume", self._resume_session_id]
+        else:
+            argv += ["--session-id", self._session_id]
+        argv += [
             "--permission-mode",
             self._permission_mode,
         ]

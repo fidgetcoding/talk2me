@@ -6,3 +6,6 @@ test_wizard overrides it per-case with tempdirs."""
 import os
 
 os.environ.setdefault("TALK2ME_CONFIG", "/nonexistent-t2m-test-config")
+# Same guard for continuity state: reads -> None, writes -> silent no-op
+# (root is unwritable and save_last_session is deliberately best-effort).
+os.environ.setdefault("TALK2ME_STATE", "/nonexistent-t2m-test-state")

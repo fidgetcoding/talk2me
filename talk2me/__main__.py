@@ -227,6 +227,13 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
+        "--continue", "-c", action="store_true", dest="resume",
+        help=(
+            "pick up where you left off: resume the last session for this "
+            "working directory (the agent keeps its memory of what you built)"
+        ),
+    )
+    p.add_argument(
         "--phone", action="store_true",
         help=(
             "use your phone as the mic + speaker (for SSH sessions from an "
@@ -322,6 +329,7 @@ def _parse_args(argv: list[str]) -> Config:
         phone_port=a.phone_port,
         model=a.model,
         cwd=a.cwd,
+        resume_session_id=_resolve_resume(a),
         backend_base_url=a.backend_base_url,
         backend_auth_env=a.backend_auth_env,
         permission_mode=permission_mode,
@@ -349,6 +357,21 @@ def _parse_args(argv: list[str]) -> Config:
         vocab=_collect_vocab(p, a.vocab, a.vocab_file),
         extra_claude_args=a.claude_args,
     )
+
+
+def _resolve_resume(a) -> str | None:
+    """--continue -> the last session id recorded for this working dir."""
+    if not a.resume:
+        return None
+    from .continuity import load_last_session
+
+    sid = load_last_session(a.cwd)
+    if sid is None:
+        print(
+            "(no previous session for this folder — starting fresh)",
+            flush=True,
+        )
+    return sid
 
 
 def _reject_blocked_passthrough(

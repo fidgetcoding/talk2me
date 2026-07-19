@@ -88,11 +88,47 @@ def test_first_run_trigger() -> None:
     )
 
 
+def test_session_continuity() -> None:
+    from talk2me.backends.claude_code import ClaudeCodeBackend
+    from talk2me.continuity import load_last_session, save_last_session
+
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["TALK2ME_STATE"] = os.path.join(tmp, "state.json")
+        _report("no state -> None", load_last_session(tmp) is None)
+        save_last_session(tmp, "sess-abc")
+        save_last_session("/somewhere-else-nonexistent", "sess-zzz")
+        _report(
+            "state keyed by working dir",
+            load_last_session(tmp) == "sess-abc",
+        )
+
+        # --continue resolves the stored id into the parsed config…
+        from talk2me.__main__ import _parse_args
+
+        cfg = _parse_args(["--continue", "--cwd", tmp])
+        _report("--continue resolves session id", cfg.resume_session_id == "sess-abc")
+        cfg2 = _parse_args(["--cwd", tmp])
+        _report("fresh by default", cfg2.resume_session_id is None)
+
+        # …and the backend swaps --session-id for --resume.
+        argv = ClaudeCodeBackend(resume_session_id="sess-abc")._argv()
+        fresh_argv = ClaudeCodeBackend()._argv()
+        _report(
+            "backend argv uses --resume",
+            "--resume" in argv
+            and argv[argv.index("--resume") + 1] == "sess-abc"
+            and "--session-id" not in argv
+            and "--session-id" in fresh_argv,
+        )
+    os.environ["TALK2ME_STATE"] = "/nonexistent-t2m-test-state"
+
+
 def main() -> int:
     os.environ.setdefault("TALK2ME_CONFIG", "/nonexistent-t2m-test-config")
     test_save_load_roundtrip()
     test_saved_config_becomes_defaults()
     test_first_run_trigger()
+    test_session_continuity()
     ok = all(RESULTS)
     print(f"[{'PASS' if ok else 'FAIL'}] overall "
           f"({sum(RESULTS)}/{len(RESULTS)} groups passed)")
