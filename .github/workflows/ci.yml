@@ -64,6 +64,9 @@ jobs:
       - name: test_barge_in
         run: python -m tests.test_barge_in
 
+      - name: test_speaker_stop
+        run: python -m tests.test_speaker_stop
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

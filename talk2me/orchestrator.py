@@ -19,6 +19,7 @@ import asyncio
 import os
 import re
 import sys
+from collections import deque
 from collections.abc import AsyncIterator
 
 import numpy as np
@@ -240,6 +241,12 @@ class Orchestrator:
             if self.cfg.max_utterance_ms > 0
             else 0
         )
+        pre_roll_frames = (
+            max(1, int(self.cfg.pre_roll_ms / frame_ms))
+            if self.cfg.pre_roll_ms > 0
+            else 0
+        )
+        preroll: deque = deque(maxlen=pre_roll_frames or 1)
         self.vad.reset()
         buf: list = []
         consecutive = 0
@@ -250,6 +257,11 @@ class Orchestrator:
             speech = self.vad.is_speech(frame)
             if not cut:
                 if speech:
+                    if consecutive == 0 and pre_roll_frames and preroll:
+                        # Prepend the just-before-onset audio so the first
+                        # word of the interruption isn't clipped.
+                        buf.extend(preroll)
+                        preroll.clear()
                     buf.append(frame)
                     consecutive += 1
                     if consecutive >= onset_needed:
@@ -259,6 +271,10 @@ class Orchestrator:
                         await self.backend.interrupt()
                         print("\n   [barge-in] listening…", flush=True)
                 else:
+                    if pre_roll_frames:
+                        # A near-miss blip: keep its audio in the window too.
+                        preroll.extend(buf)
+                        preroll.append(frame)
                     buf.clear()
                     consecutive = 0
                 continue

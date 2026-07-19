@@ -206,6 +206,9 @@ class Speaker:
         self.device = device  # PortAudio index, or None for the system default
         self._cancel = asyncio.Event()
         self._stream: sd.OutputStream | None = None
+        # True while play() has a write in flight on a worker thread. stop()
+        # must NOT close the stream in that window — see stop().
+        self._playing = False
 
     def _ensure_stream(self) -> sd.OutputStream:
         """Lazily open the shared OutputStream, reusing it across play() calls."""
@@ -242,13 +245,25 @@ class Speaker:
 
     def stop(self) -> None:
         self._cancel.set()
-        # Ending a turn (or aborting on error) — release the device so the next
-        # turn reopens cleanly and a long idle gap doesn't hold the handle.
+        if self._playing and self._stream is not None:
+            # A play() is mid-write on a worker thread (barge-in cutting live
+            # playback). abort() drops the queued audio instantly, but the
+            # close is deferred to play()'s cleanup — closing here races the
+            # blocked write and crashes the loop (live-run bug: PortAudio
+            # -9986 when barge-in stopped the speaker mid-sentence).
+            try:
+                self._stream.abort()
+            except Exception:
+                pass
+            return
+        # Idle stop (turn end, shutdown) — release the device so the next turn
+        # reopens cleanly and a long idle gap doesn't hold the handle.
         self.close()
 
     async def play(self, blocks) -> bool:
         """Play an async-iterable of PCM blocks. Returns False if interrupted."""
         self._cancel.clear()
+        self._playing = True
         try:
             stream = self._ensure_stream()
             async for block in blocks:
@@ -256,10 +271,23 @@ class Speaker:
                     return False
                 # write() blocks; hand it to a thread so the event loop (and the
                 # mic VAD that drives barge-in) keeps running.
-                await asyncio.to_thread(stream.write, block.astype(np.float32))
+                try:
+                    await asyncio.to_thread(stream.write, block.astype(np.float32))
+                except sd.PortAudioError:
+                    if self._cancel.is_set():
+                        # stop() aborted the stream underneath this write — an
+                        # expected cancellation, not a device failure.
+                        return False
+                    raise
             return not self._cancel.is_set()
         except BaseException:
             # On any error (or cancellation) tear the stream down so a half-broken
             # handle isn't reused on the next play().
             self.close()
             raise
+        finally:
+            self._playing = False
+            if self._cancel.is_set():
+                # Interrupted playback: the writer thread is out of the stream
+                # now, so finish the close that stop() deferred.
+                self.close()

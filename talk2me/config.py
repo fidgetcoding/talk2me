@@ -84,6 +84,11 @@ class Config:
     vad_aggressiveness: int = 2  # webrtc only: 0 (lenient) .. 3 (aggressive filtering)
     silence_ms: int = 900  # trailing silence that ends a turn
     min_speech_ms: int = 250  # ignore blips shorter than this
+    # Audio kept from just BEFORE speech onset and prepended to the utterance.
+    # Energy VADs miss quiet first phonemes, and without this the transcript
+    # starts mid-word (live-run: "count down to fifty" -> "down to 50").
+    # 0 disables.
+    pre_roll_ms: int = 300
     # Hard ceiling on one utterance. A stuck-open VAD (noisy room, threshold set
     # below the noise floor) otherwise buffers audio forever: unbounded memory
     # AND a loop that never yields a turn. At the cap the segmenter force-emits

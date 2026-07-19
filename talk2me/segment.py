@@ -7,6 +7,7 @@ when trailing silence exceeds `silence_ms`, provided we heard at least
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import AsyncIterator
 
 import numpy as np
@@ -33,6 +34,14 @@ async def segment_utterances(
         max(1, int(cfg.max_utterance_ms / frame_ms)) if cfg.max_utterance_ms > 0 else 0
     )
 
+    # Rolling window of the frames just BEFORE onset, prepended to the
+    # utterance. Energy VADs trigger a beat late on quiet first phonemes;
+    # without this the transcript starts mid-word ("count down…" -> "down…").
+    pre_roll_frames = (
+        max(1, int(cfg.pre_roll_ms / frame_ms)) if cfg.pre_roll_ms > 0 else 0
+    )
+    preroll: deque[np.ndarray] = deque(maxlen=pre_roll_frames or 1)
+
     buf: list[np.ndarray] = []
     speech_frames = 0
     trailing_silence = 0
@@ -47,6 +56,9 @@ async def segment_utterances(
                 vad.reset()
                 if cfg.debug:
                     print("  ▶ speech", flush=True)
+                if pre_roll_frames and preroll:
+                    buf.extend(preroll)
+                    preroll.clear()
             buf.append(frame)
             speech_frames += 1
             trailing_silence = 0
@@ -65,6 +77,12 @@ async def segment_utterances(
                 trailing_silence = 0
                 in_speech = False
                 vad.reset()
+            continue
+
+        if not in_speech:
+            # Idle silence: remember it for the pre-roll window.
+            if pre_roll_frames:
+                preroll.append(frame)
             continue
 
         if in_speech:

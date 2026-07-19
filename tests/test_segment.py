@@ -84,7 +84,28 @@ async def main() -> int:
           f"expected={[20*FRAME, 20*FRAME, 10*FRAME]} -> "
           f"{'PASS' if case4 else 'FAIL'}")
 
-    ok = case1 and case2 and case3 and case4
+    # --- Case 5: pre-roll — leading quiet audio is prepended on onset ---
+    # 5 idle silence frames, then speech. With pre_roll_ms=300 (10 frames) the
+    # emitted utterance must include the 5 buffered pre-onset frames, so the
+    # first word's quiet opening phoneme isn't clipped.
+    pre_stream = _silence(5) + _speech(15) + _silence(35)
+    pre_got = await _segment(pre_stream, cfg)
+    pre_one = len(pre_got) == 1
+    pre_len = pre_one and pre_got[0].shape[0] == (5 + 15 + 30) * FRAME
+    case5 = pre_one and pre_len
+    print(f"[case5 pre-roll prepended] utterances={len(pre_got)} "
+          f"len={(pre_got[0].shape[0] if pre_got else 0)} expected={50*FRAME} "
+          f"-> {'PASS' if case5 else 'FAIL'}")
+
+    # --- Case 6: pre-roll disabled -> old exact behavior ---
+    no_pre_cfg = Config(silence_ms=900, min_speech_ms=250, pre_roll_ms=0)
+    np_got = await _segment(_silence(5) + _speech(15) + _silence(35), no_pre_cfg)
+    case6 = len(np_got) == 1 and np_got[0].shape[0] == 45 * FRAME
+    print(f"[case6 pre-roll disabled] len="
+          f"{(np_got[0].shape[0] if np_got else 0)} expected={45*FRAME} "
+          f"-> {'PASS' if case6 else 'FAIL'}")
+
+    ok = case1 and case2 and case3 and case4 and case5 and case6
     print(f"-> {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
