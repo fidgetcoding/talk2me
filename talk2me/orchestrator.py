@@ -803,14 +803,61 @@ class Orchestrator:
         consecutive = 0
         trailing = 0
         cut = False
+        # Wake-word listener state, used ONLY while paused: collects
+        # utterances WITHOUT ever cutting the turn, and acts solely on
+        # resume commands. This is what keeps "wake up" audible mid-task
+        # after a mid-task "sleep" — previously the monitor went fully deaf
+        # while paused and wake words were swallowed (live-reported).
+        wake_onset = max(1, int(self.cfg.min_speech_ms / frame_ms))
+        w_buf: list = []
+        w_voiced = 0
+        w_trailing = 0
+        w_started = False
 
         async for frame in self.mic.frames():
             if self._paused and not cut:
-                # Asleep: the monitor never cuts a working turn. Wake-up
-                # happens between turns through the main loop.
-                preroll.clear()
-                buf.clear()
-                consecutive = 0
+                speech = self.vad.is_speech(frame)
+                if not w_started:
+                    if speech:
+                        w_buf.append(frame)
+                        w_voiced += 1
+                        if w_voiced >= wake_onset:
+                            w_started = True
+                    else:
+                        w_buf.clear()
+                        w_voiced = 0
+                    continue
+                w_buf.append(frame)
+                if speech:
+                    w_trailing = 0
+                else:
+                    w_trailing += 1
+                if w_trailing >= silence_needed or len(w_buf) >= max_frames:
+                    utterance = np.concatenate(w_buf).astype(np.float32)
+                    w_buf, w_voiced, w_trailing, w_started = [], 0, 0, False
+                    if self._speech_check is not None and not await asyncio.to_thread(
+                        self._speech_check, utterance, self.mic.sample_rate
+                    ):
+                        continue
+                    raw = await self.stt.transcribe(
+                        utterance, self.mic.sample_rate
+                    )
+                    if control_intent(collapse_stutter(raw)) == "resume":
+                        # Wake WITHOUT touching the running turn: screen
+                        # confirm only — a spoken one would talk over the
+                        # agent. Barge re-arms naturally (paused is False).
+                        self._paused = False
+                        self._listening_fresh = False
+                        self.render.awake()
+                        self.render.status_note(
+                            "still working — I'm listening again"
+                        )
+                        if self.log:
+                            self.log.event(
+                                "listening resumed by voice (mid-task)"
+                            )
+                    elif self.cfg.debug and raw:
+                        self.render.debug(f"(paused — ignored: {raw})")
                 continue
             speech = self.vad.is_speech(frame)
             if not cut:

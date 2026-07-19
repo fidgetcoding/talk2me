@@ -299,6 +299,69 @@ async def test_typed_intervention() -> None:
     )
 
 
+async def test_wake_word_mid_task() -> None:
+    """'Sleep.' mid-work pauses + auto-resumes the task; a later 'Wake up.'
+    mid-work UNPAUSES without cutting the still-running turn."""
+    from talk2me.events import AssistantTextDelta, ToolActivity, TurnComplete
+
+    class WakeBackend(FakeBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self._turn = 0
+
+        async def send(self, user_text: str) -> None:
+            self.sent.append(user_text)
+            self._turn += 1
+            await self._q.put(ToolActivity(name="Write"))
+            await self._q.put(AssistantTextDelta(text="Working on it. "))
+            # Neither turn completes on its own: turn 1 ends via the Sleep
+            # interrupt; turn 2 (the auto-resend) is completed by the test
+            # once the mid-task wake has landed.
+
+        async def interrupt(self) -> None:
+            await super().interrupt()
+            await self._q.put(TurnComplete(text="Working on it."))
+
+    cfg = Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False)
+    frames = (
+        _speech(15) + _silence(80)      # "Build the thing."
+        + _speech(20) + _silence(40)    # "Sleep." -> cut, pause, auto-resend
+        + _speech(20) + _silence(200)   # "Wake up." -> mid-task resume, NO cut
+    )
+    backend = WakeBackend()
+    orch = Orchestrator(
+        cfg=cfg,
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Build the thing.", "Sleep.", "Wake up."]),
+        tts=FakeTTS(),
+        mic=FakeMic(frames, sample_rate=SR),
+        speaker=FakeSpeaker(SR),
+    )
+
+    async def _release_when_awake() -> None:
+        # Stand-in for the agent finishing: once the wake lands, end turn 2.
+        while orch._paused or backend.interrupts < 1:
+            await asyncio.sleep(0.05)
+        await backend._q.put(TurnComplete(text="All done."))
+
+    releaser = asyncio.create_task(_release_when_awake())
+    await asyncio.wait_for(orch.run(), timeout=15)
+    await asyncio.wait_for(releaser, timeout=5)
+
+    check(
+        "sleep cut once, wake cut nothing",
+        backend.interrupts == 1,
+        f"interrupts={backend.interrupts}",
+    )
+    check(
+        "task auto-resent after sleep; wake never sent",
+        backend.sent == ["Build the thing.", "Build the thing."],
+        str(backend.sent),
+    )
+    check("ended awake", orch._paused is False)
+
+
 async def test_session_picker() -> None:
     """'Resume previous session.' lists earlier sessions; a spoken number
     switches the live backend onto that conversation."""
@@ -388,6 +451,7 @@ async def main() -> int:
     await test_presend_timeout_sends_fragment()
     await test_half_duplex_tool_gap_unmute()
     await test_typed_intervention()
+    await test_wake_word_mid_task()
     await test_session_picker()
     await test_speech_check_gate()
 
