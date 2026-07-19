@@ -202,7 +202,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | A dotted card full of code | The actual work — file contents for `Write`, a `-`/`+` diff for `Edit`, long `Bash` commands. | Watch your code get written. |
 | `[tool] Bash` etc. (v1 / `--plain`) — or the live `working` panel (v2) | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
 | `⚙ N tool calls · 42s` | The work panel folded into its receipt — the tool burst is over and the agent is talking (or done). | Nothing. |
-| *a soft "tink" every ~8s* | The working tick: it's mid-tool-run and fine, just busy. The audible version of a spinner. | Nothing. Silence + no tick + no marker is the bad combo. (`--no-ticks` disables.) |
+| *a soft "tink" every ~8s* (only with `--ticks`) | The working tick: mid-tool-run and fine, just busy. OFF by default — the work panel shows the same thing silently. | Nothing. |
 | `[permission] Bash: command=…` + a spoken question | The approval gate (`--gated` mode only). The agent wants to run something and the turn is PAUSED until you answer. | Say "approve" or "deny". Unclear twice = auto-deny. |
 | `[barge-in] listening…` | You talked over it (or something did). Playback and the agent's turn were cut; it's now collecting what you're saying. | Finish your sentence — it becomes the next message. |
 | `[go on…]` | Same cut, but it happened before the agent said anything — it thinks you're still finishing YOUR sentence. | Keep talking; your fragments get stitched together. |

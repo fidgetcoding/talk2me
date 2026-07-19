@@ -220,8 +220,11 @@ def _parse_args(argv: list[str]) -> Config:
         "folder (persistent default: export TALK2ME_SAVE_DIR=~/talk2me-logs)",
     )
     p.add_argument(
-        "--no-ticks", action="store_true",
-        help="disable the soft 'still working' blip during long tool runs",
+        "--ticks", action=argparse.BooleanOptionalAction, default=False,
+        help=(
+            "audible 'still working' blip every ~8 quiet seconds during long "
+            "tool runs. OFF by default — the work panel shows it on screen."
+        ),
     )
     p.add_argument(
         "--phone", action="store_true",
@@ -312,7 +315,7 @@ def _parse_args(argv: list[str]) -> Config:
     return Config(
         debug=a.debug,
         save_dir=a.save_dir,
-        working_ticks=not a.no_ticks,
+        working_ticks=a.ticks,
         plain=a.plain,
         speech_check=a.speech_check,
         phone=a.phone,

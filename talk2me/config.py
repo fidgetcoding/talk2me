@@ -171,9 +171,10 @@ class Config:
     # --- misc ---
     extra_claude_args: list[str] = field(default_factory=list)
     debug: bool = False  # print VAD speech/turn transitions for threshold tuning
-    # Soft audible blip every ~8 quiet seconds while the agent is mid-tool-run,
-    # so a long silence reads as "working" instead of "dead".
-    working_ticks: bool = True
+    # Soft audible blip every ~8 quiet seconds while the agent is mid-tool-run.
+    # OFF by default since v2: the live work panel shows the same signal on
+    # screen, and the blips annoyed in practice (live feedback 2026-07-19).
+    working_ticks: bool = False
     # Directory for plain-markdown session transcripts (None = don't save).
     # CLI --save-dir; persistent via the TALK2ME_SAVE_DIR env var.
     save_dir: str | None = None
