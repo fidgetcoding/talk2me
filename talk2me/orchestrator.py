@@ -41,9 +41,12 @@ from .segment import segment_utterances
 
 _SENTENCE = re.compile(r"(.+?[.!?]+)(\s+|$)", re.DOTALL)
 
-# How long to keep listening for the rest of a sentence that sounds unfinished
-# before sending it anyway (per extension; at most 2 extensions).
+# How long to wait for the user to START speaking again after an unfinished-
+# sounding transcript, per extension (at most 3 extensions). Once speech has
+# started, the utterance is always heard out — the timeout never cuts a
+# sentence mid-air (the old total-time window did, live).
 CONTINUATION_WAIT_S = 6.0
+MAX_CONTINUATION_EXTENSIONS = 3
 
 # Trailing words that mean the speaker hasn't finished the thought, even when
 # the STT appended a period.
@@ -149,6 +152,12 @@ class Orchestrator:
         # When the current user turn was handed to the backend; drives the
         # --debug latency lines (first-token / first-audio).
         self._t_sent = 0.0
+        # Per-turn render/play pipeline: sentence n+1 renders WHILE sentence n
+        # plays, so the voice never stalls between chunks waiting on `say`.
+        self._render_q: asyncio.Queue[str | None] | None = None
+        self._blocks_q: asyncio.Queue[list | None] | None = None
+        self._render_task: asyncio.Task[None] | None = None
+        self._play_task: asyncio.Task[None] | None = None
 
     async def run(self) -> None:
         await self.backend.start()
@@ -188,14 +197,7 @@ class Orchestrator:
                 # An unfinished-sounding transcript is NOT sent yet: keep the
                 # mic open and stitch the rest on BEFORE the agent ever sees a
                 # fragment ("So what do you call … [pause] … a linked list").
-                extensions = 0
-                while _seems_unfinished(text) and extensions < 2:
-                    print("   (…waiting for the rest)", flush=True)
-                    more = await self._listen_once(CONTINUATION_WAIT_S)
-                    if not more:
-                        break
-                    text = f"{text} {more}"
-                    extensions += 1
+                text = await self._extend_unfinished(text)
                 print(f"\n🗣  you: {text}", flush=True)
                 last_text = text
                 self._t_sent = time.monotonic()
@@ -219,6 +221,10 @@ class Orchestrator:
                 noise_resends = 0
                 while not self._fatal:
                     if barge:
+                        # A barge can trail off exactly like a normal turn —
+                        # give it the same stitch-before-send treatment so a
+                        # fragment never reaches the agent through this path.
+                        barge = await self._extend_unfinished(barge)
                         if self._continuation and last_text:
                             to_send = f"{last_text} {barge}"
                             print(f"\n🗣  you (continued): {to_send}", flush=True)
@@ -275,6 +281,7 @@ class Orchestrator:
         # finishing a sentence the segmenter cut too early (continuation).
         # In full duplex (--barge-in) it additionally hears through playback.
         self._barge_task = asyncio.create_task(self._barge_monitor())
+        self._start_speech_pipeline()
         sys.stdout.write("🤖 ")
         sys.stdout.flush()
 
@@ -311,12 +318,12 @@ class Orchestrator:
                     if self._interrupted:
                         continue  # user cut playback; keep text on screen only
                     speaking = self._begin_speaking(speaking)
-                    # Flip BEFORE the (interruptible) play: a cut landing mid-
-                    # first-sentence is a barge on heard speech, not a
-                    # continuation of an unheard turn.
-                    first = not self._spoke_any
+                    # Flip at ENQUEUE: audio follows within ~a render, and a
+                    # cut after this point means the user reacted to (or
+                    # talked over) real agent speech, not a silent turn.
                     self._spoke_any = True
-                    await self._speak(sentence, mark_first_audio=first)
+                    assert self._render_q is not None
+                    await self._render_q.put(sentence)
             elif isinstance(ev, ToolActivity):
                 print(f"\n   [tool] {ev.name}", flush=True)
             elif isinstance(ev, PermissionRequest):
@@ -329,9 +336,9 @@ class Orchestrator:
             elif isinstance(ev, TurnComplete):
                 if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
-                    first = not self._spoke_any
                     self._spoke_any = True
-                    await self._speak(pending, mark_first_audio=first)
+                    assert self._render_q is not None
+                    await self._render_q.put(pending)
                 # Feed proper nouns / identifiers from the agent's reply to the
                 # STT as live hotword context — terms the user is likely to say
                 # back next turn. Duck-typed: engines without set_context are
@@ -348,6 +355,11 @@ class Orchestrator:
                 print(f"\n[backend error] {ev.message}", flush=True)
                 self._fatal = True
                 break
+
+        # Let queued speech finish (or flush fast after an interrupt) BEFORE
+        # the mic reopens — in half-duplex the agent must not be mid-sentence
+        # with a live mic.
+        await self._drain_speech_pipeline()
 
         if speaking:
             self.mic.set_muted(False)
@@ -465,24 +477,67 @@ class Orchestrator:
         # echo cancellation.
         return True
 
-    async def _speak(self, text: str, *, mark_first_audio: bool = False) -> None:
-        blocks = self.tts.synthesize(text)
-        if mark_first_audio and self.cfg.debug and self._t_sent:
-            blocks = self._marked_first_block(blocks)
-        await self.speaker.play(blocks)
+    async def _speak(self, text: str) -> None:
+        """Direct, serial speech — used by the permission gate's prompts. Turn
+        prose goes through the render/play pipeline instead."""
+        await self.speaker.play(self.tts.synthesize(text))
 
-    async def _marked_first_block(self, blocks):
-        """Log send→first-PCM-block latency: the moment TTS render finished and
-        playback actually begins (--debug only)."""
-        logged = False
-        async for block in blocks:
-            if not logged:
-                logged = True
-                print(
-                    f"\n  [t] first-audio {time.monotonic() - self._t_sent:.2f}s",
-                    flush=True,
-                )
-            yield block
+    # ---- speech pipeline -------------------------------------------------
+
+    def _start_speech_pipeline(self) -> None:
+        self._render_q = asyncio.Queue()
+        # maxsize=1: render exactly one chunk ahead of playback.
+        self._blocks_q = asyncio.Queue(maxsize=1)
+        self._render_task = asyncio.create_task(self._render_worker())
+        self._play_task = asyncio.create_task(self._play_worker())
+
+    async def _drain_speech_pipeline(self) -> None:
+        """Finish queued speech and stop the workers. Safe to call twice."""
+        if self._render_task is None or self._render_q is None:
+            return
+        await self._render_q.put(None)
+        await asyncio.gather(
+            self._render_task, self._play_task, return_exceptions=True
+        )
+        self._render_task = self._play_task = None
+        self._render_q = self._blocks_q = None
+
+    async def _render_worker(self) -> None:
+        assert self._render_q is not None and self._blocks_q is not None
+        while True:
+            text = await self._render_q.get()
+            if text is None:
+                await self._blocks_q.put(None)
+                return
+            if self._interrupted:
+                continue
+            blocks: list = []
+            try:
+                async for block in self.tts.synthesize(text):
+                    blocks.append(block)
+            except Exception as exc:  # a bad render skips the chunk, not the turn
+                print(f"\n[tts] {exc!r}", flush=True)
+                continue
+            await self._blocks_q.put(blocks)
+
+    async def _play_worker(self) -> None:
+        assert self._blocks_q is not None
+        first = True
+        while True:
+            item = await self._blocks_q.get()
+            if item is None:
+                return
+            if self._interrupted:
+                continue
+            if first:
+                first = False
+                if self.cfg.debug and self._t_sent:
+                    print(
+                        f"\n  [t] first-audio "
+                        f"{time.monotonic() - self._t_sent:.2f}s",
+                        flush=True,
+                    )
+            await self.speaker.play(_iter_blocks(item))
 
     async def _handle_permission(self, ev: PermissionRequest) -> None:
         """Spoken approve/deny gate for one paused tool call.
@@ -494,6 +549,10 @@ class Orchestrator:
         """
         detail = _permission_detail(ev)
         print(f"\n   [permission] {ev.tool_name}: {detail}", flush=True)
+        # Let any queued turn speech finish before the spoken prompt, then
+        # take over the audio path serially for the approval round-trip. The
+        # pipeline restarts before returning so post-approval prose flows.
+        await self._drain_speech_pipeline()
         # Full duplex: the barge-in monitor is also reading mic frames — park it
         # so the gate's listener doesn't race it for the approve/deny utterance.
         # (An approval prompt shouldn't be barge-able anyway.) _consume_turn
@@ -536,22 +595,101 @@ class Orchestrator:
         await self.backend.respond_permission(
             ev.request_id, allow, message=None if allow else "Denied by voice"
         )
+        self._start_speech_pipeline()
 
-    async def _listen_once(self, timeout: float) -> str:
-        """Capture and transcribe a single utterance (for the permission gate).
+    async def _listen_once(self, onset_timeout: float) -> str:
+        """Capture and transcribe a single utterance (gate + continuations).
 
-        Opens a temporary segmenter over the shared mic frame stream — safe
-        because the main listen loop in run() is parked awaiting _consume_turn
-        and never competes for frames mid-turn. Timeout or stream end -> "".
+        `onset_timeout` bounds only the wait for speech to START; a started
+        utterance is always collected to its natural end (trailing silence /
+        max-utterance cap) — a hard total-time cutoff cancelled sentences
+        mid-air in live sessions. Reads the shared mic frame stream directly;
+        safe because run()'s main segmenter is parked while this runs.
+        Timeout or stream end without enough speech -> "".
         """
-        agen = segment_utterances(self.mic.frames(), self.vad, self.cfg)
+        frame_ms = (self.vad.frame_samples / self.vad.sample_rate) * 1000.0
+        onset_needed = max(1, int(self.cfg.min_speech_ms / frame_ms))
+        silence_needed = max(1, int(self.cfg.silence_ms / frame_ms))
+        max_frames = (
+            max(1, int(self.cfg.max_utterance_ms / frame_ms))
+            if self.cfg.max_utterance_ms > 0
+            else 0
+        )
+        pre_roll_frames = (
+            max(1, int(self.cfg.pre_roll_ms / frame_ms))
+            if self.cfg.pre_roll_ms > 0
+            else 0
+        )
+        preroll: deque = deque(maxlen=pre_roll_frames or 1)
+        deadline = time.monotonic() + onset_timeout
+        buf: list = []
+        voiced = 0
+        trailing = 0
+        started = False
+
+        self.vad.reset()
+        frames = self.mic.frames()
         try:
-            utterance = await asyncio.wait_for(anext(agen), timeout)
-        except (StopAsyncIteration, asyncio.TimeoutError):
-            return ""
+            while True:
+                if started:
+                    try:
+                        frame = await anext(frames)
+                    except StopAsyncIteration:
+                        break  # stream end mid-utterance: flush what we have
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return ""
+                    try:
+                        frame = await asyncio.wait_for(anext(frames), remaining)
+                    except (StopAsyncIteration, asyncio.TimeoutError):
+                        return ""
+                speech = self.vad.is_speech(frame)
+                if not started:
+                    if speech:
+                        if voiced == 0 and pre_roll_frames and preroll:
+                            buf.extend(preroll)
+                            preroll.clear()
+                        buf.append(frame)
+                        voiced += 1
+                        if voiced >= onset_needed:
+                            started = True
+                    else:
+                        if pre_roll_frames:
+                            preroll.extend(buf)
+                            preroll.append(frame)
+                        buf.clear()
+                        voiced = 0
+                    continue
+                buf.append(frame)
+                if speech:
+                    trailing = 0
+                else:
+                    trailing += 1
+                    if trailing >= silence_needed:
+                        break
+                if max_frames and len(buf) >= max_frames:
+                    break
         finally:
-            await agen.aclose()
+            await frames.aclose()
+
+        if not started or not buf:
+            return ""
+        utterance = np.concatenate(buf).astype(np.float32)
         return await self.stt.transcribe(utterance, self.mic.sample_rate)
+
+    async def _extend_unfinished(self, text: str) -> str:
+        """Keep the mic open while a transcript sounds unfinished, stitching
+        follow-up fragments on BEFORE anything reaches the agent."""
+        extensions = 0
+        while _seems_unfinished(text) and extensions < MAX_CONTINUATION_EXTENSIONS:
+            print("   (…waiting for the rest)", flush=True)
+            more = await self._listen_once(CONTINUATION_WAIT_S)
+            if not more:
+                break
+            text = f"{text} {more}"
+            extensions += 1
+        return text
 
 
 def _drain_sentences(buf: str) -> tuple[str, list[str]]:
@@ -644,6 +782,12 @@ def _context_terms(text: str, limit: int = 30) -> list[str]:
             if len(out) >= limit:
                 break
     return out
+
+
+async def _iter_blocks(blocks: list):
+    """Adapt a pre-rendered block list back to the async-iterable play() expects."""
+    for block in blocks:
+        yield block
 
 
 def match_intent(text: str) -> str | None:

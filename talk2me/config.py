@@ -55,8 +55,10 @@ VOICE_SYSTEM_PROMPT = (
     "rather than asking multi-part clarifying questions. The user's speech is "
     "auto-segmented, so a message may be the continuation of their previous "
     "message that was cut off mid-sentence; when a message reads like a "
-    "continuation, treat the two as one instruction and never answer the "
-    "fragment literally."
+    "continuation, treat the two as one instruction. If a message still seems "
+    "cut off, answer the likely intent when you can infer it; only when it is "
+    "genuinely ambiguous ask for the rest in a few words — never repeat their "
+    "sentence back to them."
 )
 
 
