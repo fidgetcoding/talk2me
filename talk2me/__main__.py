@@ -343,6 +343,9 @@ def _collect_vocab(
 async def _run_voice(cfg: Config) -> int:
     from .audio import Mic, Speaker, output_is_speakers, resolve_device
     from .orchestrator import Orchestrator
+    from .render import PlainRenderer
+
+    renderer = PlainRenderer()
 
     # Resolve name/index specs to PortAudio indices up front so a typo'd device
     # fails with a clean message before the agent process spins up. Independent
@@ -351,7 +354,7 @@ async def _run_voice(cfg: Config) -> int:
         input_idx = resolve_device(cfg.input_device, "input")
         output_idx = resolve_device(cfg.output_device, "output")
     except ValueError as exc:
-        print(f"[device] {exc}\n\nRun `talk2me --list-devices` to see options.", flush=True)
+        renderer.device_error(str(exc))
         return 2
 
     # Adaptive duplex: --barge-in is the user's intent, but if the audio is
@@ -359,11 +362,7 @@ async def _run_voice(cfg: Config) -> int:
     # would hear the TTS and cut every answer on its own echo. Downgrade to the
     # safe half-duplex loop for this session instead of misbehaving.
     if cfg.barge_in and output_is_speakers(output_idx):
-        print(
-            "🔈 speakers on the output — barge-in off for this session so I "
-            "don't argue with my own echo. Plug in headphones to interrupt me.",
-            flush=True,
-        )
+        renderer.speaker_downgrade()
         cfg.barge_in = False
         cfg.half_duplex = True
 
@@ -374,7 +373,7 @@ async def _run_voice(cfg: Config) -> int:
         session_log = SessionLog(
             cfg.save_dir, model=cfg.model, stt=cfg.stt, cwd=cfg.cwd
         )
-        print(f"📝 saving transcript to {session_log.path}", flush=True)
+        renderer.transcript_path(session_log.path)
 
     tts = factory.build_tts(cfg)
     orch = Orchestrator(
@@ -386,6 +385,7 @@ async def _run_voice(cfg: Config) -> int:
         mic=Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx),
         speaker=Speaker(tts.sample_rate, device=output_idx),
         session_log=session_log,
+        renderer=renderer,
     )
     await orch.run()
     return 0

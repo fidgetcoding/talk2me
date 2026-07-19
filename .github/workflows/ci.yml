@@ -73,6 +73,9 @@ jobs:
       - name: test_flow
         run: python -m tests.test_flow
 
+      - name: test_render
+        run: python -m tests.test_render
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

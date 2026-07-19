@@ -19,7 +19,6 @@ import asyncio
 import os
 import re
 import subprocess
-import sys
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -38,6 +37,7 @@ from .events import (
     TurnComplete,
 )
 from .protocols import STT, TTS, VAD, AgentBackend
+from .render import PlainRenderer, Renderer
 from .segment import segment_utterances
 
 _SENTENCE = re.compile(r"(.+?[.!?]+)(\s+|$)", re.DOTALL)
@@ -144,6 +144,7 @@ class Orchestrator:
         mic: Mic,
         speaker: Speaker,
         session_log=None,
+        renderer: Renderer | None = None,
     ) -> None:
         self.cfg = cfg
         self.backend = backend
@@ -153,6 +154,10 @@ class Orchestrator:
         self.mic = mic
         self.speaker = speaker
         self.log = session_log  # SessionLog | None — duck-typed, optional
+        # Every user-facing line goes through this seam. The default is the
+        # launch build's exact output (parity-locked by tests/test_render.py),
+        # which is also why existing suites construct without it and pass.
+        self.render: Renderer = renderer or PlainRenderer()
         # Set when a turn dies on a BackendError; tells run() to stop cleanly
         # instead of looping forever against a dead backend process.
         self._fatal = False
@@ -194,38 +199,11 @@ class Orchestrator:
         # utterance streamed); a second of visible startup is the honest cost.
         # Duck-typed: engines without warmup() lazy-load on first use.
         if hasattr(self.stt, "warmup"):
-            print("(loading the ears…)", flush=True)
+            self.render.loading_ears()
             await asyncio.to_thread(self.stt.warmup)
-        print(
-            "talk2me ready — start talking. Ctrl-C to quit. "
-            "Created by @fidgetcoding :)",
-            flush=True,
-        )
-        tools_mode = (
-            "auto-approve ⚡"
-            if "bypass" in self.cfg.permission_mode.lower()
-            else "gated (spoken approvals)"
-        )
-        print(
-            f"   model: {self.cfg.model or 'claude default'} · "
-            f"ears: {self.cfg.stt} · voice: {self.cfg.voice or 'system'} "
-            f"@{self.cfg.rate_wpm or 'default'}wpm · "
-            f"barge-in: {'ON' if self.cfg.barge_in else 'off'} · "
-            f"tools: {tools_mode}",
-            flush=True,
-        )
-        print(
-            f"   working on: {self.cfg.cwd or os.getcwd()}",
-            flush=True,
-        )
-        if self.cfg.half_duplex:
-            print(
-                "   (half-duplex: talking over the agent mid-speech is ignored "
-                "— run with --barge-in and headphones to interrupt it)",
-                flush=True,
-            )
+        self.render.startup(self.cfg)
         try:
-            print("\n🎧 listening…", flush=True)
+            self.render.listening()
             last_text = ""
             async for utterance in segment_utterances(
                 self.mic.frames(), self.vad, self.cfg
@@ -233,19 +211,18 @@ class Orchestrator:
                 t_captured = time.monotonic()
                 raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
                 if self.cfg.debug:
-                    print(
-                        f"  [t] stt {time.monotonic() - t_captured:.2f}s",
-                        flush=True,
+                    self.render.debug(
+                        f"[t] stt {time.monotonic() - t_captured:.2f}s"
                     )
                 if raw and looks_hallucinated(raw):
                     # Non-speech audio (fan hum, ambient) hallucinates as
                     # looped words — often the agent's own vocabulary, because
                     # the STT is context-seeded with it. Never send those.
-                    print("   (ignored — transcription noise)", flush=True)
+                    self.render.noise_ignored()
                     raw = ""
                 text = collapse_stutter(raw)
                 if not text:
-                    print("🎧 listening…", flush=True)
+                    self.render.listening(nl=False)
                     continue
                 # Voice controls for the loop itself: "pause listening" mutes
                 # the conversation (everything heard, nothing sent) until a
@@ -254,22 +231,19 @@ class Orchestrator:
                 if self._paused:
                     if intent == "resume":
                         self._paused = False
-                        print("\n▶️  awake — listening again", flush=True)
+                        self.render.awake()
                         if self.log:
                             self.log.event("listening resumed by voice")
                         await self._speak_confirm("I'm back.")
-                        print("\n🎧 listening…", flush=True)
+                        self.render.listening()
                     else:
                         if self.cfg.debug:
-                            print(f"   (paused — ignored: {text})", flush=True)
-                        print("⏸  still paused — say 'wake up'", flush=True)
+                            self.render.paused_ignored(text)
+                        self.render.still_paused()
                     continue
                 if intent == "pause":
                     self._paused = True
-                    print(
-                        "\n⏸  paused — say 'wake up' when you need me",
-                        flush=True,
-                    )
+                    self.render.paused()
                     if self.log:
                         self.log.event("listening paused by voice")
                     await self._speak_confirm(
@@ -280,7 +254,7 @@ class Orchestrator:
                 # mic open and stitch the rest on BEFORE the agent ever sees a
                 # fragment ("So what do you call … [pause] … a linked list").
                 text = await self._extend_unfinished(text)
-                print(f"\n🗣  you: {text}", flush=True)
+                self.render.you(text)
                 if self.log:
                     self.log.user(text)
                 last_text = text
@@ -293,7 +267,7 @@ class Orchestrator:
                     # a traceback or hang forever — flag fatal and exit cleanly via
                     # the finally block. (The BackendError-event path sets _fatal too;
                     # this guards the send call itself.)
-                    print(f"\n[backend send failed] {e}", flush=True)
+                    self.render.error(f"[backend send failed] {e}")
                     self._fatal = True
                     break
                 barge = await self._consume_turn(events)
@@ -311,12 +285,12 @@ class Orchestrator:
                         barge = await self._extend_unfinished(barge)
                         if self._continuation and last_text:
                             to_send = f"{last_text} {barge}"
-                            print(f"\n🗣  you (continued): {to_send}", flush=True)
+                            self.render.you(to_send, "continued")
                             if self.log:
                                 self.log.user(to_send, "continued")
                         else:
                             to_send = barge
-                            print(f"\n🗣  you (barge-in): {to_send}", flush=True)
+                            self.render.you(to_send, "barge-in")
                             if self.log:
                                 self.log.user(to_send, "barge-in")
                         last_text = to_send
@@ -327,30 +301,30 @@ class Orchestrator:
                         # it (once — a noisy room must not loop forever).
                         noise_resends += 1
                         to_send = last_text
-                        print(
-                            "\n   (noise interrupt — repeating your question)",
-                            flush=True,
-                        )
+                        self.render.noise_resend()
                     else:
                         break
                     self._t_sent = time.monotonic()
                     try:
                         await self.backend.send(to_send)
                     except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
-                        print(f"\n[backend send failed] {e}", flush=True)
+                        self.render.error(f"[backend send failed] {e}")
                         self._fatal = True
                         break
                     barge = await self._consume_turn(events)
                 if self._fatal:
-                    print("\nbackend gone — shutting down.", flush=True)
+                    self.render.error("backend gone — shutting down.")
                     break
-                print("\n🎧 listening…", flush=True)
+                self.render.listening()
         finally:
             self.mic.stop()
             # Release the audio output device at session end. stop() is a no-op-safe
             # method on the real Speaker (and the fake), so this can't strand a handle.
             self.speaker.stop()
             await self.backend.close()
+            # Restore the terminal LAST — a fancy renderer may own screen
+            # state; Plain's close() is a no-op. Safe to call twice.
+            self.render.close()
 
     async def _consume_turn(self, events: AsyncIterator[AgentEvent]) -> str | None:
         """Drive one agent turn: stream text to TTS, surface tools, end on result.
@@ -380,21 +354,19 @@ class Orchestrator:
         ticker: asyncio.Task[None] | None = None
         if self.cfg.working_ticks:
             ticker = asyncio.create_task(self._working_ticker())
-        sys.stdout.write("🤖 ")
-        sys.stdout.flush()
+        self.render.agent_begin()
 
         async for ev in events:
             if isinstance(ev, AssistantTextDelta):
                 if not saw_token:
                     saw_token = True
                     if self.cfg.debug and self._t_sent:
-                        print(
-                            f"\n  [t] first-token "
+                        self.render.debug(
+                            f"[t] first-token "
                             f"{time.monotonic() - self._t_sent:.2f}s",
-                            flush=True,
+                            nl=True,
                         )
-                sys.stdout.write(ev.text)
-                sys.stdout.flush()
+                self.render.agent_delta(ev.text)
                 pending += ev.text
                 pending, ready = _drain_sentences(pending)
                 if not ready and not self._spoke_any and not self._interrupted:
@@ -428,13 +400,11 @@ class Orchestrator:
                     # the arguments as a follow-on, log once (with detail),
                     # and do NOT count it again.
                     announced.remove(ev.name)
-                    if ev.summary:
-                        print(f"      ↳ {ev.summary}", flush=True)
+                    self.render.tool(ev.name, ev.summary, follow_on=True)
                     if self.log:
                         self.log.tool(ev.name, ev.summary)
                 else:
-                    detail = f" — {ev.summary}" if ev.summary else ""
-                    print(f"\n   [tool] {ev.name}{detail}", flush=True)
+                    self.render.tool(ev.name, ev.summary)
                     self._saw_tool = True
                     self._tool_count += 1
                     if ev.upgrade:
@@ -467,14 +437,14 @@ class Orchestrator:
                     self.stt.set_context(_context_terms(ev.text))
                 if self.log:
                     self.log.assistant(ev.text)
-                print(flush=True)
+                self.render.agent_end()
                 break
             elif isinstance(ev, SessionReady):
                 continue
             elif isinstance(ev, BackendError):
                 # Backend process is gone. Don't loop forever against a corpse —
                 # flag it so run() breaks the listen loop into its finally block.
-                print(f"\n[backend error] {ev.message}", flush=True)
+                self.render.error(f"[backend error] {ev.message}")
                 self._fatal = True
                 break
 
@@ -522,11 +492,7 @@ class Orchestrator:
                 self._last_audible = time.monotonic()
                 # Screen companion to the audible tick — a long silent build
                 # shows life in BOTH channels.
-                print(
-                    f"   ⚙ still working… ({self._tool_count} tool "
-                    f"call{'s' if self._tool_count != 1 else ''} so far)",
-                    flush=True,
-                )
+                self.render.working(self._tool_count)
                 if self._ticks_broken:
                     continue
                 try:
@@ -588,12 +554,7 @@ class Orchestrator:
                         self._interrupted = True
                         self.speaker.stop()
                         await self.backend.interrupt()
-                        label = (
-                            "[barge-in] listening…"
-                            if self._spoke_any
-                            else "[go on…]"
-                        )
-                        print(f"\n   {label}", flush=True)
+                        self.render.barge_label(self._spoke_any)
                 else:
                     if pre_roll_frames:
                         # A near-miss blip: keep its audio in the window too.
@@ -693,7 +654,7 @@ class Orchestrator:
                 async for block in self.tts.synthesize(text):
                     blocks.append(block)
             except Exception as exc:  # a bad render skips the chunk, not the turn
-                print(f"\n[tts] {exc!r}", flush=True)
+                self.render.error(f"[tts] {exc!r}")
                 continue
             await self._blocks_q.put(blocks)
 
@@ -709,10 +670,10 @@ class Orchestrator:
             if first:
                 first = False
                 if self.cfg.debug and self._t_sent:
-                    print(
-                        f"\n  [t] first-audio "
+                    self.render.debug(
+                        f"[t] first-audio "
                         f"{time.monotonic() - self._t_sent:.2f}s",
-                        flush=True,
+                        nl=True,
                     )
             self._last_audible = time.monotonic()
             await self.speaker.play(_iter_blocks(item))
@@ -727,7 +688,7 @@ class Orchestrator:
         skips the tool) afterward.
         """
         detail = _permission_detail(ev)
-        print(f"\n   [permission] {ev.tool_name}: {detail}", flush=True)
+        self.render.permission_ask(ev.tool_name, detail)
         # Let any queued turn speech finish before the spoken prompt, then
         # take over the audio path serially for the approval round-trip. The
         # pipeline restarts before returning so post-approval prose flows.
@@ -760,17 +721,11 @@ class Orchestrator:
             heard = await self._listen_once(PERMISSION_LISTEN_TIMEOUT_S)
             decision = match_intent(heard)
             if heard:
-                print(
-                    f"   [permission] you: {heard} -> {decision or 'unclear'}",
-                    flush=True,
-                )
+                self.render.permission_heard(heard, decision)
             if decision is not None:
                 break
         allow = decision == "approve"
-        print(
-            f"   [permission] {'APPROVED' if allow else 'DENIED'}: {ev.tool_name}",
-            flush=True,
-        )
+        self.render.permission_verdict(ev.tool_name, allow)
         await self.backend.respond_permission(
             ev.request_id, allow, message=None if allow else "Denied by voice"
         )
@@ -866,7 +821,7 @@ class Orchestrator:
         follow-up fragments on BEFORE anything reaches the agent."""
         extensions = 0
         while _seems_unfinished(text) and extensions < MAX_CONTINUATION_EXTENSIONS:
-            print("   (…waiting for the rest)", flush=True)
+            self.render.waiting_for_rest()
             more = await self._listen_once(CONTINUATION_WAIT_S)
             if not more:
                 break
