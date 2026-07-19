@@ -169,6 +169,8 @@ The typed version works too: in `--text` mode the same gate is a plain `approve?
 
 Put on headphones (that part's mandatory — with speakers the mic hears its own voice and argues with itself), and the mic stays hot while it talks. Start speaking and it stops mid-sentence — not just the voice, the *thinking*: the agent's turn is actually cancelled, and what you said becomes the next message.
 
+And if you forget the headphones? It notices. When the output device is open-air speakers (the system default with nothing plugged in), talk2me prints `🔈 speakers on the output — barge-in off for this session` and runs the polite mode instead of arguing with its own echo. Pop the headphones in, relaunch, and barge-in arms itself again. (One blind spot: a *Bluetooth speaker* has an arbitrary name and passes for headphones — don't use `--barge-in` with one.)
+
 Know these three things and barge-in will never surprise you:
 
 1. **There's no magic word.** "Stop" isn't special. ANY sustained speech (~half a second) cuts it — the whole sentence you said becomes the next instruction.
@@ -231,10 +233,10 @@ No `--model` flag needed — it uses whatever your `claude` defaults to, same as
 Got a favorite setup? Freeze it into an alias once and never think about flags again. Mine:
 
 ```bash
-alias t2m='t2m --barge-in --voice "Ava (Premium)" --output-device Megapods --input-device "MacBook Pro"'
+alias t2m='t2m --barge-in --voice "Ava (Premium)" --input-device "MacBook Pro"'
 ```
 
-(Yes, my AirPods are named Megapods. Yours will be something equally embarrassing. `t2m --list-devices` tells you what the system calls them.)
+No `--output-device` needed — sound follows whatever macOS is currently routed to (headphones when they're in, laptop speakers when they're not, and barge-in [auto-disarms on speakers](#interrupting-it)). Pinning the *input* to the laptop mic is the one worth keeping: it spares your Bluetooth headphones from dropping into telephone-quality mode.
 
 ## Changing the voice
 

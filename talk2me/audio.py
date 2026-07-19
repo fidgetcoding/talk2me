@@ -61,6 +61,40 @@ def resolve_device(spec: str | int | None, kind: str) -> int | None:
     raise ValueError(f"no {kind} device matching {spec!r}")
 
 
+# Names that mean the audio comes out of open-air speakers — where the mic can
+# hear the TTS and full-duplex barge-in would argue with its own echo.
+_SPEAKER_NAME_TOKENS = ("speaker", "built-in output")
+
+
+def _name_looks_like_speakers(name: str) -> bool:
+    n = name.lower()
+    return any(tok in n for tok in _SPEAKER_NAME_TOKENS)
+
+
+def output_is_speakers(device: int | None) -> bool:
+    """Best-effort: is the (resolved or system-default) output open-air speakers?
+
+    True only on a confident speaker match ("MacBook Pro Speakers", anything
+    named *speaker*). Bluetooth/USB/jack devices have arbitrary names
+    ("Megapods", "External Headphones") and are treated as headphones — the
+    failure mode there is merely no barge-in downgrade, while a missed speaker
+    means self-echo chaos, so the heuristic errs toward the speaker label only.
+    (A Bluetooth *speaker* slips through; pass no --barge-in there.)
+    """
+    if sd is None:
+        return False
+    try:
+        idx = device
+        if idx is None:
+            idx = sd.default.device[1]
+        if idx is None or int(idx) < 0:
+            return False
+        name = sd.query_devices(int(idx))["name"]
+    except Exception:
+        return False
+    return _name_looks_like_speakers(str(name))
+
+
 def format_device_table() -> str:
     """Human-readable input/output listing for `--list-devices`."""
     if sd is None:

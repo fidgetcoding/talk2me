@@ -5,7 +5,12 @@ portaudio has no devices (or isn't present at all).
 Run:  ./.venv/bin/python -m tests.test_devices
 """
 
-from talk2me.audio import devices_of_kind, format_device_table, resolve_device
+from talk2me.audio import (
+    _name_looks_like_speakers,
+    devices_of_kind,
+    format_device_table,
+    resolve_device,
+)
 
 
 def main() -> int:
@@ -37,6 +42,21 @@ def main() -> int:
     ))
     table = format_device_table()
     results.append(("table mentions INPUT/OUTPUT", "INPUT" in table and "OUTPUT" in table))
+
+    # Speaker classifier: confident only on speaker-named devices — BT/jack
+    # devices have arbitrary names and must NOT classify as speakers.
+    speaker_cases = [
+        ("MacBook Pro Speakers", True),
+        ("Built-in Output", True),
+        ("JBL Flip Speaker", True),
+        ("Megapods", False),
+        ("External Headphones", False),
+        ("AirPods Max", False),
+    ]
+    results.append((
+        "speaker-name classifier",
+        all(_name_looks_like_speakers(n) == want for n, want in speaker_cases),
+    ))
 
     for label, ok in results:
         print(f"[{label}] -> {'PASS' if ok else 'FAIL'}")

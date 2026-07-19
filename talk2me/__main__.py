@@ -304,7 +304,7 @@ def _collect_vocab(
 
 
 async def _run_voice(cfg: Config) -> int:
-    from .audio import Mic, Speaker, resolve_device
+    from .audio import Mic, Speaker, output_is_speakers, resolve_device
     from .orchestrator import Orchestrator
 
     # Resolve name/index specs to PortAudio indices up front so a typo'd device
@@ -316,6 +316,19 @@ async def _run_voice(cfg: Config) -> int:
     except ValueError as exc:
         print(f"[device] {exc}\n\nRun `talk2me --list-devices` to see options.", flush=True)
         return 2
+
+    # Adaptive duplex: --barge-in is the user's intent, but if the audio is
+    # about to come out of open-air speakers (system default included), the mic
+    # would hear the TTS and cut every answer on its own echo. Downgrade to the
+    # safe half-duplex loop for this session instead of misbehaving.
+    if cfg.barge_in and output_is_speakers(output_idx):
+        print(
+            "🔈 speakers on the output — barge-in off for this session so I "
+            "don't argue with my own echo. Plug in headphones to interrupt me.",
+            flush=True,
+        )
+        cfg.barge_in = False
+        cfg.half_duplex = True
 
     tts = factory.build_tts(cfg)
     orch = Orchestrator(
