@@ -1,6 +1,6 @@
 <div align="center">
 
-![talk2me](talk2me.png)
+![talk2me](https://raw.githubusercontent.com/fidgetcoding/talk2me/main/talk2me.png)
 
 </div>
 
