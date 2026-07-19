@@ -19,6 +19,8 @@ import asyncio
 import os
 import re
 import subprocess
+import sys
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -168,6 +170,17 @@ class Orchestrator:
         # True right after "🎧 listening…" printed with nothing after it —
         # suppresses the repeat-spam that noise utterances used to cause.
         self._listening_fresh = False
+        # Typed intervention: lines typed/pasted into the terminal become
+        # user turns. The lock serializes typed turns with voice turns so
+        # only one owns the backend (and the mic) at a time.
+        self._typed_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._stdin_lines: asyncio.Queue[str] = asyncio.Queue()
+        self._turn_lock = asyncio.Lock()
+        self._events = None  # the backend event iterator, shared across paths
+        # The last instruction that reached the agent — continuation stitching
+        # and the noise/pause recovery resends read it; typed turns update it
+        # too so an interrupted typed task can auto-resume.
+        self._last_text = ""
         # Set when a turn dies on a BackendError; tells run() to stop cleanly
         # instead of looping forever against a dead backend process.
         self._fatal = False
@@ -216,12 +229,22 @@ class Orchestrator:
             # must never add latency inside the barge monitor's cut decision.
             await asyncio.to_thread(self._speech_check.warmup)
         self.render.startup(self.cfg)
+        self._events = events
+        # Typed intervention: a worker turns typed/pasted lines into user
+        # turns (serialized with voice turns via _turn_lock). The stdin pump
+        # thread only exists on a real terminal; tests feed _typed_queue.
+        typed_task = asyncio.create_task(self._typed_worker())
+        assembler_task: asyncio.Task | None = None
+        if sys.stdin is not None and sys.stdin.isatty():
+            self._start_stdin_thread()
+            assembler_task = asyncio.create_task(self._stdin_assembler())
         try:
             self._show_listening()
-            last_text = ""
             async for utterance in segment_utterances(
                 self.mic.frames(), self.vad, self.cfg
             ):
+                if self._fatal:
+                    break
                 t_captured = time.monotonic()
                 if self._speech_check is not None and not await asyncio.to_thread(
                     self._speech_check, utterance, self.mic.sample_rate
@@ -255,123 +278,13 @@ class Orchestrator:
                     if not self._paused:
                         self._show_listening(nl=False)
                     continue
-                # Voice controls for the loop itself: "pause listening" mutes
-                # the conversation (everything heard, nothing sent) until a
-                # "wake up" arrives.
-                intent = control_intent(text)
-                if self._paused:
-                    if intent == "resume":
-                        await self._set_paused(False)
-                        self._show_listening()
-                    else:
-                        if self.cfg.debug:
-                            self.render.paused_ignored(text)
-                        self._listening_fresh = False
-                        self.render.still_paused()
-                    continue
-                if intent == "pause":
-                    await self._set_paused(True)
-                    continue
-                # An unfinished-sounding transcript is NOT sent yet: keep the
-                # mic open and stitch the rest on BEFORE the agent ever sees a
-                # fragment ("So what do you call … [pause] … a linked list").
-                text = await self._extend_unfinished(text)
-                self._listening_fresh = False
-                self.render.you(text)
-                if self.log:
-                    self.log.user(text)
-                last_text = text
-                self._t_sent = time.monotonic()
-                try:
-                    await self.backend.send(text)
-                except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
-                    # claude died after we started a turn: stdin is closed, so the
-                    # write raises (or events would never arrive). Don't crash with
-                    # a traceback or hang forever — flag fatal and exit cleanly via
-                    # the finally block. (The BackendError-event path sets _fatal too;
-                    # this guards the send call itself.)
-                    self.render.error(f"[backend send failed] {e}")
-                    self._fatal = True
-                    break
-                barge = await self._consume_turn(events)
-                # A barge-in already contains the user's next utterance — send
-                # it straight through instead of going back to listening. A cut
-                # that landed before the agent spoke is a CONTINUATION: the
-                # segmenter ended the user's turn mid-sentence and they kept
-                # going, so stitch the fragments back into one instruction.
-                noise_resends = 0
-                control_resends = 0
-                while not self._fatal:
-                    if barge:
-                        # Control words arriving through the barge path
-                        # ("Sleep." spoken while the agent worked) must NEVER
-                        # reach the agent as a message — live sessions showed
-                        # Claude replying to them. Flip the ears instead, and
-                        # since the cut already killed the turn: if it was
-                        # mid-WORK, resend the task so pause never cancels a
-                        # job. Checked before continuation stitching so a
-                        # control word can't be glued onto the previous turn.
-                        intent = control_intent(barge)
-                        if intent is not None:
-                            await self._set_paused(intent == "pause")
-                            if (
-                                self._saw_tool
-                                and last_text
-                                and control_resends < 1
-                            ):
-                                control_resends += 1
-                                to_send = last_text
-                                self.render.status_note(
-                                    "resuming the interrupted task"
-                                )
-                            else:
-                                break
-                        else:
-                            # A barge can trail off exactly like a normal turn —
-                            # give it the same stitch-before-send treatment so a
-                            # fragment never reaches the agent through this path.
-                            barge = await self._extend_unfinished(barge)
-                            self._listening_fresh = False
-                            if self._continuation and last_text:
-                                to_send = f"{last_text} {barge}"
-                                self.render.you(to_send, "continued")
-                                if self.log:
-                                    self.log.user(to_send, "continued")
-                            else:
-                                to_send = barge
-                                self.render.you(to_send, "barge-in")
-                                if self.log:
-                                    self.log.user(to_send, "barge-in")
-                            last_text = to_send
-                    elif self._continuation and last_text and noise_resends < 1:
-                        # A cut killed the turn before ANY answer but the
-                        # captured audio transcribed to nothing — a noise
-                        # trigger. Don't let it eat the user's question: resend
-                        # it (once — a noisy room must not loop forever).
-                        noise_resends += 1
-                        to_send = last_text
-                        self.render.noise_resend()
-                    else:
-                        break
-                    self._t_sent = time.monotonic()
-                    try:
-                        await self.backend.send(to_send)
-                    except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
-                        self.render.error(f"[backend send failed] {e}")
-                        self._fatal = True
-                        break
-                    barge = await self._consume_turn(events)
+                await self._handle_user_text(text)
                 if self._fatal:
-                    self.render.error("backend gone — shutting down.")
                     break
-                if self._paused:
-                    # A task that finished while asleep must not claim the
-                    # ears are open — remind how to wake instead.
-                    self._listening_fresh = False
-                    self.render.still_paused()
-                else:
-                    self._show_listening()
         finally:
+            typed_task.cancel()
+            if assembler_task is not None:
+                assembler_task.cancel()
             self.mic.stop()
             # Release the audio output device at session end. stop() is a no-op-safe
             # method on the real Speaker (and the fake), so this can't strand a handle.
@@ -450,8 +363,19 @@ class Orchestrator:
                     assert self._render_q is not None
                     await self._render_q.put(sentence)
             elif isinstance(ev, ThinkingDelta):
+                if speaking and self.cfg.half_duplex:
+                    speaking = await self._reopen_ears_for_gap()
                 self.render.thinking(ev.text)
             elif isinstance(ev, ToolActivity):
+                if speaking and self.cfg.half_duplex:
+                    # THE deafness fix (live-reported: "it completely stops
+                    # listening while it codes"): half-duplex muted the mic at
+                    # the turn's FIRST spoken sentence and kept it muted to
+                    # the END of the turn — which today can be a multi-minute
+                    # build. A tool call means the prose paused: finish
+                    # speaking what's queued, then hand the ears back for the
+                    # gap. The next sentence re-mutes exactly as before.
+                    speaking = await self._reopen_ears_for_gap()
                 if ev.upgrade and ev.name in announced:
                     # Detail for a call the stream path already showed: print
                     # the arguments as a follow-on, log once (with detail),
@@ -523,6 +447,181 @@ class Orchestrator:
         # the previous turn instead of sending a context-free fragment.
         self._continuation = self._interrupted and not self._spoke_any
         return await self._reap_barge_monitor()
+
+    async def _handle_user_text(self, text: str, *, typed: bool = False) -> None:
+        """One user turn, voice or typed, start to finish: control words,
+        pause state, sending, the barge/continuation loop, the end-of-turn
+        state line. Serialized by _turn_lock so voice and keyboard can never
+        drive the backend at the same time. Typed turns mute the mic for
+        their duration — the frame invariant (one consumer of mic audio per
+        turn) survives, at the cost of voice barge-in during typed turns."""
+        async with self._turn_lock:
+            if self._fatal:
+                return
+            if typed:
+                self.mic.set_muted(True)
+            try:
+                await self._run_user_turn(text, typed=typed)
+            finally:
+                if typed and not self._paused:
+                    self.mic.set_muted(False)
+                    self.vad.reset()
+
+    async def _run_user_turn(self, text: str, *, typed: bool) -> None:
+        # Controls first: "pause"/"wake up" work identically typed or spoken.
+        intent = control_intent(text)
+        if self._paused:
+            if intent == "resume":
+                await self._set_paused(False)
+                self._show_listening()
+            else:
+                if self.cfg.debug:
+                    self.render.paused_ignored(text)
+                self._listening_fresh = False
+                self.render.still_paused()
+            return
+        if intent == "pause":
+            await self._set_paused(True)
+            return
+        if not typed:
+            # An unfinished-sounding transcript is NOT sent yet: keep the
+            # mic open and stitch the rest on BEFORE the agent ever sees a
+            # fragment. Typed text is exact — no stitching.
+            text = await self._extend_unfinished(text)
+        self._listening_fresh = False
+        self.render.you(text, "typed" if typed else "")
+        if self.log:
+            self.log.user(text, "typed" if typed else "")
+        self._last_text = text
+        self._t_sent = time.monotonic()
+        try:
+            await self.backend.send(text)
+        except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
+            # claude died after we started a turn: stdin is closed, so the
+            # write raises (or events would never arrive). Don't crash with
+            # a traceback or hang forever — flag fatal and exit cleanly.
+            self.render.error(f"[backend send failed] {e}")
+            self._fatal = True
+            return
+        barge = await self._consume_turn(self._events)
+        # A barge-in already contains the user's next utterance — send it
+        # straight through instead of going back to listening. A cut that
+        # landed before the agent spoke is a CONTINUATION: the segmenter
+        # ended the user's turn mid-sentence and they kept going, so stitch
+        # the fragments back into one instruction.
+        noise_resends = 0
+        control_resends = 0
+        while not self._fatal:
+            if barge:
+                # Control words arriving through the barge path ("Sleep."
+                # spoken while the agent worked) must NEVER reach the agent
+                # as a message — live sessions showed Claude replying to
+                # them. Flip the ears instead, and since the cut already
+                # killed the turn: if it was mid-WORK, resend the task so
+                # pause never cancels a job. Checked before continuation
+                # stitching so a control word can't be glued onto the
+                # previous turn.
+                intent = control_intent(barge)
+                if intent is not None:
+                    await self._set_paused(intent == "pause")
+                    if self._saw_tool and self._last_text and control_resends < 1:
+                        control_resends += 1
+                        to_send = self._last_text
+                        self.render.status_note("resuming the interrupted task")
+                    else:
+                        break
+                else:
+                    # A barge can trail off exactly like a normal turn —
+                    # give it the same stitch-before-send treatment so a
+                    # fragment never reaches the agent through this path.
+                    barge = await self._extend_unfinished(barge)
+                    self._listening_fresh = False
+                    if self._continuation and self._last_text:
+                        to_send = f"{self._last_text} {barge}"
+                        self.render.you(to_send, "continued")
+                        if self.log:
+                            self.log.user(to_send, "continued")
+                    else:
+                        to_send = barge
+                        self.render.you(to_send, "barge-in")
+                        if self.log:
+                            self.log.user(to_send, "barge-in")
+                    self._last_text = to_send
+            elif self._continuation and self._last_text and noise_resends < 1:
+                # A cut killed the turn before ANY answer but the captured
+                # audio transcribed to nothing — a noise trigger. Don't let
+                # it eat the user's question: resend it (once — a noisy
+                # room must not loop forever).
+                noise_resends += 1
+                to_send = self._last_text
+                self.render.noise_resend()
+            else:
+                break
+            self._t_sent = time.monotonic()
+            try:
+                await self.backend.send(to_send)
+            except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
+                self.render.error(f"[backend send failed] {e}")
+                self._fatal = True
+                break
+            barge = await self._consume_turn(self._events)
+        if self._fatal:
+            self.render.error("backend gone — shutting down.")
+            return
+        if self._paused:
+            # A task that finished while asleep must not claim the ears are
+            # open — remind how to wake instead.
+            self._listening_fresh = False
+            self.render.still_paused()
+        else:
+            self._show_listening()
+
+    async def _typed_worker(self) -> None:
+        """Consume assembled keyboard messages and run them as user turns."""
+        try:
+            while True:
+                text = (await self._typed_queue.get()).strip()
+                if text:
+                    await self._handle_user_text(text, typed=True)
+        except asyncio.CancelledError:
+            raise
+
+    async def _stdin_assembler(self) -> None:
+        """Join a burst of stdin lines (a paste) into ONE message: lines that
+        arrive within 80ms of each other belong together."""
+        try:
+            while True:
+                parts = [await self._stdin_lines.get()]
+                while True:
+                    try:
+                        parts.append(
+                            await asyncio.wait_for(self._stdin_lines.get(), 0.08)
+                        )
+                    except asyncio.TimeoutError:
+                        break
+                text = "".join(parts).strip()
+                if text:
+                    await self._typed_queue.put(text)
+        except asyncio.CancelledError:
+            raise
+
+    def _start_stdin_thread(self) -> None:
+        """Pump terminal lines onto the loop — a dedicated daemon thread,
+        like the Mic's PortAudio callback (to_thread would orphan a blocked
+        readline on every timeout and eat the next typed line)."""
+        loop = asyncio.get_running_loop()
+
+        def pump() -> None:
+            while True:
+                try:
+                    line = sys.stdin.readline()
+                except (ValueError, OSError):
+                    return  # stdin closed
+                if not line:
+                    return  # EOF
+                loop.call_soon_threadsafe(self._stdin_lines.put_nowait, line)
+
+        threading.Thread(target=pump, daemon=True, name="t2m-stdin").start()
 
     def _show_listening(self, *, nl: bool = True) -> None:
         """Print 🎧 once per quiet stretch — noise utterances used to reprint
@@ -696,6 +795,17 @@ class Orchestrator:
             # None routes into the repeat-your-question recovery upstream.
             return None
         return collapse_stutter(raw) or None
+
+    async def _reopen_ears_for_gap(self) -> bool:
+        """Half-duplex only: the agent went quiet (tools/thinking) — let the
+        queued speech finish, restart the pipeline for later prose, and
+        unmute the mic so the user is heard DURING the work. Returns the new
+        `speaking` state (False)."""
+        await self._drain_speech_pipeline()
+        self._start_speech_pipeline()
+        self.mic.set_muted(False)
+        self.vad.reset()
+        return False
 
     def _begin_speaking(self, speaking: bool) -> bool:
         """Mark the start of agent speech, muting the mic in half-duplex mode.

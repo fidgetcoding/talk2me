@@ -222,6 +222,83 @@ async def test_presend_timeout_sends_fragment() -> None:
     )
 
 
+async def test_half_duplex_tool_gap_unmute() -> None:
+    """The deafness fix: in half-duplex, a tool call mid-turn hands the mic
+    back for the gap instead of staying muted until the end of the turn."""
+    from talk2me.events import AssistantTextDelta, ToolActivity, TurnComplete
+
+    class GapBackend(FakeBackend):
+        async def send(self, user_text: str) -> None:
+            self.sent.append(user_text)
+            await self._q.put(AssistantTextDelta(text="Starting the build. "))
+            await self._q.put(ToolActivity(name="Write"))
+            await self._q.put(AssistantTextDelta(text="All finished now. "))
+            await self._q.put(TurnComplete(text="Starting. Finished."))
+
+    mic = FakeMic(_speech(15) + _silence(200), sample_rate=SR)
+    backend = GapBackend()
+    orch = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250),  # half-duplex default
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Build the game."]),
+        tts=FakeTTS(),
+        mic=mic,
+        speaker=FakeSpeaker(SR),
+    )
+    await asyncio.wait_for(orch.run(), timeout=15)
+    # mute for sentence 1 -> UNMUTE for the tool gap -> mute for sentence 2
+    # -> unmute at turn end.
+    check(
+        "tool gap reopens the ears mid-turn",
+        mic.muted_log[:4] == [True, False, True, False],
+        str(mic.muted_log),
+    )
+
+
+async def test_typed_intervention() -> None:
+    """Typed/pasted lines become user turns, share the pause vocabulary, and
+    mute the mic while they run."""
+    backend = FakeBackend(replies=["Sure, doing it now!"])
+    mic = FakeMic(_silence(300), sample_rate=SR)  # user never speaks
+    orch = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250),
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT([]),
+        tts=FakeTTS(),
+        mic=mic,
+        speaker=FakeSpeaker(SR),
+    )
+    await orch._typed_queue.put("paste: fix the bug in app.py line 40")
+    await asyncio.wait_for(orch.run(), timeout=15)
+    check(
+        "typed line became a user turn",
+        backend.sent == ["paste: fix the bug in app.py line 40"],
+        str(backend.sent),
+    )
+    check("typed turn muted the mic around itself", True in mic.muted_log)
+
+    # Typed control words work too.
+    backend2 = FakeBackend(replies=[])
+    orch2 = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250),
+        backend=backend2,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT([]),
+        tts=FakeTTS(),
+        mic=FakeMic(_silence(300), sample_rate=SR),
+        speaker=FakeSpeaker(SR),
+    )
+    await orch2._typed_queue.put("pause")
+    await asyncio.wait_for(orch2.run(), timeout=15)
+    check(
+        "typed 'pause' pauses instead of sending",
+        orch2._paused is True and backend2.sent == [],
+        f"paused={orch2._paused} sent={backend2.sent}",
+    )
+
+
 async def test_speech_check_gate() -> None:
     def _orch(gate):
         backend = FakeBackend(replies=["Hi there!"])
@@ -261,6 +338,8 @@ async def main() -> int:
     await test_voice_pause_resume()
     await test_presend_stitch()
     await test_presend_timeout_sends_fragment()
+    await test_half_duplex_tool_gap_unmute()
+    await test_typed_intervention()
     await test_speech_check_gate()
 
     passed = sum(1 for _, ok in RESULTS if ok)

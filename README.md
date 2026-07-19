@@ -99,6 +99,7 @@ Everything on one screen. This is the whole manual for day one.
 | Say | When | What happens |
 |---|---|---|
 | *anything* | `🎧 listening…` is showing | It answers out loud, then listens again. That's the loop. |
+| *anything* | it's mid-build (tools running) | The ears reopen during every tool stretch — even in half-duplex, long builds stay interruptible by voice. |
 | *keep talking over it* | it's mid-answer (on by default; needs headphones — auto-off on speakers) | Voice AND thinking stop; what you said becomes the next message. No magic word — any sustained speech cuts it. |
 | **"pause listening"** · "stop listening" · "sleep" · "go to sleep" · "go to bed" · "take a break" · "pause" | any time — even mid-task | Ears go quiet until you wake it. Never cancels running work: an interrupted task auto-resumes. |
 | **"wake up"** · "resume listening" · "I'm back" · "unpause" | while paused | Back to normal listening. |
@@ -110,6 +111,7 @@ Everything on one screen. This is the whole manual for day one.
 |---|---|
 | `t2m` (or `talk2me`) | The whole thing, defaults on. Talk. |
 | `Ctrl-C` | Done. (Transcript, if enabled, is already saved — it writes live.) |
+| *type anything + Enter* | Works mid-session, any time — paste an error log, type an exact path, or intervene precisely. Multi-line pastes arrive as one message; "pause" and friends work typed too. |
 | `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default; it auto-disarms on open-air speakers anyway). |
 | `t2m --gated` | Spoken approvals before any non-read tool runs (default is auto-approve, with the nasty stuff hard-blocked either way). |
 | `t2m --stt parakeet` | GPU ears — faster + more accurate (Apple Silicon; `pip install -e ".[parakeet]"` first). |
