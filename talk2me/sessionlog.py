@@ -46,8 +46,9 @@ class SessionLog:
         if text.strip():
             self._append(f"\n**Claude:** {text.strip()}\n")
 
-    def tool(self, name: str) -> None:
-        self._append(f"- 🔧 {name}\n")
+    def tool(self, name: str, summary: str = "") -> None:
+        detail = f" ({summary})" if summary else ""
+        self._append(f"- 🔧 {name}{detail}\n")
 
     def permission(self, tool_name: str, detail: str, allowed: bool) -> None:
         verdict = "APPROVED" if allowed else "DENIED"

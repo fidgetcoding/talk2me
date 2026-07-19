@@ -26,10 +26,17 @@ class AssistantTextDelta:
 
 @dataclass(frozen=True)
 class ToolActivity:
-    """The agent invoked a tool. Shown in the transcript, never spoken."""
+    """The agent invoked a tool. Shown in the transcript, never spoken.
+
+    The same tool call can surface twice: the streaming path announces it
+    early (name only, lowest latency), then the full assistant message carries
+    the arguments. The second carries `upgrade=True` — renderers treat it as
+    detail for the already-shown call, not a new one.
+    """
 
     name: str
     summary: str = ""
+    upgrade: bool = False
 
 
 @dataclass(frozen=True)

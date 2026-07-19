@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -50,6 +51,31 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 def _sanitize(text: str) -> str:
     """Strip terminal control characters so child stderr can't inject escapes."""
     return _CONTROL_CHARS.sub("", text)
+
+
+# Human summary of a tool call's input, for the transcript line. Deliberately
+# tiny: a filename, a pattern, the head of a command — never the full payload.
+_SUMMARY_MAX = 60
+
+
+def _summarize_tool_input(name: str, inp: dict) -> str:
+    """One short, sanitized fragment describing what the tool is touching."""
+    if not isinstance(inp, dict) or not inp:
+        return ""
+    if name in ("Write", "Edit", "Read"):
+        path = str(inp.get("file_path", ""))
+        summary = os.path.basename(path.rstrip("/")) if path else ""
+    elif name == "Bash":
+        summary = " ".join(str(inp.get("command", "")).split())
+    elif name in ("Grep", "Glob"):
+        summary = str(inp.get("pattern", ""))
+    elif name == "WebFetch":
+        summary = str(inp.get("url", ""))
+    else:
+        return ""
+    if len(summary) > _SUMMARY_MAX:
+        summary = summary[: _SUMMARY_MAX - 1] + "…"
+    return _sanitize(summary)
 
 
 class ClaudeCodeBackend:
@@ -414,7 +440,17 @@ class ClaudeCodeBackend:
                 continue
             btype = block.get("type")
             if btype == "tool_use":
-                out.append(ToolActivity(name=block.get("name", "tool")))
+                # The stream path already announced this call by name (lowest
+                # latency); this full-message copy carries the arguments, so it
+                # goes out as an `upgrade` — detail, not a second call.
+                name = block.get("name", "tool")
+                out.append(
+                    ToolActivity(
+                        name=name,
+                        summary=_summarize_tool_input(name, block.get("input") or {}),
+                        upgrade=True,
+                    )
+                )
             elif btype == "text":
                 text = block.get("text", "")
                 if text:

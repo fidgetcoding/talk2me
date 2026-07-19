@@ -189,6 +189,86 @@ def test_unknown_type() -> bool:
     return _report("unknown type -> []", ok)
 
 
+def test_tool_summary_extraction() -> bool:
+    from talk2me.backends.claude_code import _summarize_tool_input
+
+    checks = [
+        # File tools -> basename only, never the full path.
+        _summarize_tool_input("Write", {"file_path": "/tmp/x/pong.html"})
+        == "pong.html",
+        _summarize_tool_input("Edit", {"file_path": "a/b/app.py"}) == "app.py",
+        _summarize_tool_input("Read", {"file_path": "notes.md"}) == "notes.md",
+        # Bash -> whitespace-normalized head of the command, capped at 60.
+        _summarize_tool_input("Bash", {"command": "ls   -la\n/tmp"})
+        == "ls -la /tmp",
+        len(_summarize_tool_input("Bash", {"command": "x" * 200})) == 60,
+        _summarize_tool_input("Bash", {"command": "x" * 200}).endswith("…"),
+        # Grep/Glob -> the pattern; WebFetch -> the url.
+        _summarize_tool_input("Grep", {"pattern": "def main"}) == "def main",
+        _summarize_tool_input("Glob", {"pattern": "**/*.py"}) == "**/*.py",
+        _summarize_tool_input("WebFetch", {"url": "https://x.dev"})
+        == "https://x.dev",
+        # Unknown tools and empty input stay silent.
+        _summarize_tool_input("TodoWrite", {"todos": []}) == "",
+        _summarize_tool_input("Bash", {}) == "",
+        # Control characters (ANSI escapes) are stripped, not printed.
+        "\x1b" not in _summarize_tool_input(
+            "Write", {"file_path": "/tmp/\x1b[31mevil\x1b[0m.txt"}
+        ),
+    ]
+    return _report(
+        f"tool summary extraction ({sum(checks)}/{len(checks)} checks)",
+        all(checks),
+    )
+
+
+def test_tool_upgrade_tagging() -> bool:
+    b = _fresh()
+    # Stream path: EARLY announcement — name only, upgrade=False.
+    early = b._translate({
+        "type": "stream_event",
+        "event": {
+            "type": "content_block_start",
+            "content_block": {"type": "tool_use", "name": "Write"},
+        },
+    })
+    # Full-message path: the same call with arguments — upgrade=True + summary.
+    late = b._translate({
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Write",
+                    "input": {"file_path": "/tmp/pong.html", "content": "hi"},
+                },
+            ],
+        },
+    })
+    ok = (
+        early == [ToolActivity(name="Write")]
+        and early[0].upgrade is False
+        and late == [ToolActivity(name="Write", summary="pong.html", upgrade=True)]
+    )
+    return _report("stream start = early (no upgrade); full message = upgrade + summary", ok)
+
+
+def test_sessionlog_tool_detail() -> bool:
+    import tempfile
+
+    from talk2me.sessionlog import SessionLog
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = SessionLog(tmp, model=None, stt="whisper", cwd=None)
+        log.tool("Write", "pong.html")
+        log.tool("Bash")
+        with open(log.path, encoding="utf-8") as fh:
+            content = fh.read()
+    ok = "- 🔧 Write (pong.html)\n" in content and "- 🔧 Bash\n" in content
+    return _report("SessionLog.tool detail -> '- 🔧 Write (pong.html)'", ok)
+
+
 def main() -> int:
     results = [
         test_session_ready(),
@@ -199,6 +279,9 @@ def main() -> int:
         test_assistant_message_no_double_speak(),
         test_result_rollup_and_clear(),
         test_unknown_type(),
+        test_tool_summary_extraction(),
+        test_tool_upgrade_tagging(),
+        test_sessionlog_tool_detail(),
     ]
     overall = all(results)
     print(f"[{'PASS' if overall else 'FAIL'}] overall "

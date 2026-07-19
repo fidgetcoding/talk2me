@@ -373,6 +373,10 @@ class Orchestrator:
         self._saw_tool = False
         self._tool_count = 0
         self._last_audible = time.monotonic()
+        # Tool calls announced early by the stream path, awaiting their
+        # full-message detail (upgrade) twin. Drives the dedupe: one call,
+        # one line — the old behavior printed and logged every call twice.
+        announced: list[str] = []
         ticker: asyncio.Task[None] | None = None
         if self.cfg.working_ticks:
             ticker = asyncio.create_task(self._working_ticker())
@@ -419,11 +423,29 @@ class Orchestrator:
                     assert self._render_q is not None
                     await self._render_q.put(sentence)
             elif isinstance(ev, ToolActivity):
-                print(f"\n   [tool] {ev.name}", flush=True)
-                self._saw_tool = True
-                self._tool_count += 1
-                if self.log:
-                    self.log.tool(ev.name)
+                if ev.upgrade and ev.name in announced:
+                    # Detail for a call the stream path already showed: print
+                    # the arguments as a follow-on, log once (with detail),
+                    # and do NOT count it again.
+                    announced.remove(ev.name)
+                    if ev.summary:
+                        print(f"      ↳ {ev.summary}", flush=True)
+                    if self.log:
+                        self.log.tool(ev.name, ev.summary)
+                else:
+                    detail = f" — {ev.summary}" if ev.summary else ""
+                    print(f"\n   [tool] {ev.name}{detail}", flush=True)
+                    self._saw_tool = True
+                    self._tool_count += 1
+                    if ev.upgrade:
+                        # Partials disabled (or version skew): the full-message
+                        # event is the only announcement — log it directly.
+                        if self.log:
+                            self.log.tool(ev.name, ev.summary)
+                    else:
+                        # Log deferred to the upgrade twin, which carries the
+                        # arguments (guaranteed on the current protocol).
+                        announced.append(ev.name)
             elif isinstance(ev, PermissionRequest):
                 # The backend is paused awaiting our answer; run the spoken
                 # approve/deny round-trip. Resets `speaking` so the next

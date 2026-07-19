@@ -439,14 +439,28 @@ async def _run_text(cfg: Config) -> int:
             except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as exc:
                 print(f"\n[error] backend unavailable: {exc}", flush=True)
                 break
+            # Same dedupe as the voice loop: the stream path announces a tool
+            # by name, the full-message twin (upgrade) carries the detail.
+            announced: list[str] = []
             async for ev in events:
                 if isinstance(ev, AssistantTextDelta):
                     sys.stdout.write(ev.text)
                     sys.stdout.flush()
                 elif isinstance(ev, ToolActivity):
-                    print(f"\n[tool] {ev.name}", flush=True)
-                    if session_log:
-                        session_log.tool(ev.name)
+                    if ev.upgrade and ev.name in announced:
+                        announced.remove(ev.name)
+                        if ev.summary:
+                            print(f"   ↳ {ev.summary}", flush=True)
+                        if session_log:
+                            session_log.tool(ev.name, ev.summary)
+                    else:
+                        detail = f" — {ev.summary}" if ev.summary else ""
+                        print(f"\n[tool] {ev.name}{detail}", flush=True)
+                        if ev.upgrade:
+                            if session_log:
+                                session_log.tool(ev.name, ev.summary)
+                        else:
+                            announced.append(ev.name)
                 elif isinstance(ev, PermissionRequest):
                     # Typed twin of the spoken gate: the CLI is paused on this
                     # request, so read one line and answer. EOF/empty -> deny.
