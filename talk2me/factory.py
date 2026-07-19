@@ -68,7 +68,7 @@ def build_tts(cfg: Config) -> TTS:
     if cfg.tts == "say":
         from .tts import SayTTS
 
-        return SayTTS(voice=cfg.voice)
+        return SayTTS(voice=cfg.voice, rate_wpm=cfg.rate_wpm)
     if cfg.tts == "kitten":
         from .tts.kitten import KittenTTS
 

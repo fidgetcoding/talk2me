@@ -77,7 +77,10 @@ async def main() -> int:
     cfg = Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False)
     # Utterance 1 = the question. Then, while the agent "speaks", utterance 2 =
     # the interruption. Monitor onset fires after ~8 voiced frames (250ms/30ms).
-    frames = _speech(15) + _silence(35) + _speech(15) + _silence(35)
+    # The extra silence gap keeps the (fast, frame-per-loop-tick) monitor from
+    # reaching utterance 2's onset before the fakes have spoken both sentences
+    # — mirroring real time, where speech playback far outlasts a few frames.
+    frames = _speech(15) + _silence(80) + _speech(15) + _silence(35)
 
     mic = FakeMic(frames, sample_rate=SR)
     speaker = StoppableSpeaker(SR)

@@ -52,7 +52,11 @@ VOICE_SYSTEM_PROMPT = (
     "markdown, no headers, no bullet lists, no emoji. Never read code aloud; "
     "describe what you did or found in a sentence instead. When a request is "
     "ambiguous, make the reasonable assumption and state it in a short clause "
-    "rather than asking multi-part clarifying questions."
+    "rather than asking multi-part clarifying questions. The user's speech is "
+    "auto-segmented, so a message may be the continuation of their previous "
+    "message that was cut off mid-sentence; when a message reads like a "
+    "continuation, treat the two as one instruction and never answer the "
+    "fragment literally."
 )
 
 
@@ -100,7 +104,11 @@ class Config:
     silero_threshold: float = 0.5  # speech-probability cutoff (0..1), silero only
     silero_model_path: str | None = None  # ONNX path; None → env/sibling default
     vad_aggressiveness: int = 2  # webrtc only: 0 (lenient) .. 3 (aggressive filtering)
-    silence_ms: int = 900  # trailing silence that ends a turn
+    # Trailing silence that ends a turn. Live-tuned UP from 900: natural
+    # mid-sentence thinking pauses ("the orchestrator dot … py file") run past
+    # 900ms and the early cut wastes the whole turn — worse than the extra
+    # 300ms of patience. Continuation stitching catches what still slips.
+    silence_ms: int = 1200
     min_speech_ms: int = 250  # ignore blips shorter than this
     # Audio kept from just BEFORE speech onset and prepended to the utterance.
     # Energy VADs miss quiet first phonemes, and without this the transcript
@@ -122,6 +130,9 @@ class Config:
     # --- TTS ---
     tts: str = "say"  # "say" | "kitten" | "null"
     voice: str | None = None  # engine-specific voice id
+    # Speech rate in words/minute (say engine only). macOS default is ~175,
+    # which reads slow in a live loop; ~230 ≈ 1.3x. None = engine default.
+    rate_wpm: int | None = 230
 
     # --- duplex / barge-in ---
     # Defaults match what the orchestrator actually does: half-duplex, mic muted

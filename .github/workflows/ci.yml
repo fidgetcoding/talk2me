@@ -67,6 +67,9 @@ jobs:
       - name: test_speaker_stop
         run: python -m tests.test_speaker_stop
 
+      - name: test_continuation
+        run: python -m tests.test_continuation
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

@@ -106,6 +106,10 @@ class Orchestrator:
         # mic, and whether it already cut this turn's playback.
         self._barge_task: asyncio.Task[str | None] | None = None
         self._interrupted = False
+        self._spoke_any = False
+        # Set by _consume_turn: the monitor cut the turn BEFORE any agent
+        # speech, so the captured utterance continues the user's previous turn.
+        self._continuation = False
         # When the current user turn was handed to the backend; drives the
         # --debug latency lines (first-token / first-audio).
         self._t_sent = 0.0
@@ -121,8 +125,15 @@ class Orchestrator:
         if hasattr(self.stt, "warmup"):
             warmup = asyncio.create_task(asyncio.to_thread(self.stt.warmup))
         print("talk2me ready — start talking. Ctrl-C to quit.", flush=True)
+        if self.cfg.half_duplex:
+            print(
+                "   (half-duplex: talking over the agent mid-speech is ignored "
+                "— run with --barge-in and headphones to interrupt it)",
+                flush=True,
+            )
         try:
             print("\n🎧 listening…", flush=True)
+            last_text = ""
             async for utterance in segment_utterances(
                 self.mic.frames(), self.vad, self.cfg
             ):
@@ -137,6 +148,7 @@ class Orchestrator:
                     print("🎧 listening…", flush=True)
                     continue
                 print(f"\n🗣  you: {text}", flush=True)
+                last_text = text
                 self._t_sent = time.monotonic()
                 try:
                     await self.backend.send(text)
@@ -151,9 +163,17 @@ class Orchestrator:
                     break
                 barge = await self._consume_turn(events)
                 # A barge-in already contains the user's next utterance — send
-                # it straight through instead of going back to listening.
+                # it straight through instead of going back to listening. A cut
+                # that landed before the agent spoke is a CONTINUATION: the
+                # segmenter ended the user's turn mid-sentence and they kept
+                # going, so stitch the fragments back into one instruction.
                 while barge and not self._fatal:
-                    print(f"\n🗣  you (barge-in): {barge}", flush=True)
+                    if self._continuation and last_text:
+                        barge = f"{last_text} {barge}"
+                        print(f"\n🗣  you (continued): {barge}", flush=True)
+                    else:
+                        print(f"\n🗣  you (barge-in): {barge}", flush=True)
+                    last_text = barge
                     self._t_sent = time.monotonic()
                     try:
                         await self.backend.send(barge)
@@ -183,12 +203,15 @@ class Orchestrator:
         """
         pending = ""
         speaking = False
-        spoke_any = False  # unlike `speaking`, never reset by the gate
         saw_token = False
         self._interrupted = False
-        barge_enabled = self.cfg.barge_in and not self.cfg.half_duplex
-        if barge_enabled:
-            self._barge_task = asyncio.create_task(self._barge_monitor())
+        self._spoke_any = False  # unlike `speaking`, never reset by the gate
+        # The monitor runs in BOTH duplex modes. In half-duplex the mic mutes
+        # once the agent starts speaking, so the monitor naturally only hears
+        # the "thinking" gap — where fresh speech is almost always the user
+        # finishing a sentence the segmenter cut too early (continuation).
+        # In full duplex (--barge-in) it additionally hears through playback.
+        self._barge_task = asyncio.create_task(self._barge_monitor())
         sys.stdout.write("🤖 ")
         sys.stdout.flush()
 
@@ -206,7 +229,7 @@ class Orchestrator:
                 sys.stdout.flush()
                 pending += ev.text
                 pending, ready = _drain_sentences(pending)
-                if not ready and not spoke_any and not self._interrupted:
+                if not ready and not self._spoke_any and not self._interrupted:
                     # Nothing spoken yet this turn: start on the first clause
                     # instead of waiting out a long opening sentence — the
                     # first chunk is also shorter, so it renders faster.
@@ -217,8 +240,10 @@ class Orchestrator:
                     if self._interrupted:
                         continue  # user cut playback; keep text on screen only
                     speaking = self._begin_speaking(speaking)
-                    await self._speak(sentence, mark_first_audio=not spoke_any)
-                    spoke_any = True
+                    await self._speak(
+                        sentence, mark_first_audio=not self._spoke_any
+                    )
+                    self._spoke_any = True
             elif isinstance(ev, ToolActivity):
                 print(f"\n   [tool] {ev.name}", flush=True)
             elif isinstance(ev, PermissionRequest):
@@ -231,8 +256,10 @@ class Orchestrator:
             elif isinstance(ev, TurnComplete):
                 if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
-                    await self._speak(pending, mark_first_audio=not spoke_any)
-                    spoke_any = True
+                    await self._speak(
+                        pending, mark_first_audio=not self._spoke_any
+                    )
+                    self._spoke_any = True
                 # Feed proper nouns / identifiers from the agent's reply to the
                 # STT as live hotword context — terms the user is likely to say
                 # back next turn. Duck-typed: engines without set_context are
@@ -254,6 +281,10 @@ class Orchestrator:
             self.mic.set_muted(False)
             self.vad.reset()
 
+        # A cut BEFORE any speech means the user never heard anything to react
+        # to — they were finishing their own sentence. run() stitches it onto
+        # the previous turn instead of sending a context-free fragment.
+        self._continuation = self._interrupted and not self._spoke_any
         return await self._reap_barge_monitor()
 
     async def _reap_barge_monitor(self) -> str | None:
@@ -314,7 +345,12 @@ class Orchestrator:
                         self._interrupted = True
                         self.speaker.stop()
                         await self.backend.interrupt()
-                        print("\n   [barge-in] listening…", flush=True)
+                        label = (
+                            "[barge-in] listening…"
+                            if self._spoke_any
+                            else "[go on…]"
+                        )
+                        print(f"\n   {label}", flush=True)
                 else:
                     if pre_roll_frames:
                         # A near-miss blip: keep its audio in the window too.

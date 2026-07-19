@@ -106,6 +106,11 @@ def _parse_args(argv: list[str]) -> Config:
     )
     p.add_argument("--voice", default=None, help="engine-specific voice id")
     p.add_argument(
+        "--rate", type=int, default=230, dest="rate_wpm",
+        help="speech rate in words/minute (say engine; macOS default ~175, "
+        "talk2me default 230 ≈ 1.3x). 260+ ≈ 1.5x.",
+    )
+    p.add_argument(
         "--vad", default="energy", choices=["energy", "silero", "webrtc"],
         help="voice-activity detector. webrtc is more robust across mics (BT).",
     )
@@ -114,7 +119,11 @@ def _parse_args(argv: list[str]) -> Config:
         help="webrtc only: 0 (lenient) .. 3 (aggressive noise filtering)",
     )
     p.add_argument("--energy-threshold", type=float, default=0.012)
-    p.add_argument("--silence-ms", type=int, default=900)
+    p.add_argument(
+        "--silence-ms", type=int, default=1200,
+        help="trailing silence (ms) that ends your turn; lower = snappier but "
+        "cuts off mid-sentence thinking pauses",
+    )
     p.add_argument(
         "--list-devices", action="store_true",
         help="print available input/output audio devices and exit",
@@ -202,6 +211,7 @@ def _parse_args(argv: list[str]) -> Config:
         whisper_model=a.whisper_model,
         tts=a.tts,
         voice=a.voice,
+        rate_wpm=a.rate_wpm,
         vad=a.vad,
         vad_aggressiveness=a.vad_aggressiveness,
         energy_threshold=a.energy_threshold,

@@ -36,6 +36,7 @@ class FakeMic:
         self._frames = deque(frames)
         self.sample_rate = sample_rate
         self.muted_log: list[bool] = []
+        self.muted = False
         self.started = False
 
     def start(self) -> None:
@@ -45,11 +46,17 @@ class FakeMic:
         self.started = False
 
     def set_muted(self, muted: bool) -> None:
+        self.muted = muted
         self.muted_log.append(muted)
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
         while self._frames:
             await asyncio.sleep(0)  # yield control like the real queue would
+            if self.muted:
+                # The real mic drops frames at the callback while muted; the
+                # replay pauses instead (the "user" politely waits their turn),
+                # so scripted utterances land when the mic can actually hear.
+                continue
             yield self._frames.popleft()
 
 
