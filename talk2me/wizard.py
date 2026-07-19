@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -22,7 +23,32 @@ CONFIG_DIR = os.path.expanduser("~/.talk2me")
 
 # Keys the wizard may write; anything else in the file is ignored on load so
 # a hand-edited or future-version file can't crash argument parsing.
-ALLOWED_KEYS = ("model", "stt", "voice", "barge_in", "gated", "cwd", "save_dir")
+ALLOWED_KEYS = (
+    "model", "stt", "voice", "barge_in", "gated", "cwd", "save_dir",
+    "language", "whisper_model", "backend_base_url", "backend_auth_env",
+)
+
+# Alternate brains that publish Anthropic-compatible endpoints, officially
+# documented for use with the Claude Code CLI — same agent, different mind.
+# (key env var, base url, example model)
+PROVIDERS = {
+    "kimi": ("MOONSHOT_API_KEY", "https://api.moonshot.ai/anthropic", "kimi-k2-0905-preview"),
+    "glm": ("GLM_API_KEY", "https://open.bigmodel.cn/api/anthropic", "glm-4.6"),
+    "deepseek": ("DEEPSEEK_API_KEY", "https://api.deepseek.com/anthropic", "deepseek-chat"),
+}
+
+# "opus 4.6" -> "claude-opus-4-6": people speak versions, the CLI wants ids.
+_MODEL_SHORTHAND = re.compile(r"^(haiku|sonnet|opus)[ .\-]?(\d)[.\-](\d)$", re.IGNORECASE)
+
+
+def normalize_model(text: str) -> str | None:
+    t = text.strip()
+    if not t or t.lower() == "default":
+        return None
+    m = _MODEL_SHORTHAND.match(t)
+    if m:
+        return f"claude-{m.group(1).lower()}-{m.group(2)}-{m.group(3)}"
+    return t
 
 # Flags that mean the caller already knows what they want — a first launch
 # with any of these skips the wizard instead of interrogating a power user.
@@ -64,14 +90,21 @@ def should_run_first_time(argv: list[str]) -> bool:
     return not any(flag in argv for flag in IDENTITY_FLAGS)
 
 
-def _ava_installed() -> bool:
+def _installed_voices() -> list[str]:
+    """Names from `say -v ?`, best first: Premium, then Enhanced, then stock."""
     try:
         out = subprocess.run(
             ["say", "-v", "?"], capture_output=True, text=True, timeout=10
         ).stdout
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return False
-    return "Ava (Premium)" in out
+        return []
+    names = []
+    for line in out.splitlines():
+        m = re.match(r"^(.*?)\s{2,}[a-z]{2}[_-]", line)
+        if m:
+            names.append(m.group(1).strip())
+    rank = lambda n: 0 if "(Premium)" in n else 1 if "(Enhanced)" in n else 2  # noqa: E731
+    return sorted(dict.fromkeys(names), key=lambda n: (rank(n), n))
 
 
 def _parakeet_available() -> bool:
@@ -96,26 +129,57 @@ def run_wizard(existing: dict | None = None) -> dict:
     p()
 
     # 1 — the brain
-    p(f"[bold {CYAN}]1 · the brain[/]  Which Claude model answers you. "
-      "[dim]default = whatever your `claude` CLI is set to; haiku is the "
-      "cheap fast one for casual chat.[/]")
-    brain = Prompt.ask(
-        "  brain",
-        choices=["default", "haiku", "sonnet", "opus", "custom"],
-        default=prev.get("model") and "custom" or "default",
+    p(f"[bold {CYAN}]1 · the brain[/]  Which coding agent answers you. "
+      "[dim]claude = the Claude Code CLI (default). kimi / glm / deepseek "
+      "run through the SAME agent via their official Anthropic-compatible "
+      "endpoints — you bring an API key. custom = any compatible endpoint.[/]")
+    provider_default = "claude"
+    if prev.get("backend_base_url"):
+        for name, (_, url, _m) in PROVIDERS.items():
+            if prev["backend_base_url"] == url:
+                provider_default = name
+                break
+        else:
+            provider_default = "custom"
+    provider = Prompt.ask(
+        "  provider",
+        choices=["claude", "kimi", "glm", "deepseek", "custom"],
+        default=provider_default,
     )
-    if brain == "custom":
-        model = Prompt.ask(
-            "  model name", default=prev.get("model") or "claude-opus-4-6"
+    base_url: str | None = None
+    auth_env: str | None = None
+    if provider == "claude":
+        p("  [dim]Enter = your `claude` CLI's default. Shorthand works: "
+          "haiku · sonnet · opus · opus 4.6 · or any full model id.[/]")
+        model = normalize_model(
+            Prompt.ask("  model", default=prev.get("model") or "default")
         )
     else:
-        model = None if brain == "default" else brain
+        if provider == "custom":
+            base_url = Prompt.ask(
+                "  endpoint URL (Anthropic-compatible)",
+                default=prev.get("backend_base_url") or "https://",
+            )
+            auth_env = Prompt.ask(
+                "  NAME of the env var holding your API key",
+                default=prev.get("backend_auth_env") or "MY_AGENT_API_KEY",
+            ).strip()
+            model = Prompt.ask("  model id", default=prev.get("model") or "")
+            model = model.strip() or None
+        else:
+            auth_env, base_url, example = PROVIDERS[provider]
+            model = Prompt.ask("  model id", default=prev.get("model") or example)
+        if auth_env and not os.environ.get(auth_env):
+            p(f"  [warn]heads-up:[/] {auth_env} isn't set yet — before "
+              f"launching, run:  [bold]export {auth_env}=<your api key>[/]  "
+              "(the key never lands in a file)")
 
     # 2 — the ears
     p()
     p(f"[bold {CYAN}]2 · the ears[/]  Speech-to-text engine. "
-      "[dim]whisper: runs everywhere, CPU. parakeet: Apple-Silicon GPU — "
-      "faster AND more accurate, ~2 GB RAM, English-only.[/]")
+      "[dim]whisper: runs everywhere, CPU, any language. parakeet: "
+      "Apple-Silicon GPU — faster AND more accurate, ~2 GB RAM, but "
+      "English-only.[/]")
     stt = Prompt.ask(
         "  ears", choices=["whisper", "parakeet"],
         default=prev.get("stt") or "whisper",
@@ -135,6 +199,20 @@ def run_wizard(existing: dict | None = None) -> dict:
                 stt = "whisper"
         else:
             stt = "whisper"
+    language = prev.get("language") or "en"
+    whisper_model: str | None = prev.get("whisper_model")
+    if stt == "whisper":
+        p("  [dim]language: a 2-letter code (en, es, de, fr, pt, ja…) or "
+          "'auto' to detect per sentence. Voice commands (pause/wake/"
+          "approve) stay English for now.[/]")
+        language = Prompt.ask("  language", default=language).strip() or "en"
+        if language != "en" and (whisper_model or "base.en").endswith(".en"):
+            # .en models are English-only; swap to the multilingual sibling.
+            whisper_model = (whisper_model or "base.en").removesuffix(".en")
+            p(f"  [dim](using the multilingual model: {whisper_model})[/]")
+    elif language != "en":
+        p("  [warn]parakeet is English-only — keeping language=en[/]")
+        language = "en"
 
     # 3 — the voice
     p()
@@ -142,20 +220,24 @@ def run_wizard(existing: dict | None = None) -> dict:
       "[dim]Recommended: Ava (Premium) — a voice from this decade.[/]")
     voice: str | None = prev.get("voice")
     if sys.platform == "darwin":
-        if _ava_installed():
-            picked = Prompt.ask(
-                "  voice", default=voice or "Ava (Premium)"
-            ).strip()
-            voice = picked or None
-        else:
+        voices = _installed_voices()
+        if voices:
+            show = voices[:12]
+            p("  installed on this Mac: " + " · ".join(
+                f"[bold {GREEN}]{v}[/]" if "(Premium)" in v or "(Enhanced)" in v
+                else v
+                for v in show
+            ) + (f" [dim](+{len(voices) - len(show)} more)[/]" if len(voices) > len(show) else ""))
+        if "Ava (Premium)" not in voices:
             p("  Ava (Premium) isn't downloaded yet. Get it free: System "
               "Settings → Accessibility → Spoken Content → Read & Speak → "
-              "ⓘ next to System voice → download [bold]Ava (Premium)[/].")
-            if Confirm.ask(
-                "  use the plain system voice for now? (pick Ava later with "
-                "--voice)", default=True,
-            ):
-                voice = None
+              "ⓘ next to System voice → download [bold]Ava (Premium)[/] — "
+              "then set it here later.")
+        default_voice = voice or (
+            "Ava (Premium)" if "Ava (Premium)" in voices else "system"
+        )
+        picked = Prompt.ask("  voice", default=default_voice).strip()
+        voice = None if picked in ("", "system") else picked
     else:
         voice = None  # `say` voices are macOS; kitten TTS is the alternative
 
@@ -209,9 +291,24 @@ def run_wizard(existing: dict | None = None) -> dict:
         "  save a markdown transcript of every session?",
         default=bool(save_dir),
     ):
-        save_dir = Prompt.ask(
-            "  transcripts folder", default=save_dir or "~/talk2me-logs"
-        )
+        for _ in range(3):
+            raw = Prompt.ask(
+                "  transcripts folder", default=save_dir or "~/talk2me-logs"
+            )
+            candidate = os.path.expanduser(raw)
+            # Prove it's writable NOW — a typo'd path must fail here with a
+            # re-ask, not at launch with a traceback (live bug: a root-level
+            # path hit the read-only filesystem and killed the session).
+            try:
+                os.makedirs(candidate, exist_ok=True)
+            except OSError as exc:
+                p(f"  [warn]can't create that folder:[/] {exc}")
+                continue
+            save_dir = raw
+            break
+        else:
+            p("  [warn]no writable folder — transcripts off[/]")
+            save_dir = None
     else:
         save_dir = None
 
@@ -223,6 +320,10 @@ def run_wizard(existing: dict | None = None) -> dict:
         "gated": tools == "gated",
         "cwd": cwd,
         "save_dir": save_dir,
+        "language": language,
+        "whisper_model": whisper_model,
+        "backend_base_url": base_url,
+        "backend_auth_env": auth_env,
     }
     save_config(cfg)
     p()

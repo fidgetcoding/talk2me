@@ -36,11 +36,17 @@ class WhisperSTT:
         device: str = "auto",
         compute_type: str = "int8",
         vocab: list[str] | None = None,
+        language: str = "en",
     ) -> None:
         self._model_name = model
         self._device = device
         self._compute_type = compute_type
         self._vocab = list(vocab or [])
+        # "auto" (or empty) lets whisper detect per-utterance; anything else
+        # pins the decode language. Needs a multilingual model (no ".en").
+        self._language: str | None = (
+            None if language in ("auto", "") else language
+        )
         self._context_terms: list[str] = []
         self._model = None  # lazy
         # A background warmup() and the first transcribe() can race from
@@ -101,7 +107,7 @@ class WhisperSTT:
         # regions and decodes to "" instead of a hallucinated word.
         segments, _info = model.transcribe(
             audio,
-            language="en",
+            language=self._language,
             hotwords=self._hotwords(),
             beam_size=5,
             temperature=0.0,

@@ -144,6 +144,7 @@ class ClaudeCodeBackend:
         disallowed_tools: list[str] | None = None,
         setting_sources: str | None = None,
         append_system_prompt: str | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> None:
         self._bin = claude_bin
         self._model = model
@@ -161,6 +162,11 @@ class ClaudeCodeBackend:
         # user CLAUDE.md) — a measured time-to-first-token win for voice.
         self._setting_sources = setting_sources
         self._append_system_prompt = append_system_prompt
+        # Extra environment for the child — how OTHER brains ride this same
+        # backend: Kimi/GLM/DeepSeek publish Anthropic-compatible endpoints,
+        # so ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN aim the `claude` CLI
+        # at them while every event-protocol behavior stays identical.
+        self._extra_env = dict(extra_env or {})
 
         self._proc: asyncio.subprocess.Process | None = None
         self._events: asyncio.Queue[AgentEvent] = asyncio.Queue()
@@ -213,12 +219,16 @@ class ClaudeCodeBackend:
         return argv
 
     async def start(self) -> None:
+        env = None
+        if self._extra_env:
+            env = {**os.environ, **self._extra_env}
         self._proc = await asyncio.create_subprocess_exec(
             *self._argv(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self._cwd,
+            env=env,
             limit=_STREAM_LIMIT,
         )
         self._reader_task = asyncio.create_task(self._read_stdout())

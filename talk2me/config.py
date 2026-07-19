@@ -126,6 +126,16 @@ class Config:
     # mechanics are identical; only the Mic/Speaker implementations change.
     phone: bool = False
     phone_port: int = 8765
+    # Transcription language (whisper only; parakeet is English-only).
+    # A 2-letter code ("en", "es", "de", …) or "auto" to let whisper detect.
+    # Non-English needs a multilingual model: --whisper-model base (not .en).
+    language: str = "en"
+    # Alternate brain via an Anthropic-compatible endpoint (Kimi, GLM,
+    # DeepSeek publish these officially for Claude Code). base_url aims the
+    # CLI; auth_env NAMES the environment variable holding the API key — the
+    # key itself is never written to disk.
+    backend_base_url: str | None = None
+    backend_auth_env: str | None = None
     # Audio kept from just BEFORE speech onset and prepended to the utterance.
     # Energy VADs miss quiet first phonemes, and without this the transcript
     # starts mid-word (live-run: "count down to fifty" -> "down to 50").

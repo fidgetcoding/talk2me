@@ -66,6 +66,21 @@ def _parse_args(argv: list[str]) -> Config:
         "folder), save it as your defaults, then launch",
     )
     p.add_argument("--model", default=None, help="claude model (e.g. haiku, sonnet)")
+    p.add_argument(
+        "--backend-base-url", default=None, dest="backend_base_url",
+        help=(
+            "Anthropic-compatible endpoint for a different brain — Kimi "
+            "(https://api.moonshot.ai/anthropic), GLM, DeepSeek all publish "
+            "one. Pair with --backend-auth-env."
+        ),
+    )
+    p.add_argument(
+        "--backend-auth-env", default=None, dest="backend_auth_env",
+        help=(
+            "NAME of the env var holding the API key for --backend-base-url "
+            "(e.g. MOONSHOT_API_KEY). The key itself never lands in a file."
+        ),
+    )
     p.add_argument("--cwd", default=None, help="working dir for the agent")
     p.add_argument(
         "--gated", action="store_true",
@@ -125,6 +140,16 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument("--whisper-model", default="base.en")
+    p.add_argument(
+        "--language", default="en",
+        help=(
+            "transcription language (whisper only): a 2-letter code (es, de, "
+            "fr…) or 'auto' to detect per utterance. Non-English needs a "
+            "multilingual model, e.g. --whisper-model base — the .en models "
+            "are English-only, and so is parakeet. Voice COMMANDS (pause/"
+            "wake/approve) stay English for now."
+        ),
+    )
     p.add_argument(
         "--tts", default="say", choices=["say", "kitten", "null"],
         help="speech engine: say (macOS built-in), kitten (local neural, "
@@ -274,6 +299,14 @@ def _parse_args(argv: list[str]) -> Config:
     # M3: reject permission-affecting flags smuggled through the positional tail.
     _reject_blocked_passthrough(p, a.claude_args)
 
+    # A named key variable that isn't exported fails HERE with a sentence,
+    # not twenty turns later with an opaque auth error from the CLI.
+    if a.backend_base_url and a.backend_auth_env and not os.environ.get(a.backend_auth_env):
+        p.error(
+            f"--backend-auth-env names {a.backend_auth_env!r} but it isn't "
+            f"set — run: export {a.backend_auth_env}=<your api key>"
+        )
+
     from .config import DEFAULT_ALLOWED_TOOLS, DEFAULT_DISALLOWED_TOOLS
 
     return Config(
@@ -286,6 +319,8 @@ def _parse_args(argv: list[str]) -> Config:
         phone_port=a.phone_port,
         model=a.model,
         cwd=a.cwd,
+        backend_base_url=a.backend_base_url,
+        backend_auth_env=a.backend_auth_env,
         permission_mode=permission_mode,
         with_user_config=a.with_user_config,
         voice_approval=voice_approval,
@@ -298,6 +333,7 @@ def _parse_args(argv: list[str]) -> Config:
         input_mode=input_mode,
         stt=a.stt,
         whisper_model=a.whisper_model,
+        language=a.language,
         tts=a.tts,
         voice=a.voice,
         rate_wpm=a.rate_wpm,
@@ -454,10 +490,19 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
     if cfg.save_dir:
         from .sessionlog import SessionLog
 
-        session_log = SessionLog(
-            cfg.save_dir, model=cfg.model, stt=cfg.stt, cwd=cfg.cwd
-        )
-        renderer.transcript_path(session_log.path)
+        # An unwritable transcript dir must never kill the launch (live bug:
+        # a typo'd absolute path at / crashed on the read-only filesystem).
+        try:
+            session_log = SessionLog(
+                cfg.save_dir, model=cfg.model, stt=cfg.stt, cwd=cfg.cwd
+            )
+        except OSError as exc:
+            renderer.error(
+                f"[save-dir] can't write {cfg.save_dir} ({exc}) — "
+                "transcripts OFF this session"
+            )
+        else:
+            renderer.transcript_path(session_log.path)
 
     from .speechcheck import build_speech_check
 
@@ -534,10 +579,18 @@ async def _run_text(cfg: Config) -> int:
     if cfg.save_dir:
         from .sessionlog import SessionLog
 
-        session_log = SessionLog(
-            cfg.save_dir, model=cfg.model, stt="(text mode)", cwd=cfg.cwd
-        )
-        print(f"📝 saving transcript to {session_log.path}", flush=True)
+        try:
+            session_log = SessionLog(
+                cfg.save_dir, model=cfg.model, stt="(text mode)", cwd=cfg.cwd
+            )
+        except OSError as exc:
+            print(
+                f"[save-dir] can't write {cfg.save_dir} ({exc}) — "
+                "transcripts OFF this session",
+                flush=True,
+            )
+        else:
+            print(f"📝 saving transcript to {session_log.path}", flush=True)
 
     backend = factory.build_backend(cfg)
     await backend.start()

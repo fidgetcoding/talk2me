@@ -66,7 +66,7 @@ And the laziest path of all: paste this repo's URL into Claude Code and say *"in
 
 ### First launch
 
-A bare first `t2m` (no flags, no saved setup) walks you through it out loud-adjacent: pick the **brain** (model), the **ears** (whisper or the faster parakeet — it offers to install what's missing), the **voice** (it recommends Ava (Premium) and tells you where to get her), **barge-in** (on, explained), **tools** (auto-approve, explained), and the **folder** you're working on. Answers save to `~/.talk2me/config.json` and become your defaults — flags always override. Change your mind any time: `t2m --setup`, or **Ctrl-T** mid-session (macOS) to reopen the menu without losing your place.
+A bare first `t2m` (no flags, no saved setup) walks you through it: pick the **brain** (Claude by default — or **Kimi, GLM, DeepSeek**, which run through the same agent via their official Anthropic-compatible endpoints with your API key; "opus 4.6" style shorthand works), the **ears** (whisper or the faster parakeet — it offers to install what's missing), the **voice** (it recommends Ava (Premium) and tells you where to get her), **barge-in** (on, explained), **tools** (auto-approve, explained), and the **folder** you're working on. Answers save to `~/.talk2me/config.json` and become your defaults — flags always override. Change your mind any time: `t2m --setup`, or **Ctrl-T** mid-session (macOS) to reopen the menu without losing your place.
 
 First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody.
 
@@ -115,6 +115,8 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --stt parakeet` | GPU ears — faster + more accurate (Apple Silicon; `pip install -e ".[parakeet]"` first). |
 | `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
+| `t2m --backend-base-url … --backend-auth-env MY_KEY` | A different brain entirely — Kimi/GLM/DeepSeek publish Anthropic-compatible endpoints; the key stays in your env, never a file. Easiest via `t2m --setup`. |
+| `t2m --language es` (or `auto`) | Talk to it in another language (whisper; pairs with `--whisper-model base` — the `.en` models and parakeet are English-only). Voice commands stay English for now. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |

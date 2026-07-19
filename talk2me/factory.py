@@ -8,6 +8,8 @@ That containment is the whole point: no provider swap should ripple outward.
 
 from __future__ import annotations
 
+import os
+
 from .config import Config
 from .protocols import STT, TTS, VAD, AgentBackend
 
@@ -55,6 +57,7 @@ def build_stt(cfg: Config) -> STT:
         return WhisperSTT(
             model=cfg.whisper_model,
             vocab=cfg.vocab,
+            language=cfg.language,
         )
     if cfg.stt == "parakeet":
         from .stt.parakeet import ParakeetMLXSTT
@@ -89,6 +92,19 @@ def build_backend(cfg: Config) -> AgentBackend:
     # deny: bypass modes auto-approve everything, so wiring the prompt tool
     # there would never fire (and the denylist still applies CLI-side).
     stdio_gate = cfg.voice_approval and "bypass" not in cfg.permission_mode.lower()
+
+    # Alternate brains (Kimi / GLM / DeepSeek / any Anthropic-compatible
+    # endpoint) ride the same CLI via environment: base URL + the API key
+    # read from the env var the user NAMED — never from a file.
+    extra_env: dict[str, str] = {}
+    if cfg.backend_base_url:
+        extra_env["ANTHROPIC_BASE_URL"] = cfg.backend_base_url
+        if cfg.backend_auth_env:
+            key = os.environ.get(cfg.backend_auth_env, "")
+            extra_env["ANTHROPIC_AUTH_TOKEN"] = key
+            # Keep the CLI from preferring a logged-in Anthropic account.
+            extra_env["ANTHROPIC_API_KEY"] = key
+
     return ClaudeCodeBackend(
         claude_bin=cfg.claude_bin,
         model=cfg.model,
@@ -102,6 +118,7 @@ def build_backend(cfg: Config) -> AgentBackend:
         append_system_prompt=(
             VOICE_SYSTEM_PROMPT if cfg.input_mode == "voice" else None
         ),
+        extra_env=extra_env or None,
     )
 
 
