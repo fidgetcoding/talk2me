@@ -22,11 +22,13 @@ Stdlib only; zero talk2me imports — copy this single file anywhere.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
 TOGGLE = os.path.expanduser("~/.talk2me-speak")
 DEFAULT_VOICE = "Ava (Premium)"
@@ -42,15 +44,32 @@ def main() -> int:
         payload = json.load(sys.stdin)
     except Exception:
         return 0
-    # A stop-hook-triggered continuation would loop the speaker; bail.
-    if payload.get("stop_hook_active"):
-        return 0
     tpath = payload.get("transcript_path")
     if not tpath or not os.path.isfile(tpath):
         return 0
     text = _last_assistant_text(tpath)
     if not text:
         return 0
+    # Speak each reply exactly ONCE, keyed by content — NOT by skipping
+    # stop_hook_active turns. Other Stop hooks (e.g. a memory-save hook that
+    # cancels the first stop) mean the only stop we ever see may carry
+    # stop_hook_active=true; content-dedupe both survives that and prevents
+    # the re-speak loop the flag was guarding against.
+    session = str(payload.get("session_id") or "nosession")[:64]
+    marker = os.path.join(
+        tempfile.gettempdir(), f"talk2me-spoke-{session}.hash"
+    )
+    digest = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+    try:
+        if open(marker, encoding="utf-8").read().strip() == digest:
+            return 0
+    except OSError:
+        pass
+    try:
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write(digest)
+    except OSError:
+        pass
     speech = _clean(text)
     if not speech:
         return 0
