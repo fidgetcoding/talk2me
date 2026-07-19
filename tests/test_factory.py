@@ -120,6 +120,28 @@ def test_build_backend() -> bool:
     )
 
 
+def test_build_stt_parakeet() -> bool:
+    # Lazy contract: constructing the parakeet engine must not import
+    # parakeet_mlx (CI has no MLX), and satisfies the STT Protocol.
+    import sys
+
+    stt = build_stt(Config(stt="parakeet"))
+    from talk2me.stt.parakeet import ParakeetMLXSTT
+
+    ok = (
+        isinstance(stt, ParakeetMLXSTT)
+        and isinstance(stt, STT)
+        and stt._model is None
+        and "parakeet_mlx" not in sys.modules
+        and _raises_value_error(lambda: build_stt(Config(stt="bogus")))
+    )
+    return _line(
+        "build_stt parakeet",
+        ok,
+        f"stt={type(stt).__name__} mlx_imported={'parakeet_mlx' in sys.modules}",
+    )
+
+
 def test_hotword_context() -> bool:
     # Live context merges after static vocab, deduped case-insensitively.
     stt = WhisperSTT(vocab=["Lorecraft"])
@@ -155,6 +177,7 @@ def main() -> int:
         test_build_vad(),
         test_build_stt(),
         test_build_backend(),
+        test_build_stt_parakeet(),
         test_hotword_context(),
         test_frame_samples(),
     ]

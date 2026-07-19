@@ -96,9 +96,10 @@ class Config:
     max_utterance_ms: int = 90_000
 
     # --- STT ---
-    stt: str = "whisper"
+    stt: str = "whisper"  # "whisper" (CPU, hotword biasing) | "parakeet" (M-series GPU)
     whisper_model: str = "base.en"
-    vocab: list[str] = field(default_factory=list)  # bias terms (names, jargon)
+    parakeet_model: str = "mlx-community/parakeet-tdt-0.6b-v2"
+    vocab: list[str] = field(default_factory=list)  # bias terms (whisper only)
 
     # --- TTS ---
     tts: str = "say"  # "say" | "kitten" | "null"

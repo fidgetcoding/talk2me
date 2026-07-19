@@ -56,6 +56,11 @@ def build_stt(cfg: Config) -> STT:
             model=cfg.whisper_model,
             vocab=cfg.vocab,
         )
+    if cfg.stt == "parakeet":
+        from .stt.parakeet import ParakeetMLXSTT
+
+        # No vocab: the TDT decoder has no hotword input (stt/parakeet.py).
+        return ParakeetMLXSTT(model=cfg.parakeet_model)
     raise ValueError(f"unknown stt: {cfg.stt!r}")
 
 

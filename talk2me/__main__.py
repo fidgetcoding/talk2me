@@ -89,6 +89,15 @@ def _parse_args(argv: list[str]) -> Config:
             "never asked out loud."
         ),
     )
+    p.add_argument(
+        "--stt", default="whisper", choices=["whisper", "parakeet"],
+        help=(
+            "transcription engine. whisper (default): CPU, supports --vocab "
+            "hotword biasing. parakeet: Apple-Silicon GPU via MLX — more "
+            "accurate AND ~10x faster, ~2 GB RAM, English-only, no vocab "
+            "biasing (`pip install -e \".[parakeet]\"`)."
+        ),
+    )
     p.add_argument("--whisper-model", default="base.en")
     p.add_argument(
         "--tts", default="say", choices=["say", "kitten", "null"],
@@ -179,6 +188,7 @@ def _parse_args(argv: list[str]) -> Config:
         barge_in=a.barge_in,
         half_duplex=not a.barge_in,
         input_mode=input_mode,
+        stt=a.stt,
         whisper_model=a.whisper_model,
         tts=a.tts,
         voice=a.voice,

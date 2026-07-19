@@ -24,6 +24,10 @@ webrtc = ["webrtcvad-wheels>=2.0"]
 # KittenTTS — local neural voice (cross-platform; the only built-in voice option
 # off macOS). Install with: pip install talk2me[kitten]
 kitten = ["kittentts>=0.1"]
+# Parakeet STT — NVIDIA Parakeet TDT on the Apple-Silicon GPU via MLX. More
+# accurate and ~10x faster than local Whisper; ~2 GB RAM; English-only; pure
+# MLX (no torch). Install with: pip install talk2me[parakeet]
+parakeet = ["parakeet-mlx>=0.3"]
 
 [project.scripts]
 talk2me = "talk2me.__main__:main"

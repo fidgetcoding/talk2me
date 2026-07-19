@@ -101,6 +101,7 @@ Start talking. Hit `Ctrl-C` when you're done.
 | `talk2me --barge-in` | Headphones on, mic stays hot, you can cut it off mid-sentence. See [Interrupting it](#interrupting-it). |
 | `talk2me --debug` | Shows what the ears are doing (heard speech, turn ended, too short). Use this the first time. |
 | `talk2me --vocab Lorecraft --vocab Morgen` | Teach it your weird proper nouns so it stops inventing spellings. |
+| `talk2me --stt parakeet` | The fast ears: Apple-Silicon GPU transcription — more accurate than any local Whisper and ~10× faster. `pip install -e ".[parakeet]"` first. |
 | `talk2me --tts null` | Answers on screen, no voice out. |
 
 ## Tuning the ears
@@ -121,7 +122,7 @@ Every swappable part hides behind a contract: voice detection, transcription, th
 Out of the box:
 
 - **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room. Two sharper options ship too: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file).
-- **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter.
+- **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter. Or `--stt parakeet` (install with `pip install -e ".[parakeet]"`): NVIDIA's Parakeet on the Apple-Silicon GPU — better accuracy than any local Whisper at a tenth of the wait, for ~2 GB of RAM while it runs. English-only, and `--vocab` biasing stays a Whisper-only trick. The full research behind the tradeoff lives in `docs/stt-upgrade-research.md`.
 - **Voice:** the built-in macOS voice by default. `--tts kitten` (install with `pip install -e ".[kitten]"`) is a local neural voice that works on any OS. `--tts null` keeps it text-only.
 - **The agent:** Claude Code.
 
