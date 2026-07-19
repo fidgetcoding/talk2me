@@ -975,16 +975,22 @@ def looks_hallucinated(raw: str) -> bool:
 # when the ENTIRE utterance is the command (normalized), so "pause listening
 # to him and focus" never triggers it.
 _PAUSE_COMMANDS = frozenset(
-    ("pause listening", "stop listening", "go to sleep", "take a break")
+    ("pause", "pause listening", "stop listening", "go to sleep", "take a break")
 )
 _RESUME_COMMANDS = frozenset(
-    ("wake up", "resume listening", "start listening", "im back")
+    ("unpause", "wake up", "resume listening", "start listening", "im back")
 )
 
 
 def control_intent(text: str) -> str | None:
-    """Map a whole utterance to "pause" / "resume" / None."""
-    normalized = " ".join(re.findall(r"[a-z]+", text.lower().replace("'", "")))
+    """Map a whole utterance to "pause" / "resume" / None.
+
+    Consecutive word repeats collapse before matching, so a human stutter —
+    "Pause. Pause, Listening." (live-observed) — still lands the command.
+    """
+    words = re.findall(r"[a-z]+", text.lower().replace("'", ""))
+    deduped = [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
+    normalized = " ".join(deduped)
     if normalized in _PAUSE_COMMANDS:
         return "pause"
     if normalized in _RESUME_COMMANDS:
