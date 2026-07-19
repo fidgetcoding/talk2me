@@ -22,6 +22,7 @@ from talk2me.events import (
 )
 from talk2me.orchestrator import (
     Orchestrator,
+    _drain_first_clause,
     _phrase_permission,
     match_intent,
 )
@@ -212,6 +213,8 @@ def test_argv_wiring() -> None:
         permission_prompt_stdio=True,
         allowed_tools=["Read", "Bash(ls:*)"],
         disallowed_tools=["Bash(sudo:*)"],
+        setting_sources="project,local",
+        append_system_prompt="voice persona",
     )
     argv = b._argv()
     joined = " ".join(argv)
@@ -219,12 +222,39 @@ def test_argv_wiring() -> None:
         "--permission-prompt-tool stdio" in joined
         and "--allowedTools Read,Bash(ls:*)" in joined
         and "--disallowedTools Bash(sudo:*)" in joined
+        and "--setting-sources project,local" in joined
+        and "--append-system-prompt voice persona" in joined
     )
-    check("argv wires stdio + tool lists", ok, joined)
+    check("argv wires stdio + tool lists + isolation", ok, joined)
 
     bare = ClaudeCodeBackend()._argv()
-    ok = "--permission-prompt-tool" not in bare and "--allowedTools" not in " ".join(bare)
-    check("argv omits gate when disabled", ok)
+    bare_joined = " ".join(bare)
+    ok = (
+        "--permission-prompt-tool" not in bare_joined
+        and "--allowedTools" not in bare_joined
+        and "--setting-sources" not in bare_joined
+        and "--append-system-prompt" not in bare_joined
+    )
+    check("argv omits gate + isolation when unset", ok)
+
+
+def test_first_clause() -> None:
+    cases = [
+        # (input, expected clause or None)
+        ("I checked the repository and found three issues, the first is in",
+         "I checked the repository and found three issues,"),
+        ("Sure, let me look at that for you", None),  # comma before 24 chars
+        ("No boundary here so nothing should be emitted yet", None),
+        ("Let me walk through the plan: first we update the config",
+         "Let me walk through the plan:"),
+    ]
+    for text, want in cases:
+        rest, clause = _drain_first_clause(text)
+        ok = clause == want and (
+            clause is None and rest == text
+            or clause is not None and not rest.startswith(" ")
+        )
+        check(f"first-clause {text[:24]!r}…", ok, f"got={clause!r}")
 
 
 # ---- orchestrator round-trips --------------------------------------------
@@ -333,6 +363,7 @@ async def main() -> int:
     test_translate()
     await test_respond_and_interrupt_wire()
     test_argv_wiring()
+    test_first_clause()
     await test_gate_approve()
     await test_gate_deny()
     await test_gate_unclear_then_deny()

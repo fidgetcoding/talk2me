@@ -67,6 +67,8 @@ class ClaudeCodeBackend:
         permission_prompt_stdio: bool = False,
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
+        setting_sources: str | None = None,
+        append_system_prompt: str | None = None,
     ) -> None:
         self._bin = claude_bin
         self._model = model
@@ -80,6 +82,10 @@ class ClaudeCodeBackend:
         self._permission_prompt_stdio = permission_prompt_stdio
         self._allowed_tools = allowed_tools or []
         self._disallowed_tools = disallowed_tools or []
+        # e.g. "project,local" to drop the user-level config (hooks, skills,
+        # user CLAUDE.md) — a measured time-to-first-token win for voice.
+        self._setting_sources = setting_sources
+        self._append_system_prompt = append_system_prompt
 
         self._proc: asyncio.subprocess.Process | None = None
         self._events: asyncio.Queue[AgentEvent] = asyncio.Queue()
@@ -124,6 +130,10 @@ class ClaudeCodeBackend:
             argv += ["--allowedTools", ",".join(self._allowed_tools)]
         if self._disallowed_tools:
             argv += ["--disallowedTools", ",".join(self._disallowed_tools)]
+        if self._setting_sources:
+            argv += ["--setting-sources", self._setting_sources]
+        if self._append_system_prompt:
+            argv += ["--append-system-prompt", self._append_system_prompt]
         argv += self._extra_args
         return argv
 

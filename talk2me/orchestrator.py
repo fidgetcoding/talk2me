@@ -19,6 +19,7 @@ import asyncio
 import os
 import re
 import sys
+import time
 from collections import deque
 from collections.abc import AsyncIterator
 
@@ -105,22 +106,38 @@ class Orchestrator:
         # mic, and whether it already cut this turn's playback.
         self._barge_task: asyncio.Task[str | None] | None = None
         self._interrupted = False
+        # When the current user turn was handed to the backend; drives the
+        # --debug latency lines (first-token / first-audio).
+        self._t_sent = 0.0
 
     async def run(self) -> None:
         await self.backend.start()
         self.mic.start()
         events = self.backend.events()
+        # Pre-load the STT model in the background so the FIRST utterance
+        # doesn't stall for the multi-second model load. Duck-typed: engines
+        # without warmup() just lazy-load on first use as before.
+        warmup: asyncio.Task[None] | None = None
+        if hasattr(self.stt, "warmup"):
+            warmup = asyncio.create_task(asyncio.to_thread(self.stt.warmup))
         print("talk2me ready — start talking. Ctrl-C to quit.", flush=True)
         try:
             print("\n🎧 listening…", flush=True)
             async for utterance in segment_utterances(
                 self.mic.frames(), self.vad, self.cfg
             ):
+                t_captured = time.monotonic()
                 text = await self.stt.transcribe(utterance, self.mic.sample_rate)
+                if self.cfg.debug:
+                    print(
+                        f"  [t] stt {time.monotonic() - t_captured:.2f}s",
+                        flush=True,
+                    )
                 if not text:
                     print("🎧 listening…", flush=True)
                     continue
                 print(f"\n🗣  you: {text}", flush=True)
+                self._t_sent = time.monotonic()
                 try:
                     await self.backend.send(text)
                 except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
@@ -137,6 +154,7 @@ class Orchestrator:
                 # it straight through instead of going back to listening.
                 while barge and not self._fatal:
                     print(f"\n🗣  you (barge-in): {barge}", flush=True)
+                    self._t_sent = time.monotonic()
                     try:
                         await self.backend.send(barge)
                     except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
@@ -149,6 +167,8 @@ class Orchestrator:
                     break
                 print("\n🎧 listening…", flush=True)
         finally:
+            if warmup is not None and not warmup.done():
+                warmup.cancel()
             self.mic.stop()
             # Release the audio output device at session end. stop() is a no-op-safe
             # method on the real Speaker (and the fake), so this can't strand a handle.
@@ -163,6 +183,8 @@ class Orchestrator:
         """
         pending = ""
         speaking = False
+        spoke_any = False  # unlike `speaking`, never reset by the gate
+        saw_token = False
         self._interrupted = False
         barge_enabled = self.cfg.barge_in and not self.cfg.half_duplex
         if barge_enabled:
@@ -172,15 +194,31 @@ class Orchestrator:
 
         async for ev in events:
             if isinstance(ev, AssistantTextDelta):
+                if not saw_token:
+                    saw_token = True
+                    if self.cfg.debug and self._t_sent:
+                        print(
+                            f"\n  [t] first-token "
+                            f"{time.monotonic() - self._t_sent:.2f}s",
+                            flush=True,
+                        )
                 sys.stdout.write(ev.text)
                 sys.stdout.flush()
                 pending += ev.text
                 pending, ready = _drain_sentences(pending)
+                if not ready and not spoke_any and not self._interrupted:
+                    # Nothing spoken yet this turn: start on the first clause
+                    # instead of waiting out a long opening sentence — the
+                    # first chunk is also shorter, so it renders faster.
+                    pending, clause = _drain_first_clause(pending)
+                    if clause is not None:
+                        ready = [clause]
                 for sentence in ready:
                     if self._interrupted:
                         continue  # user cut playback; keep text on screen only
                     speaking = self._begin_speaking(speaking)
-                    await self._speak(sentence)
+                    await self._speak(sentence, mark_first_audio=not spoke_any)
+                    spoke_any = True
             elif isinstance(ev, ToolActivity):
                 print(f"\n   [tool] {ev.name}", flush=True)
             elif isinstance(ev, PermissionRequest):
@@ -193,7 +231,8 @@ class Orchestrator:
             elif isinstance(ev, TurnComplete):
                 if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
-                    await self._speak(pending)
+                    await self._speak(pending, mark_first_audio=not spoke_any)
+                    spoke_any = True
                 # Feed proper nouns / identifiers from the agent's reply to the
                 # STT as live hotword context — terms the user is likely to say
                 # back next turn. Duck-typed: engines without set_context are
@@ -316,8 +355,24 @@ class Orchestrator:
         # echo cancellation.
         return True
 
-    async def _speak(self, text: str) -> None:
-        await self.speaker.play(self.tts.synthesize(text))
+    async def _speak(self, text: str, *, mark_first_audio: bool = False) -> None:
+        blocks = self.tts.synthesize(text)
+        if mark_first_audio and self.cfg.debug and self._t_sent:
+            blocks = self._marked_first_block(blocks)
+        await self.speaker.play(blocks)
+
+    async def _marked_first_block(self, blocks):
+        """Log send→first-PCM-block latency: the moment TTS render finished and
+        playback actually begins (--debug only)."""
+        logged = False
+        async for block in blocks:
+            if not logged:
+                logged = True
+                print(
+                    f"\n  [t] first-audio {time.monotonic() - self._t_sent:.2f}s",
+                    flush=True,
+                )
+            yield block
 
     async def _handle_permission(self, ev: PermissionRequest) -> None:
         """Spoken approve/deny gate for one paused tool call.
@@ -410,6 +465,21 @@ def _drain_sentences(buf: str) -> tuple[str, list[str]]:
         carry = ""
         last = m.end()
     return buf[last:], out
+
+
+# First-clause boundary for the FIRST spoken chunk of a turn: a comma /
+# semicolon / colon / dash after at least 24 chars (avoids "Hi," micro-chunks)
+# and at most 90 (bounds the wait). Only used before anything has been spoken;
+# later chunks use full sentences.
+_FIRST_CLAUSE = re.compile(r"^(.{24,90}?[,;:—-])\s")
+
+
+def _drain_first_clause(buf: str) -> tuple[str, str | None]:
+    """Split the first speakable clause off `buf`; (remainder, clause|None)."""
+    m = _FIRST_CLAUSE.match(buf)
+    if m is None:
+        return buf, None
+    return buf[m.end() :], m.group(1)
 
 
 # Words that look like things a user would echo back: CamelCase / snake_case

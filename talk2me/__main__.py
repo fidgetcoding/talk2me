@@ -136,6 +136,15 @@ def _parse_args(argv: list[str]) -> Config:
         help="file of bias terms, one per line or comma-separated",
     )
     p.add_argument(
+        "--with-user-config", action="store_true",
+        help=(
+            "load your full user-level Claude config (hooks, skills, user "
+            "CLAUDE.md) into the agent. Off by default: it measurably slows "
+            "every turn and its hook chatter gets spoken aloud. Project-level "
+            "CLAUDE.md / settings always load either way."
+        ),
+    )
+    p.add_argument(
         "--barge-in", action="store_true",
         help=(
             "full-duplex: keep the mic live while the agent speaks; when you "
@@ -182,6 +191,7 @@ def _parse_args(argv: list[str]) -> Config:
         model=a.model,
         cwd=a.cwd,
         permission_mode=permission_mode,
+        with_user_config=a.with_user_config,
         voice_approval=not a.no_voice_approval,
         allowed_tools=list(DEFAULT_ALLOWED_TOOLS) + a.allow_tool,
         disallowed_tools=list(DEFAULT_DISALLOWED_TOOLS) + a.deny_tool,

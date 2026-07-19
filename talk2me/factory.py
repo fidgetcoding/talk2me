@@ -83,6 +83,8 @@ def build_tts(cfg: Config) -> TTS:
 def build_backend(cfg: Config) -> AgentBackend:
     from .backends import ClaudeCodeBackend
 
+    from .config import VOICE_SYSTEM_PROMPT
+
     # The stdio approval gate only makes sense when the CLI would otherwise
     # deny: bypass modes auto-approve everything, so wiring the prompt tool
     # there would never fire (and the denylist still applies CLI-side).
@@ -96,6 +98,10 @@ def build_backend(cfg: Config) -> AgentBackend:
         permission_prompt_stdio=stdio_gate,
         allowed_tools=cfg.allowed_tools,
         disallowed_tools=cfg.disallowed_tools,
+        setting_sources=None if cfg.with_user_config else "project,local",
+        append_system_prompt=(
+            VOICE_SYSTEM_PROMPT if cfg.input_mode == "voice" else None
+        ),
     )
 
 

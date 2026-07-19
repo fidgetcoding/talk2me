@@ -17,6 +17,7 @@ awareness.
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import numpy as np
 
@@ -42,6 +43,9 @@ class WhisperSTT:
         self._vocab = list(vocab or [])
         self._context_terms: list[str] = []
         self._model = None  # lazy
+        # A background warmup() and the first transcribe() can race from
+        # different threads; load exactly once.
+        self._load_lock = threading.Lock()
 
     def set_context(self, terms: list[str]) -> None:
         """Replace the live context terms (proper nouns from the conversation).
@@ -63,15 +67,22 @@ class WhisperSTT:
         return ", ".join(terms) if terms else None
 
     def _ensure_model(self):
-        if self._model is None:
-            from faster_whisper import WhisperModel
+        with self._load_lock:
+            if self._model is None:
+                from faster_whisper import WhisperModel
 
-            self._model = WhisperModel(
-                self._model_name,
-                device=self._device,
-                compute_type=self._compute_type,
-            )
+                self._model = WhisperModel(
+                    self._model_name,
+                    device=self._device,
+                    compute_type=self._compute_type,
+                )
         return self._model
+
+    def warmup(self) -> None:
+        """Blocking model load, callable from a background thread at startup so
+        the FIRST utterance doesn't pay the multi-second load. Duck-typed (not
+        part of the STT Protocol)."""
+        self._ensure_model()
 
     async def transcribe(self, audio: np.ndarray, sample_rate: int) -> str:
         return await asyncio.to_thread(self._transcribe_sync, audio, sample_rate)

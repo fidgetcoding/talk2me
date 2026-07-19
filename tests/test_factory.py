@@ -106,17 +106,27 @@ def test_build_backend() -> bool:
     # Must build the backend WITHOUT starting it: no `claude` subprocess spawned.
     # ClaudeCodeBackend.start() is async; merely constructing leaves _proc None.
     backend = build_backend(Config(model="haiku"))
+    from talk2me.config import VOICE_SYSTEM_PROMPT
+
+    # Defaults: user config isolated, voice persona appended in voice mode.
+    text_backend = build_backend(Config(input_mode="text"))
+    full_backend = build_backend(Config(with_user_config=True))
     ok = (
         isinstance(backend, ClaudeCodeBackend)
         and isinstance(backend, AgentBackend)  # runtime Protocol check
         and backend._model == "haiku"
         and backend._proc is None  # not started
+        and backend._setting_sources == "project,local"
+        and backend._append_system_prompt == VOICE_SYSTEM_PROMPT
+        and text_backend._append_system_prompt is None
+        and full_backend._setting_sources is None
     )
     return _line(
         "build_backend",
         ok,
         f"backend={type(backend).__name__} model={backend._model!r} "
-        f"started={backend._proc is not None}",
+        f"sources={backend._setting_sources!r} "
+        f"voice_prompt={'yes' if backend._append_system_prompt else 'no'}",
     )
 
 

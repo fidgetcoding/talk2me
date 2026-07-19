@@ -44,6 +44,18 @@ DEFAULT_DISALLOWED_TOOLS: tuple[str, ...] = (
 )
 
 
+# Appended to the agent's system prompt in voice mode. Shorter, spoken-shaped
+# replies are also a latency win: fewer output tokens before the turn ends.
+VOICE_SYSTEM_PROMPT = (
+    "Your replies are spoken aloud by text-to-speech in a live voice "
+    "conversation. Be brief and conversational: plain sentences only — no "
+    "markdown, no headers, no bullet lists, no emoji. Never read code aloud; "
+    "describe what you did or found in a sentence instead. When a request is "
+    "ambiguous, make the reasonable assumption and state it in a short clause "
+    "rather than asking multi-part clarifying questions."
+)
+
+
 @dataclass
 class Config:
     # --- agent backend ---
@@ -51,6 +63,12 @@ class Config:
     model: str | None = None
     cwd: str | None = None
     permission_mode: str = "default"
+    # Load only project+local settings into the agent by default. The user's
+    # global stack (hooks, skills, user CLAUDE.md) measurably hurts a voice
+    # loop: +1.75s to first token on a trivial prompt, hook-driven Skill tool
+    # calls before any speakable text, and stop-hook chatter ("nothing
+    # noteworthy to save") spoken aloud. Project rules still load.
+    with_user_config: bool = False
     # Spoken approve/deny gate for tool calls outside allowed/disallowed_tools.
     # Wires `--permission-prompt-tool stdio` so the CLI pauses the turn and asks
     # us instead of silently denying. Disabled automatically for bypass modes.
