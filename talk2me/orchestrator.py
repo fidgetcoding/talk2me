@@ -214,6 +214,10 @@ class Orchestrator:
             f"tools: {tools_mode}",
             flush=True,
         )
+        print(
+            f"   working on: {self.cfg.cwd or os.getcwd()}",
+            flush=True,
+        )
         if self.cfg.half_duplex:
             print(
                 "   (half-duplex: talking over the agent mid-speech is ignored "
