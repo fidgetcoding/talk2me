@@ -134,6 +134,86 @@ async def pause_mid_work_case() -> None:
     )
 
 
+async def pause_mid_thinking_case() -> None:
+    """'Pause.' cutting a turn BEFORE any speech or tools (thinking phase)
+    must still resend the task — live bug: it classified as idle chat and
+    the build died."""
+    class ThinkingBackend(FakeBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self._turn = 0
+
+        async def send(self, user_text: str) -> None:
+            self.sent.append(user_text)
+            self._turn += 1
+            if self._turn == 1:
+                pass  # thinking: no events yet; completes on interrupt
+            else:
+                await self._q.put(AssistantTextDelta(text="Melee added."))
+                await self._q.put(TurnComplete(text="Melee added."))
+
+        async def interrupt(self) -> None:
+            await super().interrupt()
+            await self._q.put(TurnComplete(text=""))
+
+    backend = ThinkingBackend()
+    orch = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False),
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Add melee to the game.", "Pause."]),
+        tts=FakeTTS(),
+        mic=FakeMic(_speech(15) + _silence(80) + _speech(20) + _silence(120), sample_rate=SR),
+        speaker=StoppableSpeaker(SR),
+    )
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check(
+        "pause mid-thinking: task resent, not killed",
+        backend.sent == ["Add melee to the game.", "Add melee to the game."],
+        str(backend.sent),
+    )
+    check("pause mid-thinking: ended paused", orch._paused is True)
+
+
+async def pause_mid_chat_case() -> None:
+    """'Pause.' while it's SPEAKING a no-tool answer means 'shut up' —
+    pause, do NOT resend (resending would make it talk again)."""
+    class ChatBackend(FakeBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self._turn = 0
+
+        async def send(self, user_text: str) -> None:
+            self.sent.append(user_text)
+            self._turn += 1
+            await self._q.put(AssistantTextDelta(
+                text="Here is a very long story about the history of pong. "
+            ))
+            # No TurnComplete: keeps talking until interrupted.
+
+        async def interrupt(self) -> None:
+            await super().interrupt()
+            await self._q.put(TurnComplete(text="story"))
+
+    backend = ChatBackend()
+    orch = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False),
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Tell me a story.", "Pause."]),
+        tts=FakeTTS(),
+        mic=FakeMic(_speech(15) + _silence(80) + _speech(20) + _silence(120), sample_rate=SR),
+        speaker=StoppableSpeaker(SR),
+    )
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check(
+        "pause mid-chat: shut up, no resend",
+        backend.sent == ["Tell me a story."],
+        str(backend.sent),
+    )
+    check("pause mid-chat: ended paused", orch._paused is True)
+
+
 async def main() -> int:
     cfg = Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False)
     # Utterance 1 = the question. Then, while the agent "speaks", utterance 2 =
@@ -175,6 +255,8 @@ async def main() -> int:
     check("clean shutdown", backend.closed and not mic.started)
 
     await pause_mid_work_case()
+    await pause_mid_thinking_case()
+    await pause_mid_chat_case()
 
     passed = sum(1 for _, ok in RESULTS if ok)
     ok = passed == len(RESULTS)

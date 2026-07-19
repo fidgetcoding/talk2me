@@ -517,6 +517,7 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
             renderer.speaker_downgrade()
             cfg.barge_in = False
             cfg.half_duplex = True
+            cfg.barge_downgraded = True
 
         mic = Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx)
         speaker = Speaker(tts.sample_rate, device=output_idx)

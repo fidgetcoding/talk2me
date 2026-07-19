@@ -200,11 +200,17 @@ class RetroRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
+        if cfg.barge_in:
+            barge = "ON"
+        elif getattr(cfg, "barge_downgraded", False):
+            barge = "off — speakers detected; plug in headphones + relaunch"
+        else:
+            barge = "off"
         rows = [
             ("brain", cfg.model or "claude default"),
             ("ears", cfg.stt),
             ("voice", f"{cfg.voice or 'system'} @{cfg.rate_wpm or 'default'}wpm"),
-            ("barge-in", "ON" if cfg.barge_in else "off"),
+            ("barge-in", barge),
             ("tools", tools_mode),
             ("working on", tilde(cfg.cwd or os.getcwd())),
         ]
@@ -239,12 +245,15 @@ class RetroRenderer:
         )
         self.console.print(hint, style="agent", markup=False)
         if cfg.half_duplex:
-            self.console.print(
-                "(half-duplex: talking over the agent mid-speech is ignored "
-                "— run with --barge-in and headphones to interrupt it)",
-                style="quiet",
-                markup=False,
+            hint = (
+                "(half-duplex: interrupting mid-speech is off because the "
+                "sound is going to open-air speakers — plug in headphones "
+                "and relaunch, no flag needed)"
+                if getattr(cfg, "barge_downgraded", False)
+                else "(half-duplex: talking over the agent mid-speech is "
+                "ignored — run with --barge-in and headphones to interrupt it)"
             )
+            self.console.print(hint, style="quiet", markup=False)
 
     def transcript_path(self, path: str) -> None:
         self.console.print(

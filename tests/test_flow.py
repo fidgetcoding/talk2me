@@ -142,6 +142,14 @@ def test_hallucination_and_controls() -> None:
         ("Wake up. Wake up.", "resume"),
         ("Keep working. Sleep.", None),  # mixed content is NOT a control
         ("Sleep. What time is it?", None),
+        # Filler-wrapped (live: "Hey actually, pause." reached the AGENT,
+        # which faked a pause):
+        ("Hey actually, pause.", "pause"),
+        ("Okay, wake up.", "resume"),
+        ("please pause now", "pause"),
+        ("Well, um, go to sleep.", "pause"),
+        ("hey hey okay", None),  # fillers alone are not a command
+        ("actually keep going", None),  # filler + real content stays content
     ]
     for text, want in cases:
         got = control_intent(text)

@@ -542,7 +542,18 @@ class Orchestrator:
                     break
                 if intent is not None:
                     await self._set_paused(intent == "pause")
-                    if self._saw_tool and self._last_text and control_resends < 1:
+                    # Pause must never cancel work. "Work" = the turn ran
+                    # tools OR hadn't spoken yet (cut mid-thinking — the
+                    # answer never reached the user; live bug killed a build
+                    # in its thinking phase). The one non-resend case: it was
+                    # mid-SPEECH with no tools — that pause means "shut up",
+                    # and resending would make it start talking again.
+                    interrupted_work = self._saw_tool or not self._spoke_any
+                    if (
+                        interrupted_work
+                        and self._last_text
+                        and control_resends < 1
+                    ):
                         control_resends += 1
                         to_send = self._last_text
                         self.render.status_note("resuming the interrupted task")
@@ -1360,11 +1371,25 @@ _PICK_WORDS = {
 _PICK_CANCEL = frozenset(("cancel", "never mind", "nevermind", "stop", "forget it"))
 
 
+# Politeness and hesitation wrapped around a command must not defeat it:
+# "Hey actually, pause." reached the AGENT (which cheerfully faked a pause —
+# live-observed). Stripped from the ends only, so words inside a phrase and
+# real instructions ("keep working") stay untouched.
+_FILLER_WORDS = frozenset(
+    "hey ok okay so um uh well please now wait actually alright yeah like".split()
+)
+
+
 def _single_control_intent(text: str) -> str | None:
     """Whole-phrase match with consecutive-stutter collapse ("Pause. Pause,
-    Listening." still lands the command — live-observed)."""
+    Listening." still lands the command — live-observed) and end-filler
+    stripping ("Hey actually, pause." / "pause please")."""
     words = re.findall(r"[a-z]+", text.lower().replace("'", ""))
     deduped = [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
+    while deduped and deduped[0] in _FILLER_WORDS:
+        deduped.pop(0)
+    while deduped and deduped[-1] in _FILLER_WORDS:
+        deduped.pop()
     normalized = " ".join(deduped)
     if normalized in _PAUSE_COMMANDS:
         return "pause"

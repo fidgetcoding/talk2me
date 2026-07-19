@@ -184,6 +184,10 @@ class Config:
     # Directory for plain-markdown session transcripts (None = don't save).
     # CLI --save-dir; persistent via the TALK2ME_SAVE_DIR env var.
     save_dir: str | None = None
+    # Set by the launcher when --barge-in was WANTED but the output resolved
+    # to open-air speakers (auto-downgrade) — the card explains itself
+    # instead of a bare "off" (live confusion 2026-07-19).
+    barge_downgraded: bool = False
     # Force the launch build's plain output (no colors, no panels). The plain
     # renderer is also selected automatically on non-TTY stdout, NO_COLOR, or
     # a missing rich — a broken paint job must never mute the product.
