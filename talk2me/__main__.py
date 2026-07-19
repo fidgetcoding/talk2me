@@ -536,9 +536,20 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
     run_task = asyncio.create_task(orch.run())
     edit_task = asyncio.create_task(edit_ev.wait())
     try:
-        done, _pending = await asyncio.wait(
-            {run_task, edit_task}, return_when=asyncio.FIRST_COMPLETED
-        )
+        try:
+            done, _pending = await asyncio.wait(
+                {run_task, edit_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # Ctrl-C: retrieve the session task before the loop tears down —
+            # otherwise asyncio spews 'Task exception was never retrieved' +
+            # 'Task was destroyed but it is pending' over the goodbye
+            # (live-observed). Best-effort, then let main() print 'bye.'
+            edit_task.cancel()
+            run_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await run_task
+            raise
         if run_task in done:
             edit_task.cancel()
             await run_task  # surface any exception from the session
