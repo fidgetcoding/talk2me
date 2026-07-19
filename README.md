@@ -8,28 +8,16 @@ You say something. It hears you, types it to your coding agent, reads the answer
 
 ## Quick nav
 
-- [Install (30 seconds)](#install-30-seconds)
-- [Why I built this](#why-i-built-this)
-- [What it actually does](#what-it-actually-does)
-- [The trick](#the-trick)
-- [Reading the screen](#reading-the-screen-is-it-broken-or-is-it-waiting)
-- [How long things take](#how-long-things-take)
-- [Saying yes out loud](#saying-yes-out-loud)
-- [Interrupting it](#interrupting-it)
-- [Finish your sentence](#finish-your-sentence)
-- [Hear Claude Code itself](#hear-claude-code-itself-hook-mode)
-- [Quickstart](#quickstart)
-- [Changing the voice](#changing-the-voice)
-- [Switching the ears](#switching-the-ears)
-- [Picking the brain](#picking-the-brain)
-- [Ways to run it](#ways-to-run-it)
-- [The debugging playbook](#the-debugging-playbook)
-- [Tuning the ears](#tuning-the-ears)
-- [Under the hood](#under-the-hood)
-- [Not done yet](#not-done-yet)
-- [Requirements](#requirements)
-- [Tests](#tests)
-- [FAQ](#faq)
+| Start here | Talking to it | Make it yours |
+|---|---|---|
+| [Install (30 seconds)](#install-30-seconds) | [Reading the screen](#reading-the-screen-is-it-broken-or-is-it-waiting) | [Changing the voice](#changing-the-voice) |
+| [Quickstart](#quickstart) | [How long things take](#how-long-things-take) | [Switching the ears](#switching-the-ears) |
+| [Why I built this](#why-i-built-this) | [Saying yes out loud](#saying-yes-out-loud) | [Picking the brain](#picking-the-brain) |
+| [What it actually does](#what-it-actually-does) | [Interrupting it](#interrupting-it) | [Saving your conversations](#saving-your-conversations) |
+| [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) | [Tuning the ears](#tuning-the-ears) |
+| [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) | [The debugging playbook](#the-debugging-playbook) |
+| [Tests](#tests) | [Ways to run it](#ways-to-run-it) | [Under the hood](#under-the-hood) |
+| [FAQ](#faq) | | [Not done yet](#not-done-yet) |
 
 ---
 
@@ -71,6 +59,8 @@ git clone https://github.com/fidgetcoding/talk2me.git && cd talk2me && pip insta
 And the laziest path of all: paste this repo's URL into Claude Code and say *"install this."* You're about to have voice conversations with the thing — it can handle a pip install.
 
 First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody.
+
+**Pro tip:** when your agent is doing the installing, give it this repo's link too. It's open source — you can do whatever tf you want — and an agent that has read the source debugs your machine's quirks (weird audio devices, mic permissions, your cursed Bluetooth setup) in one turn instead of guessing.
 
 ## Why I built this
 
@@ -119,6 +109,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `🗣 you: …` | What it heard, final. This is exactly what the agent receives. | If it's wrong, just say "no, I said…" — it's a conversation. |
 | `🤖` followed by streaming text | The agent is answering. Speech starts at the first clause, not the end. | Listen. |
 | `[tool] Bash` etc. | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
+| *a soft "tink" every ~8s* | The working tick: it's mid-tool-run and fine, just busy. The audible version of a spinner. | Nothing. Silence + no tick + no marker is the bad combo. (`--no-ticks` disables.) |
 | `[permission] Bash: command=…` + a spoken question | The approval gate. The agent wants to run something and the turn is PAUSED until you answer. | Say "approve" or "deny". Unclear twice = auto-deny. |
 | `[barge-in] listening…` | You talked over it (or something did). Playback and the agent's turn were cut; it's now collecting what you're saying. | Finish your sentence — it becomes the next message. |
 | `[go on…]` | Same cut, but it happened before the agent said anything — it thinks you're still finishing YOUR sentence. | Keep talking; your fragments get stitched together. |
@@ -286,6 +277,21 @@ Anything the `claude` CLI accepts works here, because it literally IS the `claud
 
 Model choice changes nothing else — same ears, same voice, same approval gate.
 
+## Saving your conversations
+
+By default, nothing extra is written. (Claude Code keeps its own machine-format transcript per session under `~/.claude/projects/…` — that's what powers `claude --resume`, and it's not fun to read.)
+
+Point talk2me at a folder and every session also saves a **plain-markdown transcript** — what you said (including barge-ins and stitched continuations), what Claude answered, which tools ran, what you approved or denied:
+
+```bash
+t2m --save-dir ~/talk2me-logs            # this session
+
+# or set it once and forget it — add to your shell profile:
+export TALK2ME_SAVE_DIR="$HOME/talk2me-logs"
+```
+
+Files land as `t2m-2026-07-19-014212.md`, one per session, appended live (a crash loses nothing). If your notes live in Obsidian or any markdown vault, point it straight there and your voice sessions become searchable notes for free.
+
 ## Ways to run it
 
 | Command | What you get |
@@ -301,6 +307,8 @@ Model choice changes nothing else — same ears, same voice, same approval gate.
 | `talk2me --stt parakeet` | The fast ears: Apple-Silicon GPU transcription — more accurate than any local Whisper and ~10× faster. `pip install -e ".[parakeet]"` first. |
 | `talk2me --tts null` | Answers on screen, no voice out. |
 | `talk2me --with-user-config` | Load your full user-level Claude config into the agent. Off by default because hooks and skills measurably slow every turn and their chatter gets read aloud. Project CLAUDE.md always loads. |
+
+The rest of the knobs, for completeness: `--cwd` (which directory the agent works in — defaults to where you launched), `--vocab-file terms.txt` (bias terms in bulk, one per line), `--whisper-model small.en` (bigger whisper = better ears, slower), `--vad-aggressiveness 3` (webrtc noise filtering, 0–3), and `--dangerously-allow-tools` (auto-approve everything — **text mode only**, refused in voice mode on purpose: ambient audio should never carry that much power).
 
 ## The debugging playbook
 
@@ -399,6 +407,8 @@ python -m tests.test_continuation   # "wait, I wasn't done" stitching
 python -m tests.test_flow           # run-on speech chunking + unfinished-sentence holds
 python -m tests.manual_backend_check  # one real cheap turn against Claude Code
 ```
+
+That's the highlight reel — twelve suites total (audio devices, the speaker-interrupt race, transcription factories, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
 
 ## FAQ
 

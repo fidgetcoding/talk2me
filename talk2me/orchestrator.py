@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import subprocess
 import sys
 import time
 from collections import deque
@@ -72,6 +73,13 @@ def _seems_unfinished(text: str) -> bool:
     words = re.findall(r"[a-z']+", t.lower())
     return bool(words) and words[-1] in _TRAILING_FILLERS
 
+
+# Working-tick cadence: while the agent is mid-tool-run and nothing has been
+# audible for this long, play a soft system blip so silence reads as "working",
+# not "dead". The blip is ~150ms — far under the 450ms barge onset, so it can
+# never cut a turn even in full duplex.
+WORKING_TICK_QUIET_S = 8.0
+_TICK_SOUND = "/System/Library/Sounds/Tink.aiff"
 
 # Sustained speech needed before the monitor CUTS a turn (barge/continuation).
 # Deliberately higher than min_speech_ms: a cut kills the agent's turn, so a
@@ -135,6 +143,7 @@ class Orchestrator:
         tts: TTS,
         mic: Mic,
         speaker: Speaker,
+        session_log=None,
     ) -> None:
         self.cfg = cfg
         self.backend = backend
@@ -143,6 +152,7 @@ class Orchestrator:
         self.tts = tts
         self.mic = mic
         self.speaker = speaker
+        self.log = session_log  # SessionLog | None — duck-typed, optional
         # Set when a turn dies on a BackendError; tells run() to stop cleanly
         # instead of looping forever against a dead backend process.
         self._fatal = False
@@ -163,6 +173,11 @@ class Orchestrator:
         self._blocks_q: asyncio.Queue[list | None] | None = None
         self._render_task: asyncio.Task[None] | None = None
         self._play_task: asyncio.Task[None] | None = None
+        # Working-tick state: last time anything was audible, whether the
+        # current turn has run a tool, and whether afplay proved unavailable.
+        self._last_audible = 0.0
+        self._saw_tool = False
+        self._ticks_broken = False
 
     async def run(self) -> None:
         await self.backend.start()
@@ -204,6 +219,8 @@ class Orchestrator:
                 # fragment ("So what do you call … [pause] … a linked list").
                 text = await self._extend_unfinished(text)
                 print(f"\n🗣  you: {text}", flush=True)
+                if self.log:
+                    self.log.user(text)
                 last_text = text
                 self._t_sent = time.monotonic()
                 try:
@@ -233,9 +250,13 @@ class Orchestrator:
                         if self._continuation and last_text:
                             to_send = f"{last_text} {barge}"
                             print(f"\n🗣  you (continued): {to_send}", flush=True)
+                            if self.log:
+                                self.log.user(to_send, "continued")
                         else:
                             to_send = barge
                             print(f"\n🗣  you (barge-in): {to_send}", flush=True)
+                            if self.log:
+                                self.log.user(to_send, "barge-in")
                         last_text = to_send
                     elif self._continuation and last_text and noise_resends < 1:
                         # A cut killed the turn before ANY answer but the
@@ -287,6 +308,11 @@ class Orchestrator:
         # In full duplex (--barge-in) it additionally hears through playback.
         self._barge_task = asyncio.create_task(self._barge_monitor())
         self._start_speech_pipeline()
+        self._saw_tool = False
+        self._last_audible = time.monotonic()
+        ticker: asyncio.Task[None] | None = None
+        if self.cfg.working_ticks:
+            ticker = asyncio.create_task(self._working_ticker())
         sys.stdout.write("🤖 ")
         sys.stdout.flush()
 
@@ -331,6 +357,9 @@ class Orchestrator:
                     await self._render_q.put(sentence)
             elif isinstance(ev, ToolActivity):
                 print(f"\n   [tool] {ev.name}", flush=True)
+                self._saw_tool = True
+                if self.log:
+                    self.log.tool(ev.name)
             elif isinstance(ev, PermissionRequest):
                 # The backend is paused awaiting our answer; run the spoken
                 # approve/deny round-trip. Resets `speaking` so the next
@@ -350,6 +379,8 @@ class Orchestrator:
                 # simply not seeded.
                 if ev.text and hasattr(self.stt, "set_context"):
                     self.stt.set_context(_context_terms(ev.text))
+                if self.log:
+                    self.log.assistant(ev.text)
                 print(flush=True)
                 break
             elif isinstance(ev, SessionReady):
@@ -361,6 +392,8 @@ class Orchestrator:
                 self._fatal = True
                 break
 
+        if ticker is not None:
+            ticker.cancel()
         # Let queued speech finish (or flush fast after an interrupt) BEFORE
         # the mic reopens — in half-duplex the agent must not be mid-sentence
         # with a live mic.
@@ -388,6 +421,29 @@ class Orchestrator:
             return await task
         except asyncio.CancelledError:
             return None
+
+    async def _working_ticker(self) -> None:
+        """Soft blip every WORKING_TICK_QUIET_S of silence during a tool run —
+        the audible version of a spinner, so 'thinking hard' never sounds like
+        'crashed'. Only after this turn has actually used a tool."""
+        try:
+            while True:
+                await asyncio.sleep(2)
+                if self._interrupted or not self._saw_tool or self._ticks_broken:
+                    continue
+                if time.monotonic() - self._last_audible < WORKING_TICK_QUIET_S:
+                    continue
+                self._last_audible = time.monotonic()
+                try:
+                    subprocess.Popen(
+                        ["afplay", "-v", "0.4", _TICK_SOUND],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except (FileNotFoundError, OSError):
+                    self._ticks_broken = True  # no afplay (Linux) — stay quiet
+        except asyncio.CancelledError:
+            raise
 
     async def _barge_monitor(self) -> str | None:
         """Watch the live mic during agent speech; cut playback on real speech.
@@ -550,7 +606,9 @@ class Orchestrator:
                         f"{time.monotonic() - self._t_sent:.2f}s",
                         flush=True,
                     )
+            self._last_audible = time.monotonic()
             await self.speaker.play(_iter_blocks(item))
+            self._last_audible = time.monotonic()
 
     async def _handle_permission(self, ev: PermissionRequest) -> None:
         """Spoken approve/deny gate for one paused tool call.
@@ -608,6 +666,8 @@ class Orchestrator:
         await self.backend.respond_permission(
             ev.request_id, allow, message=None if allow else "Denied by voice"
         )
+        if self.log:
+            self.log.permission(ev.tool_name, detail, allow)
         self._start_speech_pipeline()
 
     async def _listen_once(self, onset_timeout: float) -> str:

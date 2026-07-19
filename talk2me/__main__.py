@@ -163,6 +163,15 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
+        "--save-dir", default=os.environ.get("TALK2ME_SAVE_DIR") or None,
+        help="save a plain-markdown transcript of every session into this "
+        "folder (persistent default: export TALK2ME_SAVE_DIR=~/talk2me-logs)",
+    )
+    p.add_argument(
+        "--no-ticks", action="store_true",
+        help="disable the soft 'still working' blip during long tool runs",
+    )
+    p.add_argument(
         "--debug", action="store_true",
         help="print VAD speech/turn transitions (for tuning --energy-threshold)",
     )
@@ -197,6 +206,8 @@ def _parse_args(argv: list[str]) -> Config:
 
     return Config(
         debug=a.debug,
+        save_dir=a.save_dir,
+        working_ticks=not a.no_ticks,
         model=a.model,
         cwd=a.cwd,
         permission_mode=permission_mode,
@@ -330,6 +341,15 @@ async def _run_voice(cfg: Config) -> int:
         cfg.barge_in = False
         cfg.half_duplex = True
 
+    session_log = None
+    if cfg.save_dir:
+        from .sessionlog import SessionLog
+
+        session_log = SessionLog(
+            cfg.save_dir, model=cfg.model, stt=cfg.stt, cwd=cfg.cwd
+        )
+        print(f"📝 saving transcript to {session_log.path}", flush=True)
+
     tts = factory.build_tts(cfg)
     orch = Orchestrator(
         cfg=cfg,
@@ -339,6 +359,7 @@ async def _run_voice(cfg: Config) -> int:
         tts=tts,
         mic=Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx),
         speaker=Speaker(tts.sample_rate, device=output_idx),
+        session_log=session_log,
     )
     await orch.run()
     return 0
@@ -356,6 +377,15 @@ async def _run_text(cfg: Config) -> int:
         TurnComplete,
     )
 
+    session_log = None
+    if cfg.save_dir:
+        from .sessionlog import SessionLog
+
+        session_log = SessionLog(
+            cfg.save_dir, model=cfg.model, stt="(text mode)", cwd=cfg.cwd
+        )
+        print(f"📝 saving transcript to {session_log.path}", flush=True)
+
     backend = factory.build_backend(cfg)
     await backend.start()
     events = backend.events()
@@ -372,6 +402,8 @@ async def _run_text(cfg: Config) -> int:
             line = line.strip()
             if not line:
                 continue
+            if session_log:
+                session_log.user(line)
             try:
                 await backend.send(line)
             except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as exc:
@@ -383,6 +415,8 @@ async def _run_text(cfg: Config) -> int:
                     sys.stdout.flush()
                 elif isinstance(ev, ToolActivity):
                     print(f"\n[tool] {ev.name}", flush=True)
+                    if session_log:
+                        session_log.tool(ev.name)
                 elif isinstance(ev, PermissionRequest):
                     # Typed twin of the spoken gate: the CLI is paused on this
                     # request, so read one line and answer. EOF/empty -> deny.
@@ -396,6 +430,8 @@ async def _run_text(cfg: Config) -> int:
                     allow = ans.strip().lower() in ("y", "yes", "approve", "allow")
                     await backend.respond_permission(ev.request_id, allow)
                 elif isinstance(ev, TurnComplete):
+                    if session_log:
+                        session_log.assistant(ev.text)
                     print("\n", flush=True)
                     break
                 elif isinstance(ev, BackendError):
