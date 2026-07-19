@@ -80,6 +80,11 @@ def _seems_unfinished(text: str) -> bool:
 # easily sustains 450ms.
 BARGE_ONSET_MIN_MS = 450
 
+# Hard ceiling on a barge-in utterance. An interruption is a sentence, not a
+# speech: without this, a user venting for 20s+ is silently "collected" and
+# everything processes way late — which reads as the whole app hanging.
+BARGE_MAX_UTTERANCE_MS = 10_000
+
 # How long to wait for a spoken approve/deny before treating the attempt as
 # unclear. The CLI side blocks indefinitely (verified), so this is purely a
 # never-leave-an-approval-hanging safety: two silent attempts end in a deny.
@@ -398,11 +403,12 @@ class Orchestrator:
             1, int(max(self.cfg.min_speech_ms, BARGE_ONSET_MIN_MS) / frame_ms)
         )
         silence_needed = max(1, int(self.cfg.silence_ms / frame_ms))
-        max_frames = (
-            max(1, int(self.cfg.max_utterance_ms / frame_ms))
+        cap_ms = (
+            min(self.cfg.max_utterance_ms, BARGE_MAX_UTTERANCE_MS)
             if self.cfg.max_utterance_ms > 0
-            else 0
+            else BARGE_MAX_UTTERANCE_MS
         )
+        max_frames = max(1, int(cap_ms / frame_ms))
         pre_roll_frames = (
             max(1, int(self.cfg.pre_roll_ms / frame_ms))
             if self.cfg.pre_roll_ms > 0
@@ -496,9 +502,16 @@ class Orchestrator:
         if self._render_task is None or self._render_q is None:
             return
         await self._render_q.put(None)
-        await asyncio.gather(
-            self._render_task, self._play_task, return_exceptions=True
-        )
+        # NOT gather(return_exceptions=True): that swallows KeyboardInterrupt
+        # raised inside a worker, eating the user's first Ctrl-C (live bug).
+        # Worker Exceptions are already handled inside the workers; anything
+        # else (KI, cancellation) must propagate.
+        for task in (self._render_task, self._play_task):
+            if task is not None:
+                try:
+                    await task
+                except Exception:
+                    pass
         self._render_task = self._play_task = None
         self._render_q = self._blocks_q = None
 
