@@ -17,13 +17,13 @@ You say something. It hears you, types it to your coding agent, reads the answer
 | Start here | Talking to it | Make it yours |
 |---|---|---|
 | [Install (30 seconds)](#install-30-seconds) | [Reading the screen](#reading-the-screen-is-it-broken-or-is-it-waiting) | [Changing the voice](#changing-the-voice) |
-| [**The cheat sheet**](#the-cheat-sheet) | [How long things take](#how-long-things-take) | [Switching the ears](#switching-the-ears) |
+| [**The cheat sheet**](#the-cheat-sheet) | [The new face (v2)](#the-new-face-v2) | [Switching the ears](#switching-the-ears) |
 | [Quickstart](#quickstart) | [Saying yes out loud](#saying-yes-out-loud) | [Picking the brain](#picking-the-brain) |
-| [Why I built this](#why-i-built-this) | [Interrupting it](#interrupting-it) | [Saving your conversations](#saving-your-conversations) |
-| [What it actually does](#what-it-actually-does) | [Finish your sentence](#finish-your-sentence) | [Tuning the ears](#tuning-the-ears) |
-| [The trick](#the-trick) | [Pausing the ears](#pausing-the-ears) | [The debugging playbook](#the-debugging-playbook) |
+| [Why I built this](#why-i-built-this) | [How long things take](#how-long-things-take) | [Saving your conversations](#saving-your-conversations) |
+| [What it actually does](#what-it-actually-does) | [Interrupting it](#interrupting-it) | [Tuning the ears](#tuning-the-ears) |
+| [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) · [Pausing the ears](#pausing-the-ears) | [The debugging playbook](#the-debugging-playbook) |
 | [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) | [Under the hood](#under-the-hood) |
-| [Tests](#tests) · [FAQ](#faq) | [Ways to run it](#ways-to-run-it) | [Not done yet](#not-done-yet) |
+| [Tests](#tests) · [FAQ](#faq) · [Versions](#versions) | [Ways to run it](#ways-to-run-it) | [Not done yet](#not-done-yet) |
 
 ---
 
@@ -104,6 +104,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
+| `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
 
 Launch from the project folder you want it working on — the startup line confirms everything: model, ears, voice, barge, tools mode, directory.
@@ -138,6 +139,22 @@ That structured connection is the entire reason this works. It's the spine. Ever
 
 One consequence worth knowing: talk2me runs its **own** Claude Code session (a headless one it controls), not the pretty interactive UI. If what you want is voice *inside* the normal Claude Code interface, that exists too — see [Hear Claude Code itself](#hear-claude-code-itself-hook-mode).
 
+## The new face (v2)
+
+v2 dresses the whole session in the banner's palette — green prose, pink for you, cyan for the machinery, dotted borders:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/fidgetcoding/talk2me/main/docs/retro-session.svg" alt="a talk2me v2 session: config card, conversation, live work panel" width="600">
+</p>
+
+What changed beyond the paint:
+
+- **The work panel.** While the agent runs tools, one live panel shows a spinner, the tool count, a running clock, and the last five tools **with what they touched** (`⚙ Write  pong.html`). When the agent starts talking again, the panel folds into a one-line receipt: `⚙ 9 tool calls · 42s`. No more line spam during long builds.
+- **Tool detail everywhere.** Tool lines now carry their argument — the filename, the command, the pattern — on screen and in saved transcripts (`- 🔧 Write (pong.html)`).
+- **Nothing else moved.** The voice loop, timing, barge-in, and permissions are byte-identical to v1 — the plain output still exists under `--plain`, is auto-selected for pipes/CI/`NO_COLOR`, and is what the tests pin.
+
+Paranoid by design: agent and user text never passes through the styling engine's markup, so a reply containing `[red]` prints as five characters instead of turning your terminal red.
+
 ## Reading the screen (is it broken, or is it waiting?)
 
 This is the section I wish every voice tool had. Voice interfaces fail silently — you talk, nothing happens, and you can't tell whether it's thinking, waiting for you, or dead. talk2me prints a marker for every state it's in. Learn these and you'll never wonder again:
@@ -157,7 +174,8 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `(ignored — transcription noise)` | The transcript looked like a machine artifact (one word looped), not speech. Dropped. | Nothing — that's the noise filter working. |
 | `⏸ paused — say 'wake up'…` | You voice-paused it. Hearing everything, sending nothing. | Say "wake up" / "I'm back" to resume. |
 | `🤖` followed by streaming text | The agent is answering. Speech starts at the first clause, not the end. | Listen. |
-| `[tool] Bash` etc. | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
+| `[tool] Bash` etc. (v1 / `--plain`) — or the live `working` panel (v2) | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
+| `⚙ N tool calls · 42s` | The work panel folded into its receipt — the tool burst is over and the agent is talking (or done). | Nothing. |
 | *a soft "tink" every ~8s* | The working tick: it's mid-tool-run and fine, just busy. The audible version of a spinner. | Nothing. Silence + no tick + no marker is the bad combo. (`--no-ticks` disables.) |
 | `[permission] Bash: command=…` + a spoken question | The approval gate (`--gated` mode only). The agent wants to run something and the turn is PAUSED until you answer. | Say "approve" or "deny". Unclear twice = auto-deny. |
 | `[barge-in] listening…` | You talked over it (or something did). Playback and the agent's turn were cut; it's now collecting what you're saying. | Finish your sentence — it becomes the next message. |

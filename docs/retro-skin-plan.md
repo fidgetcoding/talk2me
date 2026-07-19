@@ -1,5 +1,13 @@
 # Retro skin — the detailed gameplan
 
+> **STATUS (2026-07-19): SHIPPED as v2.0.0.** Phases 1–5 landed as planned
+> (commits: tool detail+dedupe → renderer seam → retro core → live work
+> panel → polish). Deviations: goodbye() dropped from the protocol (bye
+> prints after teardown, no renderer in scope); Live runs with
+> redirect_stdout/stderr=False (rich's default hijacks process streams).
+> Deferred from Phase 5: file-change stats after Edit/Write (needs a
+> tool_result backend event) and the `--theme` hook (nobody asked yet).
+
 ## Versioning: this is v2, and v1 stays reachable (added 2026-07-19)
 
 The retro skin ships as **talk2me v2**. The launch build is preserved as a
