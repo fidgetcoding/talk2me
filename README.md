@@ -21,6 +21,7 @@ You say something. It hears you, types it to your coding agent, reads the answer
 - [Quickstart](#quickstart)
 - [Changing the voice](#changing-the-voice)
 - [Switching the ears](#switching-the-ears)
+- [Picking the brain](#picking-the-brain)
 - [Ways to run it](#ways-to-run-it)
 - [The debugging playbook](#the-debugging-playbook)
 - [Tuning the ears](#tuning-the-ears)
@@ -269,12 +270,29 @@ t2m --stt parakeet   # the fast ones
 
 First parakeet run downloads the model (one-time). More engines are planned — everything hides behind the same contract, so adding one is a single file, and your muscle memory doesn't change.
 
+## Picking the brain
+
+The voice and the ears are local; the *thinking* is whatever Claude model you point it at — same `--model` flag as the `claude` CLI itself:
+
+```bash
+t2m                        # your claude default, whatever you've configured
+t2m --model opus           # the heavyweight
+t2m --model sonnet         # the daily driver
+t2m --model haiku          # fast + cheap — great for testing and casual chat
+t2m --model claude-opus-4-6   # pin an exact version if you're particular
+```
+
+Anything the `claude` CLI accepts works here, because it literally IS the `claude` CLI underneath. Rough guidance for a *voice* loop specifically: haiku answers fastest (nice when you're chatting), the big models think longer before the first word but are worth it when it's actually building something. Bake your pick into your alias next to your other flags and forget about it.
+
+Model choice changes nothing else — same ears, same voice, same approval gate.
+
 ## Ways to run it
 
 | Command | What you get |
 |---|---|
 | `talk2me` | Just talk. The main event. |
 | `talk2me --text` | Type instead of talk — for when you're in public and not ready to be the person speaking to their laptop. |
+| `talk2me --model sonnet` | Pick the Claude model, exactly like the `claude` CLI. See [Picking the brain](#picking-the-brain). |
 | `talk2me --barge-in` | Headphones on, mic stays hot, you can cut it off mid-sentence. See [Interrupting it](#interrupting-it). |
 | `talk2me --debug` | Prints every ear-state and the per-turn latency receipts. Use this the first session, and any time something feels off. |
 | `talk2me --voice "Ava (Premium)"` | A voice from this decade. Download it first: System Settings → Accessibility → Read & Speak → the ⓘ next to System voice → grab an (Enhanced)/(Premium) voice. |
