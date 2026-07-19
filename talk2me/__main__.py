@@ -415,7 +415,11 @@ async def _run_text(cfg: Config) -> int:
     backend = factory.build_backend(cfg)
     await backend.start()
     events = backend.events()
-    print("talk2me (text mode) — type a message, Ctrl-D to quit.\n", flush=True)
+    print(
+        "talk2me (text mode) — type a message, Ctrl-D to quit. "
+        "Created by @fidgetcoding :)\n",
+        flush=True,
+    )
     # Mirrors Orchestrator._fatal: a BackendError means the process is gone, so
     # stop the REPL outright instead of parking on readline against a corpse
     # (the user would otherwise discover the death only after typing a line).

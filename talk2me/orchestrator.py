@@ -193,7 +193,11 @@ class Orchestrator:
         if hasattr(self.stt, "warmup"):
             print("(loading the ears…)", flush=True)
             await asyncio.to_thread(self.stt.warmup)
-        print("talk2me ready — start talking. Ctrl-C to quit.", flush=True)
+        print(
+            "talk2me ready — start talking. Ctrl-C to quit. "
+            "Created by @fidgetcoding :)",
+            flush=True,
+        )
         tools_mode = (
             "auto-approve ⚡"
             if "bypass" in self.cfg.permission_mode.lower()
