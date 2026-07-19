@@ -90,6 +90,11 @@ What changed from v1 to v2, in one glance:
 - **Noise immunity** — a real speech classifier gates everything: typing, taps, and coughs can't fire turns or cut the agent off mid-answer anymore.
 - **Barge-in is the default** — interrupting by talking just works (auto-off on open-air speakers). `--no-barge-in` for the polite loop.
 - **Pause got serious** — more wake/sleep vocabulary, works mid-task without cancelling the work, and the screen stays honest while asleep.
+- **It remembers** — `t2m --continue` resumes this folder's last session, and saying "resume previous session" lists earlier ones by name to switch live.
+- **Type when you want to** — paste logs or type exact paths mid-session; Enter sends. Voice and keyboard share one brain.
+- **It hears you while it codes** — long tool runs reopen the ears in every gap instead of going deaf until the turn ends.
+- **First-run setup wizard** — brain/ears/voice/barge/tools/folder, saved as defaults; `t2m --setup` or Ctrl-T to change.
+- **📱 Phone mode** — `t2m --phone` over an SSH port-forward makes your iPhone the mic and speaker.
 
 ## The cheat sheet
 
@@ -490,10 +495,10 @@ Every swappable part hides behind a contract: voice detection, transcription, th
 
 Out of the box:
 
-- **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room. Two sharper options ship too: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file).
+- **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room. Two sharper options ship too: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file). Separately from the pick, every utterance must also convince a bundled Silero speech CLASSIFIER before it can interrupt or be transcribed — that's the layer that makes typing, taps, and coughs invisible (`--no-speech-check` to disable).
 - **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter. Or `--stt parakeet` (install with `pip install -e ".[parakeet]"`): NVIDIA's Parakeet on the Apple-Silicon GPU — better accuracy than any local Whisper at a tenth of the wait, for ~2 GB of RAM while it runs. English-only, and `--vocab` biasing stays a Whisper-only trick. The full research behind the tradeoff lives in `docs/stt-upgrade-research.md`.
 - **The mouth:** macOS `say`, rendered a chunk ahead of playback so the voice doesn't stall between sentences. `--tts kitten` (install with `pip install -e ".[kitten]"`) is a local neural voice that works on any OS. `--tts null` keeps it text-only.
-- **The agent:** Claude Code, over its structured streaming interface — including the tool-permission wire, which is how the spoken approval gate works. The wire format is pinned byte-for-byte in `docs/permission-spike-results.md`. And if you want a different brain entirely — GPT, Kimi, a local model, whatever — the agent hides behind the same swappable contract as everything else (`AgentBackend`, one file). Fork it and go right ahead; that's what the MIT license is for.
+- **The agent:** Claude Code by default, over its structured streaming interface — including the tool-permission wire behind the spoken approval gate (pinned byte-for-byte in `docs/permission-spike-results.md`). `--agent codex` swaps in OpenAI's Codex CLI (one `codex exec` per turn, resumed between turns — schema pinned live in `tests/test_codex_translate.py`). Kimi, GLM, and DeepSeek ride the Claude pipe via their official Anthropic-compatible endpoints (the wizard sets it up). Anything else hides behind the same one-file contract (`AgentBackend`) — fork away; that's what the MIT license is for.
 - **The brain-to-ear glue:** after every reply, the identifiers the agent just used (file names, function names) get fed to the transcriber as bias terms — because those are exactly the words you're about to say back.
 
 ## Not done yet
@@ -504,12 +509,15 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **Wispr hands-free.** I want to drive the dictation app I actually like instead of the basics. It's a real maybe — the keypress trick it needs isn't proven yet.
 - **Barge-in without headphones.** Full-duplex over speakers means hearing you over its own voice, and that echo handling isn't written. Headphones sidestep the whole problem, so that's the requirement for now.
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
+- **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
+- **Voice commands are English-only.** `--language es` transcribes your Spanish fine, but "pause"/"wake up"/"approve" still only land in English.
+- **Only YOUR voice.** Speaker verification (enroll once, strangers and TVs stop existing to the mic) is designed and queued — it's the v3 headline.
 
 ## Requirements
 
 Everywhere:
 
-- **`claude`** on your PATH.
+- **`claude`** on your PATH (or `codex`, if you run `--agent codex`).
 - **Python 3.11+**
 - **A microphone**, ideally close to your face.
 
@@ -537,7 +545,7 @@ python -m tests.test_flow           # run-on speech chunking + unfinished-senten
 python -m tests.manual_backend_check  # one real cheap turn against Claude Code
 ```
 
-That's the highlight reel — twelve suites total (audio devices, the speaker-interrupt race, transcription factories, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
+That's the highlight reel — seventeen suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
 
 ## FAQ
 
@@ -554,7 +562,10 @@ The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voic
 Because my hands are busy and my mouth isn't.
 
 **Is this going to hear my roommate and start talking to Claude?**
-Crank `--energy-threshold` up. It'll ignore anything quieter than you leaning into the mic.
+Typing, taps, coughs, and fan hum — no: a real speech classifier gates every utterance now. An actual human voice at conversation volume — yes, it can't tell your roommate from you yet. Telling voices apart (enroll yours once, everyone else stops existing) is the planned v3. Until then: "pause listening", or `--energy-threshold` up.
+
+**Can the brain be something other than Claude?**
+Yes — `--agent codex` runs OpenAI's Codex CLI, and Kimi / GLM / DeepSeek plug in through their official Anthropic-compatible endpoints (`t2m --setup` walks you through it). Same loop, same feed, different mind.
 
 ---
 
