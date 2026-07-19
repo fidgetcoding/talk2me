@@ -194,11 +194,17 @@ class Orchestrator:
             print("(loading the ears…)", flush=True)
             await asyncio.to_thread(self.stt.warmup)
         print("talk2me ready — start talking. Ctrl-C to quit.", flush=True)
+        tools_mode = (
+            "auto-approve ⚡"
+            if "bypass" in self.cfg.permission_mode.lower()
+            else "gated (spoken approvals)"
+        )
         print(
             f"   model: {self.cfg.model or 'claude default'} · "
             f"ears: {self.cfg.stt} · voice: {self.cfg.voice or 'system'} "
             f"@{self.cfg.rate_wpm or 'default'}wpm · "
-            f"barge-in: {'ON' if self.cfg.barge_in else 'off'}",
+            f"barge-in: {'ON' if self.cfg.barge_in else 'off'} · "
+            f"tools: {tools_mode}",
             flush=True,
         )
         if self.cfg.half_duplex:

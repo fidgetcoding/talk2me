@@ -111,7 +111,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `🤖` followed by streaming text | The agent is answering. Speech starts at the first clause, not the end. | Listen. |
 | `[tool] Bash` etc. | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
 | *a soft "tink" every ~8s* | The working tick: it's mid-tool-run and fine, just busy. The audible version of a spinner. | Nothing. Silence + no tick + no marker is the bad combo. (`--no-ticks` disables.) |
-| `[permission] Bash: command=…` + a spoken question | The approval gate. The agent wants to run something and the turn is PAUSED until you answer. | Say "approve" or "deny". Unclear twice = auto-deny. |
+| `[permission] Bash: command=…` + a spoken question | The approval gate (`--gated` mode only). The agent wants to run something and the turn is PAUSED until you answer. | Say "approve" or "deny". Unclear twice = auto-deny. |
 | `[barge-in] listening…` | You talked over it (or something did). Playback and the agent's turn were cut; it's now collecting what you're saying. | Finish your sentence — it becomes the next message. |
 | `[go on…]` | Same cut, but it happened before the agent said anything — it thinks you're still finishing YOUR sentence. | Keep talking; your fragments get stitched together. |
 | `🗣 you (continued): …` | It stitched your interrupted sentence back together and sent the whole thing. | Nothing — this is the fix working. |
@@ -138,23 +138,23 @@ Measured on an M-series MacBook Pro, `--model haiku`, whisper base.en. Your numb
 
 ## Saying yes out loud
 
-A coding agent isn't just chat — sooner or later it wants to *do* something. Run a command. Write a file. In a terminal you'd get a y/n prompt. Hands-free, that used to be a dead end.
+A coding agent isn't just chat — sooner or later it wants to *do* something. Run a command. Write a file. Here's how talk2me handles that, in both of its moods:
 
-Now it's a conversation:
+**The default: auto-approve.** Tools just run. You ask for a pong game, it writes the file, starts the server, tells you when it's playable — no "mother may I" at every step. This is the flow the phone apps taught you to expect, and after one session of approving every file write you'll know why it's the default.
+
+One guardrail survives even in auto-approve, because Claude's deny rules apply in **every** permission mode: the **hard denylist**. `sudo`, `rm -rf`, `git push`, `git reset --hard`, `curl`, `wget`, `ssh`, `dd` — blocked outright, not askable, no voice override. You can go fast AND not be able to nuke a repo by mumbling. Extend it anytime: `--deny-tool 'Bash(docker:*)'`.
+
+**The careful mode: `--gated`.** Everything outside a read-only allowlist pauses the turn and asks out loud:
 
 > **it:** "Claude wants to run the command npm install. Approve or deny?"
 > **you:** "go ahead"
 > *…it runs, and the answer keeps going.*
 
-The rules, because a microphone is a terrible place for blind trust:
+Say "approve", "yes", "go ahead" — or "no", "stop", "deny". Unclear twice = it plays it safe and declines for you. Tune it with `--allow-tool 'Bash(make:*)'` for things you're tired of blessing. Use `--gated` when the agent is touching something you care about, or when you're demoing to someone whose trust you haven't earned yet.
 
-- **Boring, read-only stuff** (reading files, `git status`, running tests) just happens. No nagging.
-- **Sharp stuff** (`sudo`, `git push`, deleting things, anything that phones out) is **hard-blocked**. It doesn't ask. You can't approve it by voice at all. That's on purpose — you shouldn't be able to `sudo` by mumbling.
-- **Everything in between** gets the spoken question. Say "approve", "yes", "go ahead" — or "no", "stop", "deny". If it can't tell what you meant, it asks once more, then plays it safe and says no on your behalf.
+The startup line always tells you which mood you're in: `tools: auto-approve ⚡` or `tools: gated (spoken approvals)`.
 
-Grow the quiet list as you go: `--allow-tool 'Bash(make:*)'` for things you're tired of approving, `--deny-tool` for things it should never ask about. `--no-voice-approval` turns the gate off entirely (blocked things just get declined silently).
-
-The typed version works too: in `--text` mode the same gate is a plain `approve? [y/N]` prompt.
+(In `--text` mode the gate, when enabled, is a plain `approve? [y/N]` prompt. And the only way to drop the denylist itself is `--dangerously-allow-tools`, which refuses to run in voice mode at all — a zero-guardrail posture should require a keyboard.)
 
 ## Interrupting it
 
@@ -301,6 +301,7 @@ Files land as `t2m-2026-07-19-014212.md`, one per session, appended live (a cras
 | `talk2me --text` | Type instead of talk — for when you're in public and not ready to be the person speaking to their laptop. |
 | `talk2me --model sonnet` | Pick the Claude model, exactly like the `claude` CLI. See [Picking the brain](#picking-the-brain). |
 | `talk2me --barge-in` | Headphones on, mic stays hot, you can cut it off mid-sentence. See [Interrupting it](#interrupting-it). |
+| `talk2me --gated` | Spoken approvals for every non-read tool call. Default is auto-approve. See [Saying yes out loud](#saying-yes-out-loud). |
 | `talk2me --debug` | Prints every ear-state and the per-turn latency receipts. Use this the first session, and any time something feels off. |
 | `talk2me --voice "Ava (Premium)"` | A voice from this decade. Download it first: System Settings → Accessibility → Read & Speak → the ⓘ next to System voice → grab an (Enhanced)/(Premium) voice. |
 | `talk2me --rate 260` | Talk faster (words/min). Default 236 ≈ 1.35× the macOS stock pace. |
@@ -365,7 +366,7 @@ Out of the box:
 - **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room. Two sharper options ship too: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file).
 - **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter. Or `--stt parakeet` (install with `pip install -e ".[parakeet]"`): NVIDIA's Parakeet on the Apple-Silicon GPU — better accuracy than any local Whisper at a tenth of the wait, for ~2 GB of RAM while it runs. English-only, and `--vocab` biasing stays a Whisper-only trick. The full research behind the tradeoff lives in `docs/stt-upgrade-research.md`.
 - **The mouth:** macOS `say`, rendered a chunk ahead of playback so the voice doesn't stall between sentences. `--tts kitten` (install with `pip install -e ".[kitten]"`) is a local neural voice that works on any OS. `--tts null` keeps it text-only.
-- **The agent:** Claude Code, over its structured streaming interface — including the tool-permission wire, which is how the spoken approval gate works. The wire format is pinned byte-for-byte in `docs/permission-spike-results.md`.
+- **The agent:** Claude Code, over its structured streaming interface — including the tool-permission wire, which is how the spoken approval gate works. The wire format is pinned byte-for-byte in `docs/permission-spike-results.md`. And if you want a different brain entirely — GPT, Kimi, a local model, whatever — the agent hides behind the same swappable contract as everything else (`AgentBackend`, one file). Fork it and go right ahead; that's what the MIT license is for.
 - **The brain-to-ear glue:** after every reply, the identifiers the agent just used (file names, function names) get fed to the transcriber as bias terms — because those are exactly the words you're about to say back.
 
 ## Not done yet

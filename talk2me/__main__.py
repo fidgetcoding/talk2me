@@ -52,8 +52,18 @@ def _parse_args(argv: list[str]) -> Config:
     p.add_argument("--model", default=None, help="claude model (e.g. haiku, sonnet)")
     p.add_argument("--cwd", default=None, help="working dir for the agent")
     p.add_argument(
+        "--gated", action="store_true",
+        help=(
+            "spoken-approval mode: tools outside a read-only allowlist pause "
+            "the turn and ask out loud ('approve or deny?'). The DEFAULT is "
+            "auto-approve: tools just run, like the Claude app — except the "
+            "hard denylist (sudo, rm -rf, git push, curl…), which stays "
+            "blocked in every mode."
+        ),
+    )
+    p.add_argument(
         "--permission-mode", default="default", choices=SAFE_PERMISSION_MODES,
-        help="permission posture forwarded to `claude` (bypass modes are blocked)",
+        help="fine-tune the posture used WITH --gated (bypass values blocked here)",
     )
     p.add_argument("--text", action="store_true", help="type instead of talk (no audio)")
     p.add_argument(
@@ -187,17 +197,31 @@ def _parse_args(argv: list[str]) -> Config:
         raise SystemExit(0)
 
     input_mode = "text" if a.text else "voice"
-    permission_mode = a.permission_mode
 
-    # M2 escape hatch: bypass is only reachable via an explicit flag that ALSO
-    # requires --text. Refuse it in voice mode where the input is ambient audio.
+    # Default posture: auto-approve (bypassPermissions) with the scoped
+    # denylist still enforced — Anthropic's deny rules apply in EVERY mode,
+    # bypass included, so the catastrophic verbs stay blocked while everything
+    # else flows without spoken gates. --gated restores the approval loop.
+    if a.gated:
+        permission_mode = a.permission_mode
+        voice_approval = not a.no_voice_approval
+    else:
+        permission_mode = "bypassPermissions"
+        voice_approval = False
+
+    # --dangerously-allow-tools remains the ONLY way to drop the denylist too,
+    # and it still requires --text: ambient audio never gets a zero-guardrail
+    # posture. (security-audit.md M2)
+    dangerously = False
     if a.dangerously_allow_tools:
         if input_mode != "text":
             p.error(
-                "--dangerously-allow-tools requires --text mode; refusing to "
-                "auto-approve tools from ambient-audio (voice) input"
+                "--dangerously-allow-tools requires --text mode; refusing a "
+                "zero-guardrail posture on ambient-audio (voice) input"
             )
         permission_mode = "bypassPermissions"
+        voice_approval = False
+        dangerously = True
 
     # M3: reject permission-affecting flags smuggled through the positional tail.
     _reject_blocked_passthrough(p, a.claude_args)
@@ -212,9 +236,11 @@ def _parse_args(argv: list[str]) -> Config:
         cwd=a.cwd,
         permission_mode=permission_mode,
         with_user_config=a.with_user_config,
-        voice_approval=not a.no_voice_approval,
+        voice_approval=voice_approval,
         allowed_tools=list(DEFAULT_ALLOWED_TOOLS) + a.allow_tool,
-        disallowed_tools=list(DEFAULT_DISALLOWED_TOOLS) + a.deny_tool,
+        disallowed_tools=(
+            [] if dangerously else list(DEFAULT_DISALLOWED_TOOLS) + a.deny_tool
+        ),
         barge_in=a.barge_in,
         half_duplex=not a.barge_in,
         input_mode=input_mode,

@@ -175,6 +175,28 @@ def test_hotword_context() -> bool:
     )
 
 
+def test_parse_permission_posture() -> bool:
+    from talk2me.__main__ import _parse_args
+    from talk2me.config import DEFAULT_DISALLOWED_TOOLS
+
+    default = _parse_args([])
+    gated = _parse_args(["--gated"])
+    ok = (
+        default.permission_mode == "bypassPermissions"
+        and default.voice_approval is False
+        # The denylist survives bypass — it's the load-bearing guardrail.
+        and list(DEFAULT_DISALLOWED_TOOLS)[0] in default.disallowed_tools
+        and gated.permission_mode == "default"
+        and gated.voice_approval is True
+    )
+    return _line(
+        "parse permission posture",
+        ok,
+        f"default={default.permission_mode}/gate={default.voice_approval} "
+        f"gated={gated.permission_mode}/gate={gated.voice_approval}",
+    )
+
+
 def test_frame_samples() -> bool:
     fs = frame_samples(Config())
     ok = fs == 480
@@ -189,6 +211,7 @@ def main() -> int:
         test_build_backend(),
         test_build_stt_parakeet(),
         test_hotword_context(),
+        test_parse_permission_posture(),
         test_frame_samples(),
     ]
     overall = all(results)
