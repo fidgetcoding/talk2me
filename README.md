@@ -101,6 +101,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `(loading the ears…)` | Loading the transcription model. One-time, at startup, before the mic even opens. | Wait a few seconds. Don't talk yet. |
 | `talk2me ready — start talking` | Mic is about to go live. | Talk whenever. |
 | `(half-duplex: talking over the agent is ignored…)` | You did NOT pass `--barge-in`. Interrupting it mid-speech will do nothing this session. | Fine for most use. Restart with `--barge-in` + headphones if you want to interrupt. |
+| `📝 saving transcript to …` | `--save-dir` is on; the session is being written to that markdown file as it happens. | Nothing — that's your searchable record. |
 | `🎧 listening…` | Your turn. The mic is hot and idle. | Say something. |
 | `▶ speech` *(only with `--debug`)* | It heard you start talking. | Keep going. |
 | `⏹ turn end: ~1950ms speech -> transcribing` *(debug)* | You stopped, the silence window elapsed, your words are being transcribed. | Nothing — the answer is coming. |
