@@ -68,6 +68,16 @@ First run on macOS pops a **microphone permission** dialog for your terminal —
 
 **Pro tip:** when your agent is doing the installing, give it this repo's link too. It's open source — you can do whatever tf you want — and an agent that has read the source debugs your machine's quirks (weird audio devices, mic permissions, your cursed Bluetooth setup) in one turn instead of guessing.
 
+### Versions
+
+`main` is **v2**: same voice loop, new retro face. **v1** is the launch build, frozen forever as the `v1` branch and the `v1.0.0` tag. If you liked it plain, it's one flag away:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.sh | bash -s -- --v1
+```
+
+Re-run the installer with a different `--ref` any time to switch versions in place. Pinning by pip works too: `pip install "git+https://github.com/fidgetcoding/talk2me.git@v1.0.0"`.
+
 ## The cheat sheet
 
 Everything on one screen. This is the whole manual for day one.

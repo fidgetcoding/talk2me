@@ -1,5 +1,25 @@
 # Retro skin — the detailed gameplan
 
+## Versioning: this is v2, and v1 stays reachable (added 2026-07-19)
+
+The retro skin ships as **talk2me v2**. The launch build is preserved as a
+first-class citizen, not just a commit hash:
+
+- **Tag `v1.0.0`** — immutable pointer at the launch build (pyproject stamped
+  `1.0.0` in its final commit). `git checkout v1.0.0` forever.
+- **Branch `v1`** — the same commit as a live line, in case v1 ever needs a
+  fix without taking the v2 UI.
+- **Installer pinning** — `install.sh` takes `--ref <branch|tag>` (`--v1`
+  shorthand), so anyone (Nate included) installs the old build with
+  `curl … | bash -s -- --v1`. Re-running with a different `--ref` switches
+  versions in place.
+- **GitHub Release v1.0.0** — visibility + a frozen zip for non-git users.
+- **`main` = the v2 line** — pyproject bumped to `2.0.0` at the start of this
+  work; tag `v2.0.0` + release when Phase 5 lands.
+- Belt-and-suspenders: once Phase 2 lands, `--plain` inside v2 reproduces
+  v1's exact output anyway (that's the parity constraint) — the tag/branch
+  protect against the case where that guarantee ever has to bend.
+
 Goal: make talk2me's terminal output beautiful — retro-terminal vibe matching
 the banner (green on black, pink + blue accents, dotted borders) — WITHOUT
 touching the voice loop's behavior, timing, or tests. Not a full-screen TUI;
