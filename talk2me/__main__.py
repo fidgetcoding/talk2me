@@ -106,9 +106,9 @@ def _parse_args(argv: list[str]) -> Config:
     )
     p.add_argument("--voice", default=None, help="engine-specific voice id")
     p.add_argument(
-        "--rate", type=int, default=230, dest="rate_wpm",
+        "--rate", type=int, default=236, dest="rate_wpm",
         help="speech rate in words/minute (say engine; macOS default ~175, "
-        "talk2me default 230 ≈ 1.3x). 260+ ≈ 1.5x.",
+        "talk2me default 236 ≈ 1.35x).",
     )
     p.add_argument(
         "--vad", default="energy", choices=["energy", "silero", "webrtc"],

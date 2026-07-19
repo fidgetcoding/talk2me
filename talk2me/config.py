@@ -131,8 +131,9 @@ class Config:
     tts: str = "say"  # "say" | "kitten" | "null"
     voice: str | None = None  # engine-specific voice id
     # Speech rate in words/minute (say engine only). macOS default is ~175,
-    # which reads slow in a live loop; ~230 ≈ 1.3x. None = engine default.
-    rate_wpm: int | None = 230
+    # which reads slow in a live loop; 236 ≈ 1.35x (Nate-tuned: 260/1.5x was
+    # too fast). None = engine default.
+    rate_wpm: int | None = 236
 
     # --- duplex / barge-in ---
     # Defaults match what the orchestrator actually does: half-duplex, mic muted
