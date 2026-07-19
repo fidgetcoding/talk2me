@@ -79,6 +79,9 @@ jobs:
       - name: test_retro
         run: python -m tests.test_retro
 
+      - name: test_codex_translate
+        run: python -m tests.test_codex_translate
+
       - name: test_wizard
         run: python -m tests.test_wizard
 

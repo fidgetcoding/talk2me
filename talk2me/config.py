@@ -139,6 +139,9 @@ class Config:
     # `--continue`: resume the last agent session for this working dir
     # (resolved to a concrete session id at parse time; None = fresh).
     resume_session_id: str | None = None
+    # Which coding agent is the brain: "claude" (default) or "codex"
+    # (OpenAI's CLI — needs `codex login`; safety = its own sandbox).
+    agent: str = "claude"
     # Audio kept from just BEFORE speech onset and prepended to the utterance.
     # Energy VADs miss quiet first phonemes, and without this the transcript
     # starts mid-word (live-run: "count down to fifty" -> "down to 50").

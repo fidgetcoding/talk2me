@@ -87,6 +87,20 @@ def build_backend(cfg: Config) -> AgentBackend:
     from .backends import ClaudeCodeBackend
 
     from .config import VOICE_SYSTEM_PROMPT
+    from .continuity import save_last_session as _save_session
+
+    if cfg.agent == "codex":
+        from .backends.codex import CodexBackend
+
+        # Codex learns its thread id mid-turn (thread.started) — record it
+        # then, so --continue and the spoken picker can find it later.
+        return CodexBackend(
+            model=cfg.model,
+            cwd=cfg.cwd,
+            resume_session_id=cfg.resume_session_id,
+            extra_args=cfg.extra_claude_args,
+            on_session=lambda sid: _save_session(cfg.cwd, sid),
+        )
 
     # The stdio approval gate only makes sense when the CLI would otherwise
     # deny: bypass modes auto-approve everything, so wiring the prompt tool

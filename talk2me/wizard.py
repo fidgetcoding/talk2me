@@ -26,6 +26,7 @@ CONFIG_DIR = os.path.expanduser("~/.talk2me")
 ALLOWED_KEYS = (
     "model", "stt", "voice", "barge_in", "gated", "cwd", "save_dir",
     "language", "whisper_model", "backend_base_url", "backend_auth_env",
+    "agent",
 )
 
 # Alternate brains that publish Anthropic-compatible endpoints, officially
@@ -130,11 +131,14 @@ def run_wizard(existing: dict | None = None) -> dict:
 
     # 1 — the brain
     p(f"[bold {CYAN}]1 · the brain[/]  Which coding agent answers you. "
-      "[dim]claude = the Claude Code CLI (default). kimi / glm / deepseek "
-      "run through the SAME agent via their official Anthropic-compatible "
-      "endpoints — you bring an API key. custom = any compatible endpoint.[/]")
+      "[dim]claude = the Claude Code CLI (default). codex = OpenAI's Codex "
+      "CLI (needs `codex login`). kimi / glm / deepseek run through the "
+      "Claude agent via their official Anthropic-compatible endpoints — you "
+      "bring an API key. custom = any compatible endpoint.[/]")
     provider_default = "claude"
-    if prev.get("backend_base_url"):
+    if prev.get("agent") == "codex":
+        provider_default = "codex"
+    elif prev.get("backend_base_url"):
         for name, (_, url, _m) in PROVIDERS.items():
             if prev["backend_base_url"] == url:
                 provider_default = name
@@ -143,12 +147,20 @@ def run_wizard(existing: dict | None = None) -> dict:
             provider_default = "custom"
     provider = Prompt.ask(
         "  provider",
-        choices=["claude", "kimi", "glm", "deepseek", "custom"],
+        choices=["claude", "codex", "kimi", "glm", "deepseek", "custom"],
         default=provider_default,
     )
     base_url: str | None = None
     auth_env: str | None = None
-    if provider == "claude":
+    agent = "codex" if provider == "codex" else "claude"
+    if provider == "codex":
+        model = Prompt.ask(
+            "  model (Enter = codex default)", default=prev.get("model") or ""
+        ).strip() or None
+        if not os.path.exists(os.path.expanduser("~/.codex/auth.json")):
+            p("  [warn]heads-up:[/] codex isn't logged in — run "
+              "[bold]codex login[/] before launching")
+    elif provider == "claude":
         p("  [dim]Enter = your `claude` CLI's default. Shorthand works: "
           "haiku · sonnet · opus · opus 4.6 · or any full model id.[/]")
         model = normalize_model(
@@ -313,6 +325,7 @@ def run_wizard(existing: dict | None = None) -> dict:
         save_dir = None
 
     cfg = {
+        "agent": agent,
         "model": model,
         "stt": stt,
         "voice": voice,

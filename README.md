@@ -86,6 +86,7 @@ What changed from v1 to v2, in one glance:
 
 - **The retro face** — banner, dotted config card, green/pink/cyan theme, live work panel, syntax-highlighted code cards, visible thinking. (`--plain` = the v1 look, kept forever.)
 - **You can watch the work** — every file write, diff, and long command prints in the feed instead of hiding behind a tool counter.
+- **Bring your own brain** — Claude by default; OpenAI's Codex CLI via `--agent codex`; Kimi/GLM/DeepSeek via their Anthropic-compatible endpoints. The wizard walks you through all of them.
 - **Noise immunity** — a real speech classifier gates everything: typing, taps, and coughs can't fire turns or cut the agent off mid-answer anymore.
 - **Barge-in is the default** — interrupting by talking just works (auto-off on open-air speakers). `--no-barge-in` for the polite loop.
 - **Pause got serious** — more wake/sleep vocabulary, works mid-task without cancelling the work, and the screen stays honest while asleep.
@@ -119,6 +120,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --stt parakeet` | GPU ears — faster + more accurate (Apple Silicon; `pip install -e ".[parakeet]"` first). |
 | `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
+| `t2m --agent codex` | OpenAI's Codex CLI as the brain (`codex login` first). Same voice loop, same feed; safety = Codex's own sandbox. |
 | `t2m --backend-base-url … --backend-auth-env MY_KEY` | A different brain entirely — Kimi/GLM/DeepSeek publish Anthropic-compatible endpoints; the key stays in your env, never a file. Easiest via `t2m --setup`. |
 | `t2m --language es` (or `auto`) | Talk to it in another language (whisper; pairs with `--whisper-model base` — the `.en` models and parakeet are English-only). Voice commands stay English for now. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |

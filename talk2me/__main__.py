@@ -65,6 +65,14 @@ def _parse_args(argv: list[str]) -> Config:
         help="run the guided setup (brain, ears, voice, barge-in, tools, "
         "folder), save it as your defaults, then launch",
     )
+    p.add_argument(
+        "--agent", default="claude", choices=["claude", "codex"],
+        help=(
+            "which coding agent is the brain. claude = Claude Code CLI "
+            "(default). codex = OpenAI's Codex CLI (`codex login` first; "
+            "tool safety comes from its sandbox, so --gated doesn't apply)."
+        ),
+    )
     p.add_argument("--model", default=None, help="claude model (e.g. haiku, sonnet)")
     p.add_argument(
         "--backend-base-url", default=None, dest="backend_base_url",
@@ -327,6 +335,7 @@ def _parse_args(argv: list[str]) -> Config:
         speech_check=a.speech_check,
         phone=a.phone,
         phone_port=a.phone_port,
+        agent=a.agent,
         model=a.model,
         cwd=a.cwd,
         resume_session_id=_resolve_resume(a),
