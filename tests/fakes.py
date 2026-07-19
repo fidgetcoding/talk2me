@@ -13,14 +13,27 @@ from collections.abc import AsyncIterator
 
 import numpy as np
 
-from talk2me.events import AgentEvent, AssistantTextDelta, SessionReady, TurnComplete
+from collections import deque
+
+from talk2me.events import (
+    AgentEvent,
+    AssistantTextDelta,
+    PermissionRequest,
+    SessionReady,
+    TurnComplete,
+)
 
 
 class FakeMic:
-    """Replays a fixed list of frames, then ends the stream (clean shutdown)."""
+    """Replays a fixed list of frames, then ends the stream (clean shutdown).
+
+    Frames are consumed from a shared deque, so multiple frames() iterators
+    (main listen loop + the permission gate's temporary segmenter) share one
+    stream position — mirroring the real Mic's single queue.
+    """
 
     def __init__(self, frames: list[np.ndarray], sample_rate: int = 16000) -> None:
-        self._frames = frames
+        self._frames = deque(frames)
         self.sample_rate = sample_rate
         self.muted_log: list[bool] = []
         self.started = False
@@ -35,9 +48,9 @@ class FakeMic:
         self.muted_log.append(muted)
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
-        for f in self._frames:
+        while self._frames:
             await asyncio.sleep(0)  # yield control like the real queue would
-            yield f
+            yield self._frames.popleft()
 
 
 class FakeSpeaker:
@@ -81,14 +94,30 @@ class FakeTTS:
 
 
 class FakeBackend:
-    """Scripts a reply per user turn: emits text deltas then TurnComplete."""
+    """Scripts a reply per user turn: emits text deltas then TurnComplete.
 
-    def __init__(self, replies: list[str]) -> None:
-        self._replies = list(replies)
+    Two scripting styles:
+    - `replies`: one text string per turn -> delta + TurnComplete (the classic).
+    - `scripts`: one explicit event list per turn. A PermissionRequest in a
+      script pauses the feed until respond_permission() is called, exactly like
+      the real CLI blocking on a control_response.
+    """
+
+    def __init__(
+        self,
+        replies: list[str] | None = None,
+        scripts: list[list[AgentEvent]] | None = None,
+    ) -> None:
+        self._replies = list(replies or [])
+        self._scripts = list(scripts or [])
         self.sent: list[str] = []
+        self.permission_responses: list[tuple[str, bool, str | None]] = []
+        self.interrupts = 0
         self.started = False
         self.closed = False
         self._q: asyncio.Queue[AgentEvent] = asyncio.Queue()
+        self._perm_gate = asyncio.Event()
+        self._script_tasks: list[asyncio.Task[None]] = []
 
     async def start(self) -> None:
         self.started = True
@@ -96,9 +125,24 @@ class FakeBackend:
 
     async def send(self, user_text: str) -> None:
         self.sent.append(user_text)
+        if self._scripts:
+            script = self._scripts.pop(0)
+            # Feed in the background so a mid-script PermissionRequest can block
+            # on the gate while the orchestrator consumes ahead of it.
+            self._script_tasks.append(asyncio.create_task(self._feed(script)))
+            return
         reply = self._replies.pop(0) if self._replies else "ok."
         await self._q.put(AssistantTextDelta(text=reply))
         await self._q.put(TurnComplete(text=reply))
+
+    async def _feed(self, script: list[AgentEvent]) -> None:
+        for ev in script:
+            if isinstance(ev, PermissionRequest):
+                self._perm_gate.clear()
+                await self._q.put(ev)
+                await self._perm_gate.wait()
+            else:
+                await self._q.put(ev)
 
     def events(self) -> AsyncIterator[AgentEvent]:
         async def it() -> AsyncIterator[AgentEvent]:
@@ -108,7 +152,15 @@ class FakeBackend:
         return it()
 
     async def interrupt(self) -> None:
-        pass
+        self.interrupts += 1
+
+    async def respond_permission(
+        self, request_id: str, allow: bool, *, message: str | None = None
+    ) -> None:
+        self.permission_responses.append((request_id, allow, message))
+        self._perm_gate.set()
 
     async def close(self) -> None:
+        for task in self._script_tasks:
+            task.cancel()
         self.closed = True

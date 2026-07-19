@@ -45,6 +45,7 @@ from ..events import (
     AgentEvent,
     AssistantTextDelta,
     BackendError,
+    PermissionRequest,
     SessionReady,
     ToolActivity,
     TurnComplete,
@@ -63,6 +64,9 @@ class ClaudeCodeBackend:
         permission_mode: str = "default",
         session_id: str | None = None,
         extra_args: list[str] | None = None,
+        permission_prompt_stdio: bool = False,
+        allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
     ) -> None:
         self._bin = claude_bin
         self._model = model
@@ -70,6 +74,12 @@ class ClaudeCodeBackend:
         self._permission_mode = permission_mode
         self._session_id = session_id or str(uuid.uuid4())
         self._extra_args = extra_args or []
+        # Wire `--permission-prompt-tool stdio`: an unresolved tool call pauses
+        # the turn and surfaces here as a control_request instead of a silent
+        # deny. The host answers via respond_permission().
+        self._permission_prompt_stdio = permission_prompt_stdio
+        self._allowed_tools = allowed_tools or []
+        self._disallowed_tools = disallowed_tools or []
 
         self._proc: asyncio.subprocess.Process | None = None
         self._events: asyncio.Queue[AgentEvent] = asyncio.Queue()
@@ -105,6 +115,15 @@ class ClaudeCodeBackend:
         ]
         if self._model:
             argv += ["--model", self._model]
+        if self._permission_prompt_stdio:
+            argv += ["--permission-prompt-tool", "stdio"]
+        # Rules never contain commas, so the comma-joined single-token form is
+        # unambiguous (the variadic space-separated form would swallow a
+        # following positional).
+        if self._allowed_tools:
+            argv += ["--allowedTools", ",".join(self._allowed_tools)]
+        if self._disallowed_tools:
+            argv += ["--disallowedTools", ",".join(self._disallowed_tools)]
         argv += self._extra_args
         return argv
 
@@ -145,10 +164,52 @@ class ClaudeCodeBackend:
             yield ev
 
     async def interrupt(self) -> None:
-        # Claude Code's stream-json input has no documented mid-turn interrupt.
-        # Barge-in is handled by the orchestrator stopping TTS playback locally;
-        # this is a structured no-op so callers don't special-case backends.
-        return None
+        """Cancel the in-flight turn via the stdio control protocol.
+
+        Verified on CLI 2.1.214 (docs/permission-spike-results.md): the CLI acks
+        with a control_response, generation stops, and the turn ends with
+        `result subtype=error_during_execution` — which _translate maps to a
+        normal TurnComplete. The session stays alive for the next turn.
+        Best-effort: any write failure means the process is already dying, and
+        the reader task will surface that as a BackendError.
+        """
+        if self._proc is None or self._proc.stdin is None:
+            return
+        msg = {
+            "type": "control_request",
+            "request_id": f"int_{uuid.uuid4().hex[:8]}",
+            "request": {"subtype": "interrupt"},
+        }
+        try:
+            self._proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
+            await self._proc.stdin.drain()
+        except (BrokenPipeError, ConnectionError, RuntimeError, OSError):
+            return
+
+    async def respond_permission(
+        self, request_id: str, allow: bool, *, message: str | None = None
+    ) -> None:
+        """Answer a PermissionRequest by writing a control_response to stdin.
+
+        The CLI blocks the turn until the matching request_id arrives (no
+        timeout observed — a voice round-trip is safe). Shape pinned in
+        docs/permission-spike-results.md.
+        """
+        if self._proc is None or self._proc.stdin is None:
+            raise RuntimeError("backend not started")
+        inner: dict = {"behavior": "allow" if allow else "deny"}
+        if not allow:
+            inner["message"] = message or "Denied by voice"
+        msg = {
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": inner,
+            },
+        }
+        self._proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
+        await self._proc.stdin.drain()
 
     async def close(self) -> None:
         # Cancel the reader/stderr tasks, then AWAIT them so they fully unwind
@@ -286,6 +347,26 @@ class ClaudeCodeBackend:
             self._turn_text.clear()
             self._turn_streamed = False
             return [TurnComplete(text=rollup)]
+
+        # Permission gate (--permission-prompt-tool stdio). Wire shape pinned
+        # live in docs/permission-spike-results.md; the alternate spellings are
+        # kept so a CLI version skew degrades to a prompt, not a crash. Other
+        # control traffic (e.g. the ack for our own interrupt request) is
+        # deliberately ignored.
+        if t in ("control_request", "sdk_control_request"):
+            req = obj.get("request") or {}
+            if req.get("subtype") in ("can_use_tool", "permission"):
+                return [
+                    PermissionRequest(
+                        request_id=str(
+                            obj.get("request_id") or req.get("request_id") or ""
+                        ),
+                        tool_name=str(
+                            req.get("tool_name") or req.get("tool") or "tool"
+                        ),
+                        tool_input=req.get("input") or req.get("tool_input") or {},
+                    )
+                ]
 
         return []
 

@@ -20,7 +20,9 @@ from .config import Config
 # (and any other auto-approve-everything mode) is deliberately excluded: under a
 # voice loop, ambient audio → whisper → unconfirmed tool execution makes a silent
 # bypass a full RCE-by-sound posture. See security-audit.md M2.
-SAFE_PERMISSION_MODES = ("default", "acceptEdits", "plan")
+# ("manual" is the name newer CLI help shows for the classic prompt-me posture;
+# "default" still parses and behaves identically — spike-verified on 2.1.214.)
+SAFE_PERMISSION_MODES = ("default", "manual", "acceptEdits", "plan")
 
 # Substrings that, if present in a permission-mode value, indicate an
 # auto-approve-everything posture we never forward (defends gate #1 against a
@@ -29,10 +31,15 @@ _BYPASS_MODE_TOKENS = ("bypass", "skip")
 
 # Permission-affecting flags rejected from the positional `claude_args` tail so
 # they cannot smuggle a bypass posture past the --permission-mode allowlist.
-# security-audit.md M3.
+# security-audit.md M3. The tool-rule flags are blocked because talk2me owns
+# them (--allow-tool / --deny-tool) — a passthrough `--allowedTools Bash` would
+# silently widen the auto-approve surface past the voice gate.
 _BLOCKED_PASSTHROUGH_FLAGS = (
     "--dangerously-skip-permissions",
     "--add-dir",
+    "--permission-prompt-tool",
+    "--allowedTools",
+    "--disallowedTools",
 )
 
 # --vocab-file resource ceilings. security-audit.md H1 / M1 / L2.
@@ -57,6 +64,29 @@ def _parse_args(argv: list[str]) -> Config:
             "mutations) with NO confirmation. Refused in voice mode: ambient audio "
             "→ whisper → silent tool execution is a full RCE-by-sound posture. Use "
             "only when you fully trust the typed input."
+        ),
+    )
+    p.add_argument(
+        "--no-voice-approval", action="store_true",
+        help=(
+            "disable the spoken approve/deny gate for tool calls. Tools outside "
+            "the allowlist are then silently denied by the CLI (safe, but the "
+            "agent can't do one-off gated actions)."
+        ),
+    )
+    p.add_argument(
+        "--allow-tool", action="append", default=[],
+        help=(
+            "extra auto-approved tool rule, repeatable — e.g. "
+            "--allow-tool 'Bash(make:*)'. Added to the built-in read-only "
+            "allowlist; everything else goes through the voice gate."
+        ),
+    )
+    p.add_argument(
+        "--deny-tool", action="append", default=[],
+        help=(
+            "extra hard-denied tool rule, repeatable — denied in every mode, "
+            "never asked out loud."
         ),
     )
     p.add_argument("--whisper-model", default="base.en")
@@ -127,11 +157,16 @@ def _parse_args(argv: list[str]) -> Config:
     # M3: reject permission-affecting flags smuggled through the positional tail.
     _reject_blocked_passthrough(p, a.claude_args)
 
+    from .config import DEFAULT_ALLOWED_TOOLS, DEFAULT_DISALLOWED_TOOLS
+
     return Config(
         debug=a.debug,
         model=a.model,
         cwd=a.cwd,
         permission_mode=permission_mode,
+        voice_approval=not a.no_voice_approval,
+        allowed_tools=list(DEFAULT_ALLOWED_TOOLS) + a.allow_tool,
+        disallowed_tools=list(DEFAULT_DISALLOWED_TOOLS) + a.deny_tool,
         input_mode=input_mode,
         whisper_model=a.whisper_model,
         tts=a.tts,
@@ -257,9 +292,12 @@ async def _run_voice(cfg: Config) -> int:
 
 async def _run_text(cfg: Config) -> int:
     """Audio-free loop: read stdin lines, print agent text, no TTS/STT."""
+    import json
+
     from .events import (
         AssistantTextDelta,
         BackendError,
+        PermissionRequest,
         ToolActivity,
         TurnComplete,
     )
@@ -291,6 +329,18 @@ async def _run_text(cfg: Config) -> int:
                     sys.stdout.flush()
                 elif isinstance(ev, ToolActivity):
                     print(f"\n[tool] {ev.name}", flush=True)
+                elif isinstance(ev, PermissionRequest):
+                    # Typed twin of the spoken gate: the CLI is paused on this
+                    # request, so read one line and answer. EOF/empty -> deny.
+                    print(
+                        f"\n[permission] {ev.tool_name}: "
+                        f"{json.dumps(ev.tool_input)[:300]}",
+                        flush=True,
+                    )
+                    print("approve? [y/N] ", end="", flush=True)
+                    ans = (await asyncio.to_thread(sys.stdin.readline)) or ""
+                    allow = ans.strip().lower() in ("y", "yes", "approve", "allow")
+                    await backend.respond_permission(ev.request_id, allow)
                 elif isinstance(ev, TurnComplete):
                     print("\n", flush=True)
                     break

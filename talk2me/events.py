@@ -41,6 +41,20 @@ class TurnComplete:
 
 
 @dataclass(frozen=True)
+class PermissionRequest:
+    """The agent wants to use a tool and the backend is blocked awaiting an answer.
+
+    The host must call `backend.respond_permission(request_id, allow=...)` —
+    the underlying turn is paused until it does (verified: no CLI-side timeout,
+    so a voice round-trip is safe; see docs/permission-spike-results.md).
+    """
+
+    request_id: str
+    tool_name: str
+    tool_input: dict
+
+
+@dataclass(frozen=True)
 class BackendError:
     """The backend hit an unrecoverable condition (process died, parse wedged)."""
 
@@ -49,5 +63,10 @@ class BackendError:
 
 # Union of everything a backend may yield.
 AgentEvent = (
-    SessionReady | AssistantTextDelta | ToolActivity | TurnComplete | BackendError
+    SessionReady
+    | AssistantTextDelta
+    | ToolActivity
+    | TurnComplete
+    | PermissionRequest
+    | BackendError
 )

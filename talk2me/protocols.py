@@ -77,6 +77,12 @@ class AgentBackend(Protocol):
         """Best-effort: stop the in-flight turn. No-op if unsupported."""
         ...
 
+    async def respond_permission(
+        self, request_id: str, allow: bool, *, message: str | None = None
+    ) -> None:
+        """Answer a PermissionRequest event. No-op for backends that never emit one."""
+        ...
+
     async def close(self) -> None:
         """Tear down the agent process / connection."""
         ...

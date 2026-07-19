@@ -4,6 +4,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Tools auto-approved with no voice gate: read-only + safe local inspection.
+# Everything else (Edit, Write, other Bash, MCP tools) falls through to the
+# spoken approve/deny gate. Rule syntax is the CLI's documented prefix form
+# (`Bash(git status:*)`); both `:*` and ` *` verified working on 2.1.214 —
+# see docs/permission-spike-results.md.
+DEFAULT_ALLOWED_TOOLS: tuple[str, ...] = (
+    "Read",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Bash(pwd)",
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git branch:*)",
+    "Bash(rg:*)",
+    "Bash(find:*)",
+    "Bash(npm test:*)",
+    "Bash(npm run:*)",
+    "Bash(pytest:*)",
+    "Bash(python -m pytest:*)",
+)
+
+# Hard-denied in every mode — never even asked out loud. Irreversible /
+# exfiltration / privilege escalation. A voice user who isn't watching the
+# screen should not be able to say "yes" to any of these.
+DEFAULT_DISALLOWED_TOOLS: tuple[str, ...] = (
+    "Bash(rm -rf:*)",
+    "Bash(git push:*)",
+    "Bash(git reset --hard:*)",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    "Bash(sudo:*)",
+    "Bash(ssh:*)",
+    "Bash(dd:*)",
+)
+
 
 @dataclass
 class Config:
@@ -12,6 +51,16 @@ class Config:
     model: str | None = None
     cwd: str | None = None
     permission_mode: str = "default"
+    # Spoken approve/deny gate for tool calls outside allowed/disallowed_tools.
+    # Wires `--permission-prompt-tool stdio` so the CLI pauses the turn and asks
+    # us instead of silently denying. Disabled automatically for bypass modes.
+    voice_approval: bool = True
+    allowed_tools: list[str] = field(
+        default_factory=lambda: list(DEFAULT_ALLOWED_TOOLS)
+    )
+    disallowed_tools: list[str] = field(
+        default_factory=lambda: list(DEFAULT_DISALLOWED_TOOLS)
+    )
 
     # --- input ---
     input_mode: str = "voice"  # "voice" | "text"

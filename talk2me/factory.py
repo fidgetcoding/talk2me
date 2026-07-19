@@ -76,12 +76,19 @@ def build_tts(cfg: Config) -> TTS:
 def build_backend(cfg: Config) -> AgentBackend:
     from .backends import ClaudeCodeBackend
 
+    # The stdio approval gate only makes sense when the CLI would otherwise
+    # deny: bypass modes auto-approve everything, so wiring the prompt tool
+    # there would never fire (and the denylist still applies CLI-side).
+    stdio_gate = cfg.voice_approval and "bypass" not in cfg.permission_mode.lower()
     return ClaudeCodeBackend(
         claude_bin=cfg.claude_bin,
         model=cfg.model,
         cwd=cfg.cwd,
         permission_mode=cfg.permission_mode,
         extra_args=cfg.extra_claude_args,
+        permission_prompt_stdio=stdio_gate,
+        allowed_tools=cfg.allowed_tools,
+        disallowed_tools=cfg.disallowed_tools,
     )
 
 
