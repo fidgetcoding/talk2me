@@ -9,3 +9,6 @@ dist/
 node_modules/
 *.pem
 *.key
+*.cert
+.vscode/
+.idea/

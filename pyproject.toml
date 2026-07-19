@@ -31,6 +31,7 @@ parakeet = ["parakeet-mlx>=0.3"]
 
 [project.scripts]
 talk2me = "talk2me.__main__:main"
+t2m = "talk2me.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["talk2me*"]
