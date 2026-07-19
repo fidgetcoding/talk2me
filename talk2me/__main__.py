@@ -164,12 +164,13 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
-        "--barge-in", action="store_true",
+        "--barge-in", action=argparse.BooleanOptionalAction, default=True,
         help=(
-            "full-duplex: keep the mic live while the agent speaks; when you "
-            "start talking, playback stops and the agent's turn is interrupted. "
-            "REQUIRES HEADPHONES — with speakers the mic hears the TTS and "
-            "self-triggers (no echo cancellation)."
+            "full-duplex (ON by default): the mic stays live while the agent "
+            "speaks; start talking and playback stops, the agent's turn is "
+            "interrupted. Wants headphones — if the output resolves to "
+            "open-air speakers, this auto-downgrades to half-duplex for the "
+            "session (no echo cancellation). --no-barge-in forces half-duplex."
         ),
     )
     p.add_argument(
@@ -459,11 +460,15 @@ async def _run_text(cfg: Config) -> int:
                         announced.remove(ev.name)
                         if ev.summary:
                             print(f"   ↳ {ev.summary}", flush=True)
+                        for line in ev.body.splitlines():
+                            print(f"   │ {line}", flush=True)
                         if session_log:
                             session_log.tool(ev.name, ev.summary)
                     else:
                         detail = f" — {ev.summary}" if ev.summary else ""
                         print(f"\n[tool] {ev.name}{detail}", flush=True)
+                        for line in ev.body.splitlines():
+                            print(f"   │ {line}", flush=True)
                         if ev.upgrade:
                             if session_log:
                                 session_log.tool(ev.name, ev.summary)

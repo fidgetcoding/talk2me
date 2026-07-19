@@ -33,6 +33,7 @@ from .events import (
     BackendError,
     PermissionRequest,
     SessionReady,
+    ThinkingDelta,
     ToolActivity,
     TurnComplete,
 )
@@ -394,17 +395,21 @@ class Orchestrator:
                     self._spoke_any = True
                     assert self._render_q is not None
                     await self._render_q.put(sentence)
+            elif isinstance(ev, ThinkingDelta):
+                self.render.thinking(ev.text)
             elif isinstance(ev, ToolActivity):
                 if ev.upgrade and ev.name in announced:
                     # Detail for a call the stream path already showed: print
                     # the arguments as a follow-on, log once (with detail),
                     # and do NOT count it again.
                     announced.remove(ev.name)
-                    self.render.tool(ev.name, ev.summary, follow_on=True)
+                    self.render.tool(
+                        ev.name, ev.summary, body=ev.body, follow_on=True
+                    )
                     if self.log:
                         self.log.tool(ev.name, ev.summary)
                 else:
-                    self.render.tool(ev.name, ev.summary)
+                    self.render.tool(ev.name, ev.summary, body=ev.body)
                     self._saw_tool = True
                     self._tool_count += 1
                     if ev.upgrade:
@@ -956,7 +961,15 @@ def looks_hallucinated(raw: str) -> bool:
 # when the ENTIRE utterance is the command (normalized), so "pause listening
 # to him and focus" never triggers it.
 _PAUSE_COMMANDS = frozenset(
-    ("pause", "pause listening", "stop listening", "go to sleep", "take a break")
+    (
+        "pause",
+        "pause listening",
+        "stop listening",
+        "sleep",
+        "go to sleep",
+        "go to bed",
+        "take a break",
+    )
 )
 _RESUME_COMMANDS = frozenset(
     ("unpause", "wake up", "resume listening", "start listening", "im back")

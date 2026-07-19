@@ -126,6 +126,8 @@ def test_hallucination_and_controls() -> None:
     cases = [
         ("Pause listening.", "pause"),
         ("Go to sleep.", "pause"),
+        ("Sleep.", "pause"),  # live-observed miss 2026-07-19: bare "sleep"
+        ("Go to bed.", "pause"),
         ("Pause. Pause, Listening.", "pause"),  # live-observed stutter
         ("Pause.", "pause"),
         ("Wake up!", "resume"),

@@ -22,6 +22,7 @@ from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import Spinner
+from rich.syntax import Syntax
 from rich.text import Text
 from rich.theme import Theme
 
@@ -49,6 +50,17 @@ THEME = Theme(
         "ok": f"bold {GREEN}",
     }
 )
+
+# The launch banner. Skipped automatically when the terminal is too narrow —
+# a wrapped banner is worse than no banner.
+BANNER = """\
+████████╗ █████╗ ██╗     ██╗  ██╗██████╗ ███╗   ███╗███████╗
+╚══██╔══╝██╔══██╗██║     ██║ ██╔╝╚════██╗████╗ ████║██╔════╝
+   ██║   ███████║██║     █████╔╝  █████╔╝██╔████╔██║█████╗
+   ██║   ██╔══██║██║     ██╔═██╗ ██╔═══╝ ██║╚██╔╝██║██╔══╝
+   ██║   ██║  ██║███████╗██║  ██╗███████╗██║ ╚═╝ ██║███████╗
+   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚══════╝"""
+BANNER_WIDTH = max(len(line) for line in BANNER.splitlines())
 
 # Dotted box echoing the banner's ┄┄┄ borders.
 DOTTED = Box(
@@ -147,6 +159,9 @@ class RetroRenderer:
         # True while the agent's streamed prose has left the cursor mid-line —
         # the panel must terminate that line before Live takes the screen.
         self._inline = False
+        # Which stream currently owns the line: "" / "prose" / "think" —
+        # drives the newline + 🧠 prefix when thinking and prose interleave.
+        self._stream = ""
 
     def _collapse(self) -> None:
         """Fold an active work panel into its permanent one-line summary.
@@ -171,6 +186,14 @@ class RetroRenderer:
         self.console.print("(loading the ears…)", style="quiet", markup=False)
 
     def startup(self, cfg: Config) -> None:
+        if self.console.width >= BANNER_WIDTH:
+            self.console.print()
+            self.console.print(BANNER, style="agent", markup=False, highlight=False)
+        home = os.path.expanduser("~")
+
+        def tilde(path: str) -> str:
+            return path.replace(home, "~", 1) if path.startswith(home) else path
+
         tools_mode = (
             "auto-approve ⚡"
             if "bypass" in cfg.permission_mode.lower()
@@ -182,13 +205,17 @@ class RetroRenderer:
             ("voice", f"{cfg.voice or 'system'} @{cfg.rate_wpm or 'default'}wpm"),
             ("barge-in", "ON" if cfg.barge_in else "off"),
             ("tools", tools_mode),
-            ("folder", cfg.cwd or os.getcwd()),
+            ("working on", tilde(cfg.cwd or os.getcwd())),
         ]
+        if cfg.save_dir:
+            rows.append(
+                ("saves to", tilde(os.path.expanduser(cfg.save_dir)))
+            )
         body = Text()
         for i, (key, value) in enumerate(rows):
             if i:
                 body.append("\n")
-            body.append(f"{key:<9}", style="chip")
+            body.append(f"{key:<11}", style="chip")
             body.append(str(value), style="agent")
         self.console.print()
         self.console.print(
@@ -300,14 +327,23 @@ class RetroRenderer:
         )
 
     def agent_begin(self) -> None:
+        # The 🤖 prefix is deferred to the first prose chunk: a turn that
+        # opens with thinking or goes straight to tools must not strand a
+        # lone robot on its own line (live-observed in v2.0.0).
         self._collapse()
-        self._inline = True
-        self.console.print("🤖 ", style="agent", end="", markup=False)
+        self._inline = False
+        self._stream = "pending"
 
     def agent_delta(self, text: str) -> None:
         # Prose can resume right after a tool burst with no fresh
         # agent_begin — the panel must fold before a single character lands.
         self._collapse()
+        if self._stream == "think":
+            self.console.print()  # end the thinking line before prose
+            self._stream = "pending"
+        if self._stream != "prose":
+            self.console.print("🤖 ", style="agent", end="", markup=False)
+            self._stream = "prose"
         self._inline = True
         # Streamed fragments: soft_wrap leaves wrapping to the terminal so a
         # chunk boundary can never hard-break a word mid-line. markup=False +
@@ -320,27 +356,49 @@ class RetroRenderer:
 
     def agent_end(self) -> None:
         self._collapse()
+        if self._inline:  # terminate a streamed line; tool-only turns have none
+            self.console.print()
         self._inline = False
-        self.console.print()
+        self._stream = ""
+
+    def thinking(self, text: str) -> None:
+        # The agent's reasoning stream: shown dim, never spoken. Same
+        # interleave rules as prose — fold the panel, own the line.
+        self._collapse()
+        if self._stream != "think":
+            if self._inline:
+                self.console.print()
+            self.console.print("🧠 ", style="quiet", end="", markup=False)
+            self._stream = "think"
+            self._inline = True
+        self.console.print(
+            text, style="italic grey58", end="", markup=False,
+            highlight=False, soft_wrap=True,
+        )
 
     # ---- machinery -------------------------------------------------------
 
-    def tool(self, name: str, detail: str = "", *, follow_on: bool = False) -> None:
+    def tool(
+        self, name: str, detail: str = "", *, body: str = "", follow_on: bool = False
+    ) -> None:
         if follow_on:
-            if not detail:
-                return
-            if self._panel is not None:
-                self._panel.upgrade(name, detail)
-            else:  # panel already collapsed — linear follow-on, like Plain
-                self.console.print(
-                    Text.assemble(("      ↳ ", "quiet"), (detail, "detail"))
-                )
+            if detail:
+                if self._panel is not None:
+                    self._panel.upgrade(name, detail)
+                else:  # panel already collapsed — linear follow-on, like Plain
+                    self.console.print(
+                        Text.assemble(("      ↳ ", "quiet"), (detail, "detail"))
+                    )
+            # The work itself — a permanent code card. While the panel is
+            # live, rich weaves this above the Live region.
+            self._code_card(name, detail, body)
             return
         if self._inline:
             # Streamed prose left the cursor mid-line; end it before Live
             # takes over the bottom of the screen.
             self.console.print()
             self._inline = False
+            self._stream = ""
         if self._live is None:
             self._panel = _WorkPanel()
             live = Live(
@@ -368,6 +426,35 @@ class RetroRenderer:
                 line.append("  ")
                 line.append(detail, style="detail")
             self.console.print(line)
+        self._code_card(name, detail, body)
+
+    def _code_card(self, name: str, detail: str, body: str) -> None:
+        """A permanent, syntax-highlighted card of the tool's actual work —
+        the code being written, the diff, the command. Content never touches
+        rich markup; the highlighter is a lexer, not a tag parser."""
+        if not body:
+            return
+        inner: object
+        try:
+            lexer = Syntax.guess_lexer(detail or name, body)
+            inner = Syntax(body, lexer, background_color="default", word_wrap=True)
+        except Exception:
+            inner = Text(body, style="detail")
+        title = Text.assemble((name, "chip"))
+        if detail:
+            title.append(" · ")
+            title.append(detail, style="detail")
+        self.console.print(
+            Panel(
+                inner,
+                box=DOTTED,
+                border_style="quiet",
+                title=title,
+                title_align="left",
+                expand=False,
+                padding=(0, 1),
+            )
+        )
 
     def working(self, tool_count: int) -> None:
         if self._live is not None:

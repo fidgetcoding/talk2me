@@ -249,9 +249,60 @@ def test_tool_upgrade_tagging() -> bool:
     ok = (
         early == [ToolActivity(name="Write")]
         and early[0].upgrade is False
-        and late == [ToolActivity(name="Write", summary="pong.html", upgrade=True)]
+        and late
+        == [
+            ToolActivity(
+                name="Write", summary="pong.html", upgrade=True, body="hi"
+            )
+        ]
     )
     return _report("stream start = early (no upgrade); full message = upgrade + summary", ok)
+
+
+def test_tool_body_extraction() -> bool:
+    from talk2me.backends.claude_code import _tool_body
+
+    long_cmd = "for f in $(ls); do echo $f; done && " * 4
+    checks = [
+        # Write -> the actual content, clipped honestly.
+        _tool_body("Write", {"content": "line1\nline2"}) == "line1\nline2",
+        "… (+30 more lines)" in _tool_body("Write", {"content": "\n".join(f"l{i}" for i in range(50))}),
+        # Edit -> a -/+ diff view.
+        _tool_body("Edit", {"old_string": "a", "new_string": "b"}) == "- a\n+ b",
+        # Short Bash commands stay summary-only (no duplicate body)…
+        _tool_body("Bash", {"command": "ls -la"}) == "",
+        # …long or multi-line commands earn the full view.
+        _tool_body("Bash", {"command": long_cmd}).startswith("for f in"),
+        _tool_body("Bash", {"command": "echo a\necho b"}) == "echo a\necho b",
+        # Read-ish tools have no body; empty input has no body.
+        _tool_body("Read", {"file_path": "x.py"}) == "",
+        _tool_body("Write", {}) == "",
+        # Control characters are stripped, newlines survive.
+        "\x1b" not in _tool_body("Write", {"content": "a\x1b[31m\nb"}),
+    ]
+    return _report(
+        f"tool body extraction ({sum(checks)}/{len(checks)} checks)", all(checks)
+    )
+
+
+def test_thinking_delta() -> bool:
+    from talk2me.events import ThinkingDelta
+
+    b = _fresh()
+    got = b._translate({
+        "type": "stream_event",
+        "event": {
+            "type": "content_block_delta",
+            "delta": {"type": "thinking_delta", "thinking": "hmm, pong first"},
+        },
+    })
+    # Surfaced as ThinkingDelta; NEVER accumulated into the spoken rollup.
+    ok = (
+        got == [ThinkingDelta(text="hmm, pong first")]
+        and b._turn_text == []
+        and b._turn_streamed is False
+    )
+    return _report("thinking_delta -> ThinkingDelta, not in rollup", ok)
 
 
 def test_sessionlog_tool_detail() -> bool:
@@ -281,6 +332,8 @@ def main() -> int:
         test_unknown_type(),
         test_tool_summary_extraction(),
         test_tool_upgrade_tagging(),
+        test_tool_body_extraction(),
+        test_thinking_delta(),
         test_sessionlog_tool_detail(),
     ]
     overall = all(results)

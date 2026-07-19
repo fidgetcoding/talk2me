@@ -48,7 +48,10 @@ class Renderer(Protocol):
     def agent_begin(self) -> None: ...
     def agent_delta(self, text: str) -> None: ...
     def agent_end(self) -> None: ...
-    def tool(self, name: str, detail: str = "", *, follow_on: bool = False) -> None: ...
+    def thinking(self, text: str) -> None: ...
+    def tool(
+        self, name: str, detail: str = "", *, body: str = "", follow_on: bool = False
+    ) -> None: ...
     def working(self, tool_count: int) -> None: ...
     def barge_label(self, spoke_any: bool) -> None: ...
     def permission_ask(self, tool: str, detail: str) -> None: ...
@@ -149,13 +152,26 @@ class PlainRenderer:
     def agent_end(self) -> None:
         print(flush=True)
 
-    def tool(self, name: str, detail: str = "", *, follow_on: bool = False) -> None:
+    def thinking(self, text: str) -> None:
+        # v1 never showed thinking; Plain stays v1. Retro streams it dim.
+        pass
+
+    def tool(
+        self, name: str, detail: str = "", *, body: str = "", follow_on: bool = False
+    ) -> None:
         if follow_on:
             if detail:
                 print(f"      ↳ {detail}", flush=True)
+            self._body(body)
             return
         suffix = f" — {detail}" if detail else ""
         print(f"\n   [tool] {name}{suffix}", flush=True)
+        self._body(body)
+
+    @staticmethod
+    def _body(body: str) -> None:
+        for line in body.splitlines():
+            print(f"      │ {line}", flush=True)
 
     def working(self, tool_count: int) -> None:
         print(

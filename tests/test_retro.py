@@ -36,7 +36,10 @@ def _report(group: str, ok: bool) -> bool:
 def test_smoke_all_methods() -> bool:
     """Every method of the seam runs and the output carries ANSI codes."""
     r, buf = _fresh()
-    cfg = Config(model="opus", stt="whisper", cwd="/tmp/x", half_duplex=True)
+    cfg = Config(
+        model="opus", stt="whisper", cwd="/tmp/x", half_duplex=True,
+        save_dir="/tmp/logs",
+    )
     r.loading_ears()
     r.startup(cfg)
     r.transcript_path("/tmp/t2m.md")
@@ -58,7 +61,11 @@ def test_smoke_all_methods() -> bool:
     r.agent_delta("Sure — ")
     r.agent_delta("counting now.")
     r.agent_end()
-    r.tool("Write", "pong.html")
+    r.thinking("let me plan ")
+    r.thinking("the file layout")
+    r.agent_delta("Here's the plan.")
+    r.agent_end()
+    r.tool("Write", "pong.html", body="<html>\n<canvas></canvas>\n</html>")
     r.tool("Write", "pong.html", follow_on=True)
     r.tool("Bash")
     r.working(1)
@@ -75,14 +82,21 @@ def test_smoke_all_methods() -> bool:
     r.debug("[t] first-token 1.10s", nl=True)
     r.close()
     out = buf.getvalue()
+    # Content checks run on the ANSI-stripped text: the syntax highlighter
+    # legitimately inserts color codes BETWEEN tokens of the same line.
+    plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", out)
     checks = [
         "\x1b[" in out,  # ANSI escapes present — the skin is on
-        "listening…" in out,
-        "count to ten" in out,
-        "pong.html" in out,
-        "APPROVED" in out and "DENIED" in out,
-        "┄" in out,  # the dotted border made it to the screen
-        "@fidgetcoding" in out,
+        "listening…" in plain,
+        "count to ten" in plain,
+        "pong.html" in plain,
+        "APPROVED" in plain and "DENIED" in plain,
+        "┄" in plain,  # the dotted border made it to the screen
+        "@fidgetcoding" in plain,
+        "████" in plain,  # the launch banner (width 100 fits it)
+        "working on" in plain and "saves to" in plain,  # both path rows
+        "🧠" in plain and "the file layout" in plain,  # thinking stream, dim
+        "<canvas></canvas>" in plain,  # the actual code, on screen
     ]
     return _report(f"smoke: all methods + ANSI ({sum(checks)}/{len(checks)})", all(checks))
 
@@ -110,6 +124,8 @@ def test_markup_injection_is_literal() -> bool:
         ("tool detail (panel frame)", "[red]x[/red]", _tool_detail_via_panel),
         ("tool follow-on", "[red]x[/red]",
          lambda r, p: r.tool("Write", p, follow_on=True)),
+        ("tool body (code card)", "[red]evil[/red]",
+         lambda r, p: r.tool("Write", "x.py", body=p)),
         ("permission ask", "[red]rm -rf /[/red]",
          lambda r, p: r.permission_ask("Bash", p)),
         ("permission heard", "[u]yes[/u]",

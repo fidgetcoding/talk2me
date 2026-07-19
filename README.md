@@ -87,8 +87,8 @@ Everything on one screen. This is the whole manual for day one.
 | Say | When | What happens |
 |---|---|---|
 | *anything* | `🎧 listening…` is showing | It answers out loud, then listens again. That's the loop. |
-| *keep talking over it* | it's mid-answer (needs `--barge-in` + headphones) | Voice AND thinking stop; what you said becomes the next message. No magic word — any sustained speech cuts it. |
-| **"pause listening"** · "stop listening" · "go to sleep" · "take a break" · "pause" | any time it's listening | Ears stay open but NOTHING gets sent — it goes quiet until you wake it. |
+| *keep talking over it* | it's mid-answer (on by default; needs headphones — auto-off on speakers) | Voice AND thinking stop; what you said becomes the next message. No magic word — any sustained speech cuts it. |
+| **"pause listening"** · "stop listening" · "sleep" · "go to sleep" · "go to bed" · "take a break" · "pause" | any time it's listening | Ears stay open but NOTHING gets sent — it goes quiet until you wake it. |
 | **"wake up"** · "resume listening" · "I'm back" · "unpause" | while paused | Back to normal listening. |
 | **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (`--gated` mode only) | Runs or declines the tool call. Mumble twice = it declines for you. |
 
@@ -98,7 +98,7 @@ Everything on one screen. This is the whole manual for day one.
 |---|---|
 | `t2m` | The whole thing, defaults on. Talk. |
 | `Ctrl-C` | Done. (Transcript, if enabled, is already saved — it writes live.) |
-| `t2m --barge-in` | Interruptible mode. Headphones required. |
+| `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default; it auto-disarms on open-air speakers anyway). |
 | `t2m --gated` | Spoken approvals before any non-read tool runs (default is auto-approve, with the nasty stuff hard-blocked either way). |
 | `t2m --stt parakeet` | GPU ears — faster + more accurate (Apple Silicon; `pip install -e ".[parakeet]"` first). |
 | `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
@@ -125,7 +125,7 @@ you talk  →  it finds where your sentence ends  →  transcribes it
           →  reopens the mic  →  you talk again
 ```
 
-It runs **half-duplex** by default, which is a fancy way of saying it mutes its own ears while it's talking, so it doesn't hear itself and lose its mind. No headphones required. No echo. No feedback spiral.
+With headphones on it runs **full-duplex** by default — the mic stays hot while it talks, so you can cut it off mid-sentence. On open-air speakers it auto-downgrades to **half-duplex** (mutes its own ears while talking) so it doesn't hear itself and lose its mind. No echo. No feedback spiral. `--no-barge-in` forces the polite mode.
 
 When it's your turn, it says so (`🎧 listening…`). When you're mid-thought, it waits. When you stop, it goes.
 
@@ -149,9 +149,12 @@ v2 dresses the whole session in the banner's palette — green prose, pink for y
 
 What changed beyond the paint:
 
+- **You see the actual work.** Every `Write` shows the code it's writing, every `Edit` shows a `-`/`+` diff, every long `Bash` shows the full command — syntax-highlighted cards right in the feed, capped so a big file doesn't bury the conversation. `--plain` gets the same bodies as indented `│` lines.
 - **The work panel.** While the agent runs tools, one live panel shows a spinner, the tool count, a running clock, and the last five tools **with what they touched** (`⚙ Write  pong.html`). When the agent starts talking again, the panel folds into a one-line receipt: `⚙ 9 tool calls · 42s`. No more line spam during long builds.
-- **Tool detail everywhere.** Tool lines now carry their argument — the filename, the command, the pattern — on screen and in saved transcripts (`- 🔧 Write (pong.html)`).
-- **Nothing else moved.** The voice loop, timing, barge-in, and permissions are byte-identical to v1 — the plain output still exists under `--plain`, is auto-selected for pipes/CI/`NO_COLOR`, and is what the tests pin.
+- **Thinking, visible.** When the model streams extended thinking, it shows up dim under a `🧠` — on screen, never spoken.
+- **The launch banner.** Big block-letter TALK2ME in the brand green (skipped automatically on narrow terminals), and the startup card now shows both paths that matter: `working on` (the agent's folder) and `saves to` (your transcript folder).
+- **Tool detail everywhere.** Tool lines carry their argument — the filename, the command, the pattern — on screen and in saved transcripts (`- 🔧 Write (pong.html)`).
+- **Nothing else moved.** The voice loop, timing, and permissions are identical — the plain output still exists under `--plain`, is auto-selected for pipes/CI/`NO_COLOR`, and is what the tests pin.
 
 Paranoid by design: agent and user text never passes through the styling engine's markup, so a reply containing `[red]` prints as five characters instead of turning your terminal red.
 
@@ -163,7 +166,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 |---|---|---|
 | `(loading the ears…)` | Loading the transcription model. One-time, at startup, before the mic even opens. | Wait a few seconds. Don't talk yet. |
 | `talk2me ready — start talking` | Mic is about to go live. | Talk whenever. |
-| `(half-duplex: talking over the agent is ignored…)` | You did NOT pass `--barge-in`. Interrupting it mid-speech will do nothing this session. | Fine for most use. Restart with `--barge-in` + headphones if you want to interrupt. |
+| `(half-duplex: talking over the agent is ignored…)` | Interrupting is off this session — you passed `--no-barge-in`, or the output is open-air speakers and it auto-downgraded. | Fine for most use. Plug in headphones and relaunch to interrupt. |
 | `📝 saving transcript to …` | `--save-dir` is on; the session is being written to that markdown file as it happens. | Nothing — that's your searchable record. |
 | `🎧 listening…` | Your turn. The mic is hot and idle. | Say something. |
 | `▶ speech` *(only with `--debug`)* | It heard you start talking. | Keep going. |
@@ -174,6 +177,8 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `(ignored — transcription noise)` | The transcript looked like a machine artifact (one word looped), not speech. Dropped. | Nothing — that's the noise filter working. |
 | `⏸ paused — say 'wake up'…` | You voice-paused it. Hearing everything, sending nothing. | Say "wake up" / "I'm back" to resume. |
 | `🤖` followed by streaming text | The agent is answering. Speech starts at the first clause, not the end. | Listen. |
+| `🧠` followed by dim text | The model's extended thinking, streamed. Shown, never spoken. | Read along or ignore it. |
+| A dotted card full of code | The actual work — file contents for `Write`, a `-`/`+` diff for `Edit`, long `Bash` commands. | Watch your code get written. |
 | `[tool] Bash` etc. (v1 / `--plain`) — or the live `working` panel (v2) | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
 | `⚙ N tool calls · 42s` | The work panel folded into its receipt — the tool burst is over and the agent is talking (or done). | Nothing. |
 | *a soft "tink" every ~8s* | The working tick: it's mid-tool-run and fine, just busy. The audible version of a spinner. | Nothing. Silence + no tick + no marker is the bad combo. (`--no-ticks` disables.) |
@@ -224,11 +229,11 @@ The startup line always tells you which mood you're in: `tools: auto-approve ⚡
 
 ## Interrupting it
 
-`talk2me --barge-in` — for when the answer is long and you already know where it's going.
+Barge-in is **on by default** — for when the answer is long and you already know where it's going.
 
 Put on headphones (that part's mandatory — with speakers the mic hears its own voice and argues with itself), and the mic stays hot while it talks. Start speaking and it stops mid-sentence — not just the voice, the *thinking*: the agent's turn is actually cancelled, and what you said becomes the next message.
 
-And if you forget the headphones? It notices. When the output device is open-air speakers (the system default with nothing plugged in), talk2me prints `🔈 speakers on the output — barge-in off for this session` and runs the polite mode instead of arguing with its own echo. Pop the headphones in, relaunch, and barge-in arms itself again. (One blind spot: a *Bluetooth speaker* has an arbitrary name and passes for headphones — don't use `--barge-in` with one.)
+And if you forget the headphones? It notices. When the output device is open-air speakers (the system default with nothing plugged in), talk2me prints `🔈 speakers on the output — barge-in off for this session` and runs the polite mode instead of arguing with its own echo. Pop the headphones in, relaunch, and barge-in arms itself again. (One blind spot: a *Bluetooth speaker* has an arbitrary name and passes for headphones — pass `--no-barge-in` with one.)
 
 Know these three things and barge-in will never surprise you:
 
@@ -236,7 +241,7 @@ Know these three things and barge-in will never surprise you:
 2. **It will cut on your mumbles too.** Think out loud near a hot mic and it'll stop talking and listen. That's the deal you signed.
 3. **Interruptions cap at 10 seconds.** State your business; it processes what it has and moves on.
 
-Default mode is still the polite half-duplex loop: it finishes, then listens. No headphones needed there.
+`--no-barge-in` gives you the polite half-duplex loop: it finishes, then listens. No headphones needed there — and it's what speakers get automatically.
 
 ## Finish your sentence
 
@@ -308,7 +313,7 @@ No `--model` flag needed — it uses whatever your `claude` defaults to, same as
 Got a favorite setup? Freeze it into an alias once and never think about flags again. Mine:
 
 ```bash
-alias t2m='t2m --barge-in --voice "Ava (Premium)" --input-device "MacBook Pro"'
+alias t2m='t2m --voice "Ava (Premium)" --input-device "MacBook Pro"'
 ```
 
 No `--output-device` needed — sound follows whatever macOS is currently routed to (headphones when they're in, laptop speakers when they're not, and barge-in [auto-disarms on speakers](#interrupting-it)). Pinning the *input* to the laptop mic is the one worth keeping: it spares your Bluetooth headphones from dropping into telephone-quality mode.
@@ -382,7 +387,7 @@ Files land as `t2m-2026-07-19-014212.md`, one per session, appended live (a cras
 | `talk2me` | Just talk. The main event. |
 | `talk2me --text` | Type instead of talk — for when you're in public and not ready to be the person speaking to their laptop. |
 | `talk2me --model sonnet` | Pick the Claude model, exactly like the `claude` CLI. See [Picking the brain](#picking-the-brain). |
-| `talk2me --barge-in` | Headphones on, mic stays hot, you can cut it off mid-sentence. See [Interrupting it](#interrupting-it). |
+| `talk2me --no-barge-in` | The polite loop: it finishes, then listens. (Interrupting is on by default with headphones.) |
 | `talk2me --gated` | Spoken approvals for every non-read tool call. Default is auto-approve. See [Saying yes out loud](#saying-yes-out-loud). |
 | `talk2me --debug` | Prints every ear-state and the per-turn latency receipts. Use this the first session, and any time something feels off. |
 | `talk2me --voice "Ava (Premium)"` | A voice from this decade. Download it first: System Settings → Accessibility → Read & Speak → the ⓘ next to System voice → grab an (Enhanced)/(Premium) voice. |
@@ -402,10 +407,10 @@ Everything below actually happened while building this. If your session misbehav
 macOS mic permission. The first run should pop a permission dialog for your terminal app; if you missed it: System Settings → Privacy & Security → Microphone → your terminal → on. Then restart talk2me. Still nothing? `talk2me --list-devices` and check the `*` is on the mic you're actually talking into, then `--input-device "MacBook"` (name substring works).
 
 **I talk over it and nothing happens.**
-You're not in barge-in mode. Check the startup banner: if you see the `(half-duplex: talking over the agent is ignored…)` line, the `--barge-in` flag wasn't passed. If you run through a shell alias, remember an open terminal doesn't reload edited aliases — `source ~/.zshrc` or open a new tab, then verify with `alias talk2me` / `alias t2m` that the flag is really in there. (This one got me twice in one night.)
+You're not in barge-in mode. Check the startup card: `barge-in off` plus the `(half-duplex…)` line means either `--no-barge-in` was passed or the output resolved to open-air speakers and it auto-disarmed. Plug the headphones in and relaunch. If you run through a shell alias, an open terminal doesn't reload edited aliases — `source ~/.zshrc`, then check the card again.
 
 **It cuts itself off / interrupts on nothing / stops mid-answer.**
-The mic is hearing its own voice. Barge-in **requires** the audio to go to your ears only — if the headphones are on the desk instead of on your head, the mic hears the TTS, decides "someone's talking," and cuts the answer. Wear the headphones or drop `--barge-in`.
+The mic is hearing its own voice. Barge-in **requires** the audio to go to your ears only — if the headphones are on the desk instead of on your head, the mic hears the TTS, decides "someone's talking," and cuts the answer. Wear the headphones or pass `--no-barge-in`.
 
 **It cuts me off mid-sentence when I pause to think.**
 Raise `--silence-ms` (default 1200). And note the fallbacks already working for you: unfinished-sounding sentences get the `(…waiting for the rest)` hold, and if it does send early and you keep talking, the fragments get stitched (`you (continued):`).

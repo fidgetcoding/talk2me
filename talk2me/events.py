@@ -37,6 +37,19 @@ class ToolActivity:
     name: str
     summary: str = ""
     upgrade: bool = False
+    # Multi-line preview of what the tool is actually doing — the code being
+    # written, the diff being applied, the full command. Renderers show it;
+    # it is never spoken and never logged in full.
+    body: str = ""
+
+
+@dataclass(frozen=True)
+class ThinkingDelta:
+    """A chunk of the agent's extended-thinking stream. Shown dim, never
+    spoken, never part of the turn rollup. Absent entirely on models/configs
+    that don't emit thinking blocks."""
+
+    text: str
 
 
 @dataclass(frozen=True)
@@ -72,6 +85,7 @@ class BackendError:
 AgentEvent = (
     SessionReady
     | AssistantTextDelta
+    | ThinkingDelta
     | ToolActivity
     | TurnComplete
     | PermissionRequest

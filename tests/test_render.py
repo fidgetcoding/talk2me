@@ -202,6 +202,17 @@ def test_tool_and_permission_lines() -> bool:
         "",
     )
     _check(
+        results, "tool with body",
+        _capture(lambda: r.tool("Write", "pong.html", body="<html>\n</html>")),
+        "\n   [tool] Write — pong.html\n      │ <html>\n      │ </html>\n",
+    )
+    _check(
+        results, "tool follow-on with body",
+        _capture(lambda: r.tool("Bash", "", body="echo a\necho b", follow_on=True)),
+        "      │ echo a\n      │ echo b\n",
+    )
+    _check(results, "thinking is silent in Plain", _capture(r.thinking, "hmm"), "")
+    _check(
         results, "working singular", _capture(r.working, 1),
         "   ⚙ still working… (1 tool call so far)\n",
     )

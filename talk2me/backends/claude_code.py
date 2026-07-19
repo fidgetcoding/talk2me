@@ -31,6 +31,7 @@ from ..events import (
     BackendError,
     PermissionRequest,
     SessionReady,
+    ThinkingDelta,
     ToolActivity,
     TurnComplete,
 )
@@ -76,6 +77,54 @@ def _summarize_tool_input(name: str, inp: dict) -> str:
     if len(summary) > _SUMMARY_MAX:
         summary = summary[: _SUMMARY_MAX - 1] + "…"
     return _sanitize(summary)
+
+
+# Ceilings for the multi-line tool body (the actual code / diff / command
+# shown in the feed). Enough to SEE the work; never the whole payload.
+_BODY_MAX_LINES = 20
+_BODY_MAX_CHARS = 2000
+_EDIT_SIDE_LINES = 8
+
+
+def _clip_body(text: str) -> str:
+    """Bound a body preview by chars then lines, with an honest '+N more'."""
+    text = text[:_BODY_MAX_CHARS]
+    lines = text.splitlines()
+    if len(lines) > _BODY_MAX_LINES:
+        dropped = len(lines) - _BODY_MAX_LINES
+        lines = lines[:_BODY_MAX_LINES] + [f"… (+{dropped} more lines)"]
+    return _sanitize("\n".join(lines))
+
+
+def _tool_body(name: str, inp: dict) -> str:
+    """The work itself: file content for Write, a -/+ diff for Edit, the full
+    command for Bash. Empty for tools whose one-line summary says it all."""
+    if not isinstance(inp, dict) or not inp:
+        return ""
+    if name == "Write":
+        return _clip_body(str(inp.get("content", "")))
+    if name == "Edit":
+        old = str(inp.get("old_string", ""))
+        new = str(inp.get("new_string", ""))
+        if not (old or new):
+            return ""
+
+        def side(prefix: str, s: str) -> list[str]:
+            lines = s.splitlines() or [""]
+            out = [f"{prefix} {line}" for line in lines[:_EDIT_SIDE_LINES]]
+            if len(lines) > _EDIT_SIDE_LINES:
+                out.append(f"{prefix} … (+{len(lines) - _EDIT_SIDE_LINES} more lines)")
+            return out
+
+        return _clip_body("\n".join(side("-", old) + side("+", new)))
+    if name == "Bash":
+        cmd = str(inp.get("command", ""))
+        # The one-line summary already shows short commands — a body would
+        # just duplicate it. Long or multi-line commands earn the full view.
+        if len(cmd) <= _SUMMARY_MAX and "\n" not in cmd:
+            return ""
+        return _clip_body(cmd)
+    return ""
 
 
 class ClaudeCodeBackend:
@@ -416,6 +465,12 @@ class ClaudeCodeBackend:
                     self._turn_text.append(text)
                     self._turn_streamed = True
                     return [AssistantTextDelta(text=text)]
+            elif delta.get("type") == "thinking_delta":
+                # Extended-thinking stream: surfaced for the screen only —
+                # never spoken, never in the turn rollup.
+                thought = delta.get("thinking", "")
+                if thought:
+                    return [ThinkingDelta(text=thought)]
         elif etype == "content_block_start":
             block = event.get("content_block") or {}
             if block.get("type") == "tool_use":
@@ -444,11 +499,13 @@ class ClaudeCodeBackend:
                 # latency); this full-message copy carries the arguments, so it
                 # goes out as an `upgrade` — detail, not a second call.
                 name = block.get("name", "tool")
+                inp = block.get("input") or {}
                 out.append(
                     ToolActivity(
                         name=name,
-                        summary=_summarize_tool_input(name, block.get("input") or {}),
+                        summary=_summarize_tool_input(name, inp),
                         upgrade=True,
+                        body=_tool_body(name, inp),
                     )
                 )
             elif btype == "text":
