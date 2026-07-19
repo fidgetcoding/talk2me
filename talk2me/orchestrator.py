@@ -684,6 +684,12 @@ class Orchestrator:
         if not cut or not buf:
             return None
         utterance = np.concatenate(buf).astype(np.float32)
+        if self._speech_check is not None and not await asyncio.to_thread(
+            self._speech_check, utterance, self.mic.sample_rate
+        ):
+            # The onset passed the gate but the full collection is noise —
+            # None routes into the repeat-your-question recovery upstream.
+            return None
         raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
         if raw and looks_hallucinated(raw):
             # A noise-triggered cut with a hallucinated transcript: returning
@@ -920,6 +926,12 @@ class Orchestrator:
         if not started or not buf:
             return ""
         utterance = np.concatenate(buf).astype(np.float32)
+        if self._speech_check is not None and not await asyncio.to_thread(
+            self._speech_check, utterance, self.mic.sample_rate
+        ):
+            # Typing during a continuation window or a permission prompt must
+            # never be stitched into a sentence or read as a verdict.
+            return ""
         return collapse_stutter(
             await self.stt.transcribe(utterance, self.mic.sample_rate)
         )
