@@ -94,12 +94,20 @@ def test_markup_injection_is_literal() -> bool:
     payload must be present verbatim — proof that neither the markup engine
     nor the auto-highlighter consumed a single character of content.
     """
-    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    ansi = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+    def _tool_detail_via_panel(r, p):
+        # tool() opens the Live panel; content only hits the screen on a
+        # frame paint. Force one, then fold — both surfaces must stay literal.
+        r.tool("Write", p)
+        r._live.refresh()
+        r.close()
+
     payloads = [
         ("agent_delta", "[bold red]PWNED[/bold red]",
          lambda r, p: r.agent_delta(p)),
         ("you", "[blink]hi[/blink]", lambda r, p: r.you(p)),
-        ("tool detail", "[red]x[/red]", lambda r, p: r.tool("Write", p)),
+        ("tool detail (panel frame)", "[red]x[/red]", _tool_detail_via_panel),
         ("tool follow-on", "[red]x[/red]",
          lambda r, p: r.tool("Write", p, follow_on=True)),
         ("permission ask", "[red]rm -rf /[/red]",
@@ -126,6 +134,64 @@ def test_markup_injection_is_literal() -> bool:
     )
 
 
+def test_live_work_panel() -> bool:
+    """The Phase-4 interleave discipline: tools open ONE Live region; any
+    prose/status/permission output collapses it to a summary line FIRST."""
+    ansi = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+    results = []
+
+    # tool() opens the panel; agent_delta collapses it before prose lands.
+    r, buf = _fresh()
+    r.agent_begin()
+    r.tool("Write")
+    results.append(r._live is not None)  # panel is up
+    r.tool("Write", "pong.html", follow_on=True)
+    results.append(r._panel is not None and r._panel.entries[-1] == ("Write", "pong.html"))
+    r.tool("Bash", "open pong.html")
+    results.append(r._panel is not None and r._panel.count == 2)
+    before = len(buf.getvalue())
+    r.working(2)
+    results.append(len(buf.getvalue()) == before)  # panel live -> working() is silent
+    r.agent_delta("all done here")
+    results.append(r._live is None)  # collapsed before prose
+    out = buf.getvalue()
+    stripped = ansi.sub("", out)
+    results.append("⚙ 2 tool calls · " in stripped)  # the permanent summary line
+    # The summary (last "tool call" emission) precedes the prose.
+    results.append(out.rindex("tool call") < out.rindex("all done here"))
+
+    # Ctrl-C path: close() with a live panel restores and never raises.
+    r2, buf2 = _fresh()
+    r2.tool("Bash", "make test")
+    results.append(r2._live is not None)
+    r2.close()
+    results.append(r2._live is None)
+    results.append("⚙ 1 tool call · " in ansi.sub("", buf2.getvalue()))
+    r2.close()  # second close is a no-op, not a crash
+    results.append(True)
+
+    # Permission gate collapses the panel before asking.
+    r3, buf3 = _fresh()
+    r3.tool("Write")
+    r3.permission_ask("Write", "file_path=x.txt")
+    results.append(r3._live is None)
+    results.append("[permission]" in ansi.sub("", buf3.getvalue()))
+
+    # After a collapse, a late follow-on detail prints linear (Plain-style).
+    r4, buf4 = _fresh()
+    r4.tool("Write")
+    r4.agent_delta("text")
+    r4.tool("Write", "late.txt", follow_on=True)
+    results.append("↳ late.txt" in ansi.sub("", buf4.getvalue()))
+
+    # working() prints its fallback line when no panel is live.
+    r5, buf5 = _fresh()
+    r5.working(3)
+    results.append("still working… (3 tool calls so far)" in ansi.sub("", buf5.getvalue()))
+
+    return _report(f"live work panel ({sum(results)}/{len(results)})", all(results))
+
+
 def test_renderer_selection() -> bool:
     results = []
     had = os.environ.pop("NO_COLOR", None)
@@ -149,6 +215,7 @@ def main() -> int:
     results = [
         test_smoke_all_methods(),
         test_markup_injection_is_literal(),
+        test_live_work_panel(),
         test_renderer_selection(),
     ]
     overall = all(results)

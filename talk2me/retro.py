@@ -13,11 +13,15 @@ as literals), so a reply containing "[red]" renders as the five characters
 from __future__ import annotations
 
 import os
+import time
+from collections import deque
 from typing import TYPE_CHECKING
 
 from rich.box import Box
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.text import Text
 from rich.theme import Theme
 
@@ -59,9 +63,78 @@ DOTTED = Box(
 )
 
 
+def _elapsed_label(seconds: float) -> str:
+    s = int(seconds)
+    return f"{s // 60}m{s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+class _WorkPanel:
+    """State for one tool burst's Live panel: spinner, last 5 tools, count,
+    elapsed. Rendered fresh on every refresh tick, so the clock and spinner
+    animate for free."""
+
+    KEEP = 5
+
+    def __init__(self) -> None:
+        self.entries: deque[tuple[str, str]] = deque(maxlen=self.KEEP)
+        self.count = 0
+        self.t0 = time.monotonic()
+        self._spinner = Spinner("dots", style="chip")
+
+    def add(self, name: str, detail: str) -> None:
+        self.entries.append((name, detail))
+        self.count += 1
+
+    def upgrade(self, name: str, detail: str) -> None:
+        """Attach detail to the most recent entry with this name (the stream
+        path announced it bare; the full message brought the arguments)."""
+        for i in range(len(self.entries) - 1, -1, -1):
+            if self.entries[i][0] == name and not self.entries[i][1]:
+                self.entries[i] = (name, detail)
+                return
+
+    def summary(self) -> str:
+        plural = "s" if self.count != 1 else ""
+        return (
+            f"   ⚙ {self.count} tool call{plural} · "
+            f"{_elapsed_label(time.monotonic() - self.t0)}"
+        )
+
+    def __rich__(self) -> Panel:
+        plural = "s" if self.count != 1 else ""
+        self._spinner.update(
+            text=Text.assemble(
+                (f" {self.count} tool call{plural}", "chip"),
+                (f" · {_elapsed_label(time.monotonic() - self.t0)}", "quiet"),
+            )
+        )
+        lines: list = [self._spinner]
+        for name, detail in self.entries:
+            line = Text.assemble(("⚙ ", "chip"), (name, "tool.name"))
+            if detail:
+                line.append("  ")
+                line.append(detail, style="detail")
+            lines.append(line)
+        return Panel(
+            Group(*lines),
+            box=DOTTED,
+            border_style="frame",
+            title=Text("working", style="chip"),
+            title_align="left",
+            expand=False,
+            padding=(0, 1),
+        )
+
+
 class RetroRenderer:
     """Renderer with the retro skin. Same vocabulary as PlainRenderer; every
-    line semantically identical, just dressed."""
+    line semantically identical, just dressed.
+
+    The tool phase runs inside ONE rich Live region (the work panel). The
+    interleave discipline that keeps Live and streamed prose from corrupting
+    each other: every non-tool output first collapses the panel into a
+    permanent one-line summary, then prints. agent_delta streams with end=""
+    (a partial line), so the panel must never be alive while prose flows."""
 
     def __init__(self, console: Console | None = None) -> None:
         if console is None:
@@ -69,6 +142,28 @@ class RetroRenderer:
         else:  # injected by tests — make sure the palette rides along
             console.push_theme(THEME)
         self.console = console
+        self._live: Live | None = None
+        self._panel: _WorkPanel | None = None
+        # True while the agent's streamed prose has left the cursor mid-line —
+        # the panel must terminate that line before Live takes the screen.
+        self._inline = False
+
+    def _collapse(self) -> None:
+        """Fold an active work panel into its permanent one-line summary.
+        No-op when no panel is live. Never raises: a dead console must not
+        mask the caller's real output or exception."""
+        if self._live is None:
+            return
+        live, panel = self._live, self._panel
+        self._live = self._panel = None
+        try:
+            live.stop()  # transient=True wipes the panel from the screen
+        except Exception:
+            return
+        if panel is not None:
+            self.console.print(
+                panel.summary(), style="quiet", markup=False, highlight=False
+            )
 
     # ---- startup ---------------------------------------------------------
 
@@ -126,6 +221,7 @@ class RetroRenderer:
         )
 
     def speaker_downgrade(self) -> None:
+        self._collapse()
         self.console.print(
             "🔈 speakers on the output — barge-in off for this session so I "
             "don't argue with my own echo. Plug in headphones to interrupt me.",
@@ -145,41 +241,49 @@ class RetroRenderer:
     # ---- the loop --------------------------------------------------------
 
     def listening(self, *, nl: bool = True) -> None:
+        self._collapse()
         if nl:
             self.console.print()
         self.console.print("🎧 listening…", style="info", markup=False)
 
     def noise_ignored(self) -> None:
+        self._collapse()
         self.console.print(
             "   (ignored — transcription noise)", style="quiet", markup=False
         )
 
     def paused(self) -> None:
+        self._collapse()
         self.console.print()
         self.console.print(
             "⏸  paused — say 'wake up' when you need me", style="info", markup=False
         )
 
     def still_paused(self) -> None:
+        self._collapse()
         self.console.print(
             "⏸  still paused — say 'wake up'", style="quiet", markup=False
         )
 
     def paused_ignored(self, text: str) -> None:
+        self._collapse()
         self.console.print(
             Text.assemble(("   (paused — ignored: ", "quiet"), (text, "quiet"), (")", "quiet"))
         )
 
     def awake(self) -> None:
+        self._collapse()
         self.console.print()
         self.console.print("▶️  awake — listening again", style="info", markup=False)
 
     def waiting_for_rest(self) -> None:
+        self._collapse()
         self.console.print(
             "   (…waiting for the rest)", style="quiet", markup=False
         )
 
     def noise_resend(self) -> None:
+        self._collapse()
         self.console.print()
         self.console.print(
             "   (noise interrupt — repeating your question)",
@@ -188,6 +292,7 @@ class RetroRenderer:
         )
 
     def you(self, text: str, kind: str = "") -> None:
+        self._collapse()
         label = f"▸ you ({kind})" if kind else "▸ you"
         self.console.print()
         self.console.print(
@@ -195,9 +300,15 @@ class RetroRenderer:
         )
 
     def agent_begin(self) -> None:
+        self._collapse()
+        self._inline = True
         self.console.print("🤖 ", style="agent", end="", markup=False)
 
     def agent_delta(self, text: str) -> None:
+        # Prose can resume right after a tool burst with no fresh
+        # agent_begin — the panel must fold before a single character lands.
+        self._collapse()
+        self._inline = True
         # Streamed fragments: soft_wrap leaves wrapping to the terminal so a
         # chunk boundary can never hard-break a word mid-line. markup=False +
         # highlight=False: agent prose must never execute markup NOR get
@@ -208,23 +319,59 @@ class RetroRenderer:
         )
 
     def agent_end(self) -> None:
+        self._collapse()
+        self._inline = False
         self.console.print()
 
     # ---- machinery -------------------------------------------------------
 
     def tool(self, name: str, detail: str = "", *, follow_on: bool = False) -> None:
         if follow_on:
-            if detail:
+            if not detail:
+                return
+            if self._panel is not None:
+                self._panel.upgrade(name, detail)
+            else:  # panel already collapsed — linear follow-on, like Plain
                 self.console.print(
                     Text.assemble(("      ↳ ", "quiet"), (detail, "detail"))
                 )
             return
-        line = Text.assemble(("\n   ⚙ ", "chip"), (name, "tool.name"))
-        if detail:
-            line.append_text(Text.assemble(("  ", ""), (detail, "detail")))
-        self.console.print(line)
+        if self._inline:
+            # Streamed prose left the cursor mid-line; end it before Live
+            # takes over the bottom of the screen.
+            self.console.print()
+            self._inline = False
+        if self._live is None:
+            self._panel = _WorkPanel()
+            live = Live(
+                self._panel,
+                console=self.console,
+                refresh_per_second=8,
+                transient=True,
+                # Never hijack the process streams: rich's default redirect
+                # swallows out-of-seam prints (and in tests, entire suites)
+                # into the console file. The panel owns its region, not stdio.
+                redirect_stdout=False,
+                redirect_stderr=False,
+            )
+            try:
+                live.start()
+                self._live = live
+            except Exception:
+                self._live = self._panel = None  # fall back to linear lines
+        if self._panel is not None:
+            self._panel.add(name, detail)
+        if self._live is None:
+            # Live unavailable (or failed to start): Phase-3 linear line.
+            line = Text.assemble(("\n   ⚙ ", "chip"), (name, "tool.name"))
+            if detail:
+                line.append("  ")
+                line.append(detail, style="detail")
+            self.console.print(line)
 
     def working(self, tool_count: int) -> None:
+        if self._live is not None:
+            return  # the panel's own clock and spinner already show life
         plural = "s" if tool_count != 1 else ""
         self.console.print(
             f"   ⚙ still working… ({tool_count} tool call{plural} so far)",
@@ -234,11 +381,13 @@ class RetroRenderer:
         )
 
     def barge_label(self, spoke_any: bool) -> None:
+        self._collapse()
         label = "[barge-in] listening…" if spoke_any else "[go on…]"
         self.console.print()
         self.console.print(f"   {label}", style="chip", markup=False)
 
     def permission_ask(self, tool: str, detail: str) -> None:
+        self._collapse()
         self.console.print()
         self.console.print(
             Text.assemble(
@@ -248,6 +397,7 @@ class RetroRenderer:
         )
 
     def permission_heard(self, heard: str, decision: str | None) -> None:
+        self._collapse()
         self.console.print(
             Text.assemble(
                 ("   [permission] you: ", "chip"),
@@ -258,6 +408,7 @@ class RetroRenderer:
         )
 
     def permission_verdict(self, tool: str, allowed: bool) -> None:
+        self._collapse()
         verdict = ("APPROVED", "ok") if allowed else ("DENIED", "warn")
         self.console.print(
             Text.assemble(
@@ -269,10 +420,12 @@ class RetroRenderer:
     # ---- errors / debug / teardown ---------------------------------------
 
     def error(self, msg: str) -> None:
+        self._collapse()
         self.console.print()
         self.console.print(msg, style="warn", markup=False, highlight=False)
 
     def debug(self, msg: str, *, nl: bool = False) -> None:
+        self._collapse()
         if nl:
             self.console.print()
         self.console.print(
@@ -280,4 +433,6 @@ class RetroRenderer:
         )
 
     def close(self) -> None:
-        pass
+        """Restore the terminal: fold any live panel (Live.stop() gives the
+        screen back). Safe to call twice; never raises past _collapse."""
+        self._collapse()
