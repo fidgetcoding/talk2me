@@ -13,6 +13,7 @@ as literals), so a reply containing "[red]" renders as the five characters
 from __future__ import annotations
 
 import os
+import sys
 import time
 from collections import deque
 from typing import TYPE_CHECKING
@@ -231,9 +232,12 @@ class RetroRenderer:
                 padding=(0, 2),
             )
         )
-        self.console.print(
-            "ready — start talking. Ctrl-C to quit.", style="agent", markup=False
+        hint = (
+            "ready — start talking. Ctrl-C to quit · Ctrl-T to change settings."
+            if sys.platform == "darwin"
+            else "ready — start talking. Ctrl-C to quit."
         )
+        self.console.print(hint, style="agent", markup=False)
         if cfg.half_duplex:
             self.console.print(
                 "(half-duplex: talking over the agent mid-speech is ignored "

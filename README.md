@@ -64,6 +64,10 @@ git clone https://github.com/fidgetcoding/talk2me.git && cd talk2me && pip insta
 
 And the laziest path of all: paste this repo's URL into Claude Code and say *"install this."* You're about to have voice conversations with the thing — it can handle a pip install.
 
+### First launch
+
+A bare first `t2m` (no flags, no saved setup) walks you through it out loud-adjacent: pick the **brain** (model), the **ears** (whisper or the faster parakeet — it offers to install what's missing), the **voice** (it recommends Ava (Premium) and tells you where to get her), **barge-in** (on, explained), **tools** (auto-approve, explained), and the **folder** you're working on. Answers save to `~/.talk2me/config.json` and become your defaults — flags always override. Change your mind any time: `t2m --setup`, or **Ctrl-T** mid-session (macOS) to reopen the menu without losing your place.
+
 First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody.
 
 **Pro tip:** when your agent is doing the installing, give it this repo's link too. It's open source — you can do whatever tf you want — and an agent that has read the source debugs your machine's quirks (weird audio devices, mic permissions, your cursed Bluetooth setup) in one turn instead of guessing.
@@ -114,6 +118,8 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
+| `t2m --setup` | The guided setup menu — brain, ears, voice, barge-in, tools, folder. Saves as your defaults. |
+| `Ctrl-T` (macOS, mid-session) | Reopen that settings menu without losing your place; relaunches with the new picks. |
 | `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
 
 Launch from the project folder you want it working on — the startup line confirms everything: model, ears, voice, barge, tools mode, directory.

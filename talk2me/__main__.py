@@ -48,7 +48,23 @@ MAX_VOCAB_TERMS = 500  # cap accumulated bias terms; stop once reached.
 
 
 def _parse_args(argv: list[str]) -> Config:
+    from .wizard import load_saved_config, run_wizard, should_run_first_time
+
+    # Saved setup (~/.talk2me/config.json) becomes the DEFAULTS; explicit
+    # flags always win. `--setup` re-runs the wizard; a first interactive
+    # launch with no config and no identity flags runs it automatically.
+    saved = load_saved_config()
+    run_setup = "--setup" in argv or should_run_first_time(argv)
+    argv = [x for x in argv if x != "--setup"]
+    if run_setup and sys.stdin.isatty():
+        saved = run_wizard(saved)
+
     p = argparse.ArgumentParser(prog="talk2me", description=__doc__)
+    p.add_argument(
+        "--setup", action="store_true",
+        help="run the guided setup (brain, ears, voice, barge-in, tools, "
+        "folder), save it as your defaults, then launch",
+    )
     p.add_argument("--model", default=None, help="claude model (e.g. haiku, sonnet)")
     p.add_argument("--cwd", default=None, help="working dir for the agent")
     p.add_argument(
@@ -202,6 +218,8 @@ def _parse_args(argv: list[str]) -> Config:
         help="print VAD speech/turn transitions (for tuning --energy-threshold)",
     )
     p.add_argument("claude_args", nargs="*", help="extra args passed to `claude`")
+    if saved:
+        p.set_defaults(**{k: v for k, v in saved.items() if v is not None})
     a = p.parse_args(argv)
 
     # --list-devices is a pure query: print the device table and exit before any
@@ -358,7 +376,13 @@ def _collect_vocab(
     return out
 
 
-async def _run_voice(cfg: Config) -> int:
+async def _run_voice(cfg: Config) -> tuple[int, bool]:
+    """Run one voice session. Returns (exit_code, edit_requested) — the
+    second is True when Ctrl-T (macOS SIGINFO) asked for the settings
+    wizard: main() tears us down, re-runs setup, and relaunches."""
+    import contextlib
+    import signal
+
     from .audio import Mic, Speaker, output_is_speakers, resolve_device
     from .orchestrator import Orchestrator
     from .render import build_renderer
@@ -373,7 +397,7 @@ async def _run_voice(cfg: Config) -> int:
         output_idx = resolve_device(cfg.output_device, "output")
     except ValueError as exc:
         renderer.device_error(str(exc))
-        return 2
+        return 2, False
 
     # Adaptive duplex: --barge-in is the user's intent, but if the audio is
     # about to come out of open-air speakers (system default included), the mic
@@ -408,8 +432,46 @@ async def _run_voice(cfg: Config) -> int:
         renderer=renderer,
         speech_check=build_speech_check(cfg.speech_check),
     )
-    await orch.run()
-    return 0
+
+    # Ctrl-T mid-session (macOS sends SIGINFO) = "open the settings menu":
+    # tear the loop down cleanly, run the wizard, relaunch with new settings.
+    edit_ev = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    siginfo = getattr(signal, "SIGINFO", None)
+    if siginfo is not None and sys.stdin.isatty():
+        try:
+            loop.add_signal_handler(siginfo, edit_ev.set)
+        except (NotImplementedError, RuntimeError):
+            siginfo = None
+
+    run_task = asyncio.create_task(orch.run())
+    edit_task = asyncio.create_task(edit_ev.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            {run_task, edit_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if run_task in done:
+            edit_task.cancel()
+            await run_task  # surface any exception from the session
+            return 0, False
+        # Ctrl-T: cancel the session; run()'s finally starts the teardown but
+        # cancellation can clip its awaits — re-close everything (all no-op-
+        # safe) so the wizard gets a quiet terminal and a dead mic.
+        run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run_task
+        with contextlib.suppress(Exception):
+            orch.mic.stop()
+            orch.speaker.stop()
+        with contextlib.suppress(Exception):
+            await orch.backend.close()
+        with contextlib.suppress(Exception):
+            orch.render.close()
+        return 0, True
+    finally:
+        if siginfo is not None:
+            with contextlib.suppress(Exception):
+                loop.remove_signal_handler(siginfo)
 
 
 async def _run_text(cfg: Config) -> int:
@@ -513,10 +575,21 @@ async def _run_text(cfg: Config) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    cfg = _parse_args(argv if argv is not None else sys.argv[1:])
-    runner = _run_text if cfg.input_mode == "text" else _run_voice
+    args = list(sys.argv[1:] if argv is None else argv)
     try:
-        return asyncio.run(runner(cfg))
+        while True:
+            cfg = _parse_args(args)
+            if cfg.input_mode == "text":
+                return asyncio.run(_run_text(cfg))
+            code, edit_requested = asyncio.run(_run_voice(cfg))
+            if not edit_requested:
+                return code
+            # Ctrl-T: session is down — run the wizard, then loop. The next
+            # _parse_args re-reads the saved file as defaults (explicit
+            # flags on the original command line still win).
+            from .wizard import load_saved_config, run_wizard
+
+            run_wizard(load_saved_config())
     except KeyboardInterrupt:
         print("\nbye.", flush=True)
         return 0
