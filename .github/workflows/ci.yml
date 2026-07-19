@@ -70,6 +70,9 @@ jobs:
       - name: test_continuation
         run: python -m tests.test_continuation
 
+      - name: test_flow
+        run: python -m tests.test_flow
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

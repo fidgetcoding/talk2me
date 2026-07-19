@@ -293,7 +293,7 @@ async def _run_gate(transcripts: list[str], frames: list) -> tuple:
 async def test_gate_approve() -> None:
     # Utterance 1 = the user turn; utterance 2 = "approve" for the gate.
     frames = _speech(15) + _silence(35) + _speech(15) + _silence(35)
-    backend, tts, mic = await _run_gate(["run the tests", "approve"], frames)
+    backend, tts, mic = await _run_gate(["Run the tests.", "approve"], frames)
     check(
         "approve: responded allow",
         backend.permission_responses == [("req-1", True, None)],
@@ -320,7 +320,7 @@ async def test_gate_approve() -> None:
 
 async def test_gate_deny() -> None:
     frames = _speech(15) + _silence(35) + _speech(15) + _silence(35)
-    backend, tts, _ = await _run_gate(["run the tests", "no thanks"], frames)
+    backend, tts, _ = await _run_gate(["Run the tests.", "no thanks"], frames)
     check(
         "deny: responded deny with message",
         backend.permission_responses == [("req-1", False, "Denied by voice")],
@@ -331,7 +331,7 @@ async def test_gate_deny() -> None:
 async def test_gate_unclear_then_deny() -> None:
     # Second listen finds the mic stream ended -> "" -> unclear -> deny.
     frames = _speech(15) + _silence(35) + _speech(15) + _silence(35)
-    backend, tts, _ = await _run_gate(["run the tests", "banana"], frames)
+    backend, tts, _ = await _run_gate(["Run the tests.", "banana"], frames)
     check(
         "unclear x2: denied",
         backend.permission_responses == [("req-1", False, "Denied by voice")],
@@ -349,7 +349,7 @@ async def test_gate_unclear_then_approve() -> None:
     frames = (
         _speech(15) + _silence(35) + _speech(15) + _silence(35) + _speech(15) + _silence(35)
     )
-    backend, tts, _ = await _run_gate(["run the tests", "banana", "yes"], frames)
+    backend, tts, _ = await _run_gate(["Run the tests.", "banana", "yes"], frames)
     check(
         "unclear->approve: responded allow",
         backend.permission_responses == [("req-1", True, None)],

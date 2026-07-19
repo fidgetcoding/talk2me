@@ -38,7 +38,9 @@ async def main() -> int:
 
     mic = FakeMic(frames, sample_rate=SR)
     speaker = FakeSpeaker(SR)
-    stt = FakeSTT(["what is two plus two", "thanks"])
+    # Punctuated like real engines: whisper/parakeet close complete sentences,
+    # and the pre-send continuation heuristic keys off exactly that.
+    stt = FakeSTT(["What is two plus two?", "Thanks."])
     tts = FakeTTS()
     backend = FakeBackend(["Two plus two is four. Anything else?", "You're welcome."])
     vad = EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012)
@@ -49,7 +51,7 @@ async def main() -> int:
     await asyncio.wait_for(orch.run(), timeout=10)
 
     two_turns = stt.calls == 2
-    sent_right = backend.sent == ["what is two plus two", "thanks"]
+    sent_right = backend.sent == ["What is two plus two?", "Thanks."]
     spoke = tts.spoken == [
         "Two plus two is four.",
         "Anything else?",

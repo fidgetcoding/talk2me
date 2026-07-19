@@ -84,7 +84,7 @@ async def main() -> int:
 
     mic = FakeMic(frames, sample_rate=SR)
     speaker = StoppableSpeaker(SR)
-    stt = FakeSTT(["explain quantum computing", "actually stop"])
+    stt = FakeSTT(["Explain quantum computing.", "actually stop"])
     tts = FakeTTS()
     backend = BargeBackend()
     vad = EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012)
@@ -96,7 +96,7 @@ async def main() -> int:
 
     check(
         "both turns sent, barge text second",
-        backend.sent == ["explain quantum computing", "actually stop"],
+        backend.sent == ["Explain quantum computing.", "actually stop"],
         str(backend.sent),
     )
     check("backend interrupted exactly once", backend.interrupts == 1)

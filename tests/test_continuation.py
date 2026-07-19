@@ -1,7 +1,11 @@
-"""Continuation stitching, headless: the segmenter cuts the user off
-mid-sentence, the agent starts thinking, the user keeps talking — the monitor
-must interrupt the agent BEFORE it speaks and run() must stitch the two
-fragments into one instruction (half-duplex, no --barge-in needed).
+"""Think-phase continuation stitching, headless: the user's turn SOUNDED
+complete (so pre-send stitching let it through), the agent starts thinking,
+and the user adds more before any answer is spoken — the monitor must
+interrupt the agent and run() must stitch old + new into one instruction
+(half-duplex, no --barge-in needed).
+
+(The cut-off-mid-sentence case is handled earlier by pre-send stitching —
+see tests/test_flow.py.)
 
 Run:  ./.venv/bin/python -m tests.test_continuation
 """
@@ -60,12 +64,12 @@ class ThinkingBackend(FakeBackend):
 
 async def main() -> int:
     cfg = Config(silence_ms=900, min_speech_ms=250)  # half-duplex default
-    # Utterance 1 = the cut-off fragment; utterance 2 = the user finishing the
-    # sentence while the agent is still thinking.
-    frames = _speech(15) + _silence(35) + _speech(15) + _silence(35)
+    # Utterance 1 sounds complete (period -> sent straight through); utterance
+    # 2 = the user adding more while the agent is still thinking.
+    frames = _speech(15) + _silence(35) + _speech(20) + _silence(35)
 
     mic = FakeMic(frames, sample_rate=SR)
-    stt = FakeSTT(["tell me about the orchestrator dot", "py file in this project"])
+    stt = FakeSTT(["Count to fifty.", "Actually just count to ten."])
     tts = FakeTTS()
     backend = ThinkingBackend()
     orch = Orchestrator(
@@ -80,11 +84,11 @@ async def main() -> int:
     await asyncio.wait_for(orch.run(), timeout=10)
 
     check(
-        "fragments stitched into one instruction",
+        "think-phase addition stitched onto the turn",
         backend.sent
         == [
-            "tell me about the orchestrator dot",
-            "tell me about the orchestrator dot py file in this project",
+            "Count to fifty.",
+            "Count to fifty. Actually just count to ten.",
         ],
         str(backend.sent),
     )

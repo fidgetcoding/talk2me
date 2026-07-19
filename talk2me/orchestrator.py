@@ -41,6 +41,35 @@ from .segment import segment_utterances
 
 _SENTENCE = re.compile(r"(.+?[.!?]+)(\s+|$)", re.DOTALL)
 
+# How long to keep listening for the rest of a sentence that sounds unfinished
+# before sending it anyway (per extension; at most 2 extensions).
+CONTINUATION_WAIT_S = 6.0
+
+# Trailing words that mean the speaker hasn't finished the thought, even when
+# the STT appended a period.
+_TRAILING_FILLERS = frozenset(
+    "um uh like so and but or basically the a an to of for with i you know "
+    "guess mean".split()
+)
+
+
+def _seems_unfinished(text: str) -> bool:
+    """True when a transcript reads as a cut-off thought.
+
+    Both whisper and parakeet append terminal punctuation when an utterance
+    SOUNDS complete ("Count to fifty.") and omit it when the speaker trails
+    off ("So what do you call") — that's the primary signal, with a trailing-
+    filler check for sentences the STT closed anyway ("I guess, um.").
+    """
+    t = text.rstrip()
+    if not t:
+        return False
+    if t[-1] not in ".!?":
+        return True
+    words = re.findall(r"[a-z']+", t.lower())
+    return bool(words) and words[-1] in _TRAILING_FILLERS
+
+
 # Sustained speech needed before the monitor CUTS a turn (barge/continuation).
 # Deliberately higher than min_speech_ms: a cut kills the agent's turn, so a
 # breath, chair squeak, or trailing word must not fire it — live sessions
@@ -156,6 +185,17 @@ class Orchestrator:
                 if not text:
                     print("🎧 listening…", flush=True)
                     continue
+                # An unfinished-sounding transcript is NOT sent yet: keep the
+                # mic open and stitch the rest on BEFORE the agent ever sees a
+                # fragment ("So what do you call … [pause] … a linked list").
+                extensions = 0
+                while _seems_unfinished(text) and extensions < 2:
+                    print("   (…waiting for the rest)", flush=True)
+                    more = await self._listen_once(CONTINUATION_WAIT_S)
+                    if not more:
+                        break
+                    text = f"{text} {more}"
+                    extensions += 1
                 print(f"\n🗣  you: {text}", flush=True)
                 last_text = text
                 self._t_sent = time.monotonic()
@@ -259,6 +299,14 @@ class Orchestrator:
                     pending, clause = _drain_first_clause(pending)
                     if clause is not None:
                         ready = [clause]
+                if not ready:
+                    # Run-on text (a count, a list) can go hundreds of chars
+                    # with only commas — the sentence chunker would sit silent
+                    # until TurnComplete then dump one monster chunk. Overflow
+                    # at clause boundaries keeps the voice continuous.
+                    pending, chunk = _drain_overflow(pending)
+                    if chunk is not None:
+                        ready = [chunk]
                 for sentence in ready:
                     if self._interrupted:
                         continue  # user cut playback; keep text on screen only
@@ -542,6 +590,33 @@ def _drain_first_clause(buf: str) -> tuple[str, str | None]:
     if m is None:
         return buf, None
     return buf[m.end() :], m.group(1)
+
+
+# Ceiling on unspoken buffered text before the overflow chunker fires. Run-on
+# prose (counting, lists) has no sentence terminators, so without this the
+# voice stalls mid-turn and then dumps everything at once.
+_MAX_PENDING_CHARS = 160
+_CLAUSE_BREAK = re.compile(r"[,;:]\s+")
+
+
+def _drain_overflow(buf: str) -> tuple[str, str | None]:
+    """Split a speakable chunk off an over-long sentence-less buffer.
+
+    Prefers the LAST clause boundary inside the window; falls back to the last
+    word break. Returns (remainder, chunk|None).
+    """
+    if len(buf) <= _MAX_PENDING_CHARS:
+        return buf, None
+    window = buf[:_MAX_PENDING_CHARS]
+    last = None
+    for m in _CLAUSE_BREAK.finditer(window):
+        last = m
+    if last is not None:
+        return buf[last.end() :], window[: last.end()].rstrip()
+    space = window.rfind(" ")
+    if space <= 0:
+        return buf, None
+    return buf[space + 1 :], window[:space]
 
 
 # Words that look like things a user would echo back: CamelCase / snake_case
