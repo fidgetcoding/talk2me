@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Headless tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # sounddevice imports PortAudio at import time; the pure tests pull it in
+      # transitively, so the shared lib must exist before install/run.
+      - name: Install PortAudio system library
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+
+      # [webrtc] pulls webrtcvad-wheels so the WebRTC VAD contract test runs too.
+      - name: Install package
+        run: pip install -e ".[webrtc]"
+
+      # Pure tests — no mic, no model download, no claude. Each returns a proper
+      # exit code, so a FAIL fails the job. (The old `[ -f x ] && run || echo`
+      # guards swallowed real test failures: `||` fires on a failing test, not
+      # just a missing file. All files are committed now — run them directly.)
+      - name: test_segment
+        run: python -m tests.test_segment
+
+      - name: test_loop_offline
+        run: python -m tests.test_loop_offline
+
+      - name: test_factory
+        run: python -m tests.test_factory
+
+      - name: test_sentences
+        run: python -m tests.test_sentences
+
+      - name: test_backend_translate
+        run: python -m tests.test_backend_translate
+
+      - name: test_devices
+        run: python -m tests.test_devices
+
+      - name: test_webrtc_vad
+        run: python -m tests.test_webrtc_vad
+
+      - name: test_permission
+        run: python -m tests.test_permission
+
+      - name: test_barge_in
+        run: python -m tests.test_barge_in
+
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: ruff check
+        run: ruff check talk2me tests

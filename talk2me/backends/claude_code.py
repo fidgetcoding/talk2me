@@ -24,6 +24,16 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 
+from ..events import (
+    AgentEvent,
+    AssistantTextDelta,
+    BackendError,
+    PermissionRequest,
+    SessionReady,
+    ToolActivity,
+    TurnComplete,
+)
+
 # Generous per-line ceiling for the stdout/stderr StreamReaders. The default is
 # 64 KiB, past which readuntil() raises LimitOverrunError and wedges the stream
 # (security H2). A single JSON event — even one carrying a large tool result —
@@ -40,16 +50,6 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 def _sanitize(text: str) -> str:
     """Strip terminal control characters so child stderr can't inject escapes."""
     return _CONTROL_CHARS.sub("", text)
-
-from ..events import (
-    AgentEvent,
-    AssistantTextDelta,
-    BackendError,
-    PermissionRequest,
-    SessionReady,
-    ToolActivity,
-    TurnComplete,
-)
 
 
 class ClaudeCodeBackend:

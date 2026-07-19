@@ -11,6 +11,8 @@ You say something. It hears you, types it to your coding agent, reads the answer
 - [Why I built this](#why-i-built-this)
 - [What it actually does](#what-it-actually-does)
 - [The trick](#the-trick)
+- [Saying yes out loud](#saying-yes-out-loud)
+- [Interrupting it](#interrupting-it)
 - [Quickstart](#quickstart)
 - [Ways to run it](#ways-to-run-it)
 - [Tuning the ears](#tuning-the-ears)
@@ -52,6 +54,34 @@ talk2me doesn't do that. It runs Claude Code in a structured streaming mode and 
 
 That structured connection is the entire reason this works. It's the spine. Everything else is swappable parts hanging off it.
 
+## Saying yes out loud
+
+A coding agent isn't just chat — sooner or later it wants to *do* something. Run a command. Write a file. In a terminal you'd get a y/n prompt. Hands-free, that used to be a dead end.
+
+Now it's a conversation:
+
+> **it:** "Claude wants to run the command npm install. Approve or deny?"
+> **you:** "go ahead"
+> *…it runs, and the answer keeps going.*
+
+The rules, because a microphone is a terrible place for blind trust:
+
+- **Boring, read-only stuff** (reading files, `git status`, running tests) just happens. No nagging.
+- **Sharp stuff** (`sudo`, `git push`, deleting things, anything that phones out) is **hard-blocked**. It doesn't ask. You can't approve it by voice at all. That's on purpose — you shouldn't be able to `sudo` by mumbling.
+- **Everything in between** gets the spoken question. Say "approve", "yes", "go ahead" — or "no", "stop", "deny". If it can't tell what you meant, it asks once more, then plays it safe and says no on your behalf.
+
+Grow the quiet list as you go: `--allow-tool 'Bash(make:*)'` for things you're tired of approving, `--deny-tool` for things it should never ask about. `--no-voice-approval` turns the gate off entirely (blocked things just get declined silently).
+
+The typed version works too: in `--text` mode the same gate is a plain `approve? [y/N]` prompt.
+
+## Interrupting it
+
+`talk2me --barge-in` — for when the answer is long and you already know where it's going.
+
+Put on headphones (that part's mandatory — with speakers it hears its own voice and argues with itself), and the mic stays hot while it talks. Start speaking and it stops mid-sentence — not just the voice, the *thinking*: the agent's turn is actually cancelled, and what you said becomes the next message. Cutting it off mid-ramble feels rude the first time. It gets easier.
+
+Default mode is still the polite half-duplex loop: it finishes, then listens. No headphones needed there.
+
 ## Quickstart
 
 ```bash
@@ -68,6 +98,7 @@ Start talking. Hit `Ctrl-C` when you're done.
 |---|---|
 | `talk2me` | Just talk. The main event. |
 | `talk2me --text` | Type instead of talk — for when you're in public and not ready to be the person speaking to their laptop. |
+| `talk2me --barge-in` | Headphones on, mic stays hot, you can cut it off mid-sentence. See [Interrupting it](#interrupting-it). |
 | `talk2me --debug` | Shows what the ears are doing (heard speech, turn ended, too short). Use this the first time. |
 | `talk2me --vocab Lorecraft --vocab Morgen` | Teach it your weird proper nouns so it stops inventing spellings. |
 | `talk2me --tts null` | Answers on screen, no voice out. |
@@ -98,9 +129,8 @@ Out of the box:
 
 Being honest about the edges, because shipping half-true READMEs is how trust dies:
 
-- **Cutting it off mid-sentence** (barge-in). Right now it finishes its thought before it listens again. The playback side can be cancelled mid-utterance, but the detection side — hearing you over its own voice — needs echo handling that isn't written yet.
-- **Tool approvals by voice.** If the agent wants to run something that needs a yes, there's no way to say yes out loud yet. For now, keep early sessions conversational.
 - **Wispr hands-free.** I want to drive the dictation app I actually like instead of the basics. It's a real maybe — the keypress trick it needs isn't proven yet.
+- **Barge-in without headphones.** Full-duplex over speakers means hearing you over its own voice, and that echo handling isn't written. Headphones sidestep the whole problem, so that's the requirement for now.
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 
 ## Requirements
@@ -128,6 +158,8 @@ Plain scripts. No frameworks to install. The whole loop is tested without a mic 
 ```bash
 python -m tests.test_segment        # the part that finds where your sentence ends
 python -m tests.test_loop_offline   # the full conversation, faked end to end
+python -m tests.test_permission     # the spoken approve/deny gate, all paths
+python -m tests.test_barge_in       # interrupting it mid-sentence
 python -m tests.manual_backend_check  # one real cheap turn against Claude Code
 ```
 
