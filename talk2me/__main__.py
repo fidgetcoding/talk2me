@@ -182,6 +182,13 @@ def _parse_args(argv: list[str]) -> Config:
         help="disable the soft 'still working' blip during long tool runs",
     )
     p.add_argument(
+        "--plain", action="store_true",
+        help=(
+            "classic v1 output: no colors, no panels. Auto-selected when "
+            "stdout isn't a terminal, NO_COLOR is set, or rich is missing."
+        ),
+    )
+    p.add_argument(
         "--debug", action="store_true",
         help="print VAD speech/turn transitions (for tuning --energy-threshold)",
     )
@@ -232,6 +239,7 @@ def _parse_args(argv: list[str]) -> Config:
         debug=a.debug,
         save_dir=a.save_dir,
         working_ticks=not a.no_ticks,
+        plain=a.plain,
         model=a.model,
         cwd=a.cwd,
         permission_mode=permission_mode,
@@ -343,9 +351,9 @@ def _collect_vocab(
 async def _run_voice(cfg: Config) -> int:
     from .audio import Mic, Speaker, output_is_speakers, resolve_device
     from .orchestrator import Orchestrator
-    from .render import PlainRenderer
+    from .render import build_renderer
 
-    renderer = PlainRenderer()
+    renderer = build_renderer(cfg)
 
     # Resolve name/index specs to PortAudio indices up front so a typo'd device
     # fails with a clean message before the agent process spins up. Independent

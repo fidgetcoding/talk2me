@@ -191,3 +191,18 @@ class PlainRenderer:
 
     def close(self) -> None:
         pass
+
+
+def build_renderer(cfg: Config) -> Renderer:
+    """Pick the renderer for a voice session.
+
+    Plain wins on: --plain, a non-TTY stdout (pipes, CI), NO_COLOR, or rich
+    failing to import. Anything else gets the retro skin.
+    """
+    if cfg.plain or not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
+        return PlainRenderer()
+    try:
+        from .retro import RetroRenderer
+    except ImportError:
+        return PlainRenderer()
+    return RetroRenderer()

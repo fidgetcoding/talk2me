@@ -153,3 +153,7 @@ class Config:
     # Directory for plain-markdown session transcripts (None = don't save).
     # CLI --save-dir; persistent via the TALK2ME_SAVE_DIR env var.
     save_dir: str | None = None
+    # Force the launch build's plain output (no colors, no panels). The plain
+    # renderer is also selected automatically on non-TTY stdout, NO_COLOR, or
+    # a missing rich — a broken paint job must never mute the product.
+    plain: bool = False

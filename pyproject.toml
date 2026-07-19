@@ -14,6 +14,7 @@ dependencies = [
     "numpy>=1.24",
     "sounddevice>=0.4",
     "faster-whisper>=1.0",
+    "rich>=13,<15",
 ]
 
 [project.optional-dependencies]
