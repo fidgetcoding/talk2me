@@ -1,3 +1,9 @@
+<div align="center">
+
+![talk2me](talk2me.png)
+
+</div>
+
 # talk2me 🎙️
 
 **Talk to your terminal. It talks back. Then it shuts up and listens again — no buttons, no holding a key like it's a walkie-talkie.**
