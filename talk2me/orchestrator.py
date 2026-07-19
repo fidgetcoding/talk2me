@@ -41,6 +41,13 @@ from .segment import segment_utterances
 
 _SENTENCE = re.compile(r"(.+?[.!?]+)(\s+|$)", re.DOTALL)
 
+# Sustained speech needed before the monitor CUTS a turn (barge/continuation).
+# Deliberately higher than min_speech_ms: a cut kills the agent's turn, so a
+# breath, chair squeak, or trailing word must not fire it — live sessions
+# showed 250ms onsets false-triggering and eating turns. A real "okay stop"
+# easily sustains 450ms.
+BARGE_ONSET_MIN_MS = 450
+
 # How long to wait for a spoken approve/deny before treating the attempt as
 # unclear. The CLI side blocks indefinitely (verified), so this is purely a
 # never-leave-an-approval-hanging safety: two silent attempts end in a deny.
@@ -169,16 +176,32 @@ class Orchestrator:
                 # that landed before the agent spoke is a CONTINUATION: the
                 # segmenter ended the user's turn mid-sentence and they kept
                 # going, so stitch the fragments back into one instruction.
-                while barge and not self._fatal:
-                    if self._continuation and last_text:
-                        barge = f"{last_text} {barge}"
-                        print(f"\n🗣  you (continued): {barge}", flush=True)
+                noise_resends = 0
+                while not self._fatal:
+                    if barge:
+                        if self._continuation and last_text:
+                            to_send = f"{last_text} {barge}"
+                            print(f"\n🗣  you (continued): {to_send}", flush=True)
+                        else:
+                            to_send = barge
+                            print(f"\n🗣  you (barge-in): {to_send}", flush=True)
+                        last_text = to_send
+                    elif self._continuation and last_text and noise_resends < 1:
+                        # A cut killed the turn before ANY answer but the
+                        # captured audio transcribed to nothing — a noise
+                        # trigger. Don't let it eat the user's question: resend
+                        # it (once — a noisy room must not loop forever).
+                        noise_resends += 1
+                        to_send = last_text
+                        print(
+                            "\n   (noise interrupt — repeating your question)",
+                            flush=True,
+                        )
                     else:
-                        print(f"\n🗣  you (barge-in): {barge}", flush=True)
-                    last_text = barge
+                        break
                     self._t_sent = time.monotonic()
                     try:
-                        await self.backend.send(barge)
+                        await self.backend.send(to_send)
                     except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
                         print(f"\n[backend send failed] {e}", flush=True)
                         self._fatal = True
@@ -240,10 +263,12 @@ class Orchestrator:
                     if self._interrupted:
                         continue  # user cut playback; keep text on screen only
                     speaking = self._begin_speaking(speaking)
-                    await self._speak(
-                        sentence, mark_first_audio=not self._spoke_any
-                    )
+                    # Flip BEFORE the (interruptible) play: a cut landing mid-
+                    # first-sentence is a barge on heard speech, not a
+                    # continuation of an unheard turn.
+                    first = not self._spoke_any
                     self._spoke_any = True
+                    await self._speak(sentence, mark_first_audio=first)
             elif isinstance(ev, ToolActivity):
                 print(f"\n   [tool] {ev.name}", flush=True)
             elif isinstance(ev, PermissionRequest):
@@ -256,10 +281,9 @@ class Orchestrator:
             elif isinstance(ev, TurnComplete):
                 if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
-                    await self._speak(
-                        pending, mark_first_audio=not self._spoke_any
-                    )
+                    first = not self._spoke_any
                     self._spoke_any = True
+                    await self._speak(pending, mark_first_audio=first)
                 # Feed proper nouns / identifiers from the agent's reply to the
                 # STT as live hotword context — terms the user is likely to say
                 # back next turn. Duck-typed: engines without set_context are
@@ -310,7 +334,9 @@ class Orchestrator:
         (or None if the stream ended before speech).
         """
         frame_ms = (self.vad.frame_samples / self.vad.sample_rate) * 1000.0
-        onset_needed = max(1, int(self.cfg.min_speech_ms / frame_ms))
+        onset_needed = max(
+            1, int(max(self.cfg.min_speech_ms, BARGE_ONSET_MIN_MS) / frame_ms)
+        )
         silence_needed = max(1, int(self.cfg.silence_ms / frame_ms))
         max_frames = (
             max(1, int(self.cfg.max_utterance_ms / frame_ms))
