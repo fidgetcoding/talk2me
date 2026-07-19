@@ -121,6 +121,11 @@ class Config:
     # speech before the barge monitor may cut a turn or an utterance reaches
     # the transcriber. --no-speech-check restores frame-VAD-only behavior.
     speech_check: bool = True
+    # Phone mode: audio I/O = a web bridge on 127.0.0.1 (reached through the
+    # SSH session's own port-forward) instead of local devices. The loop's
+    # mechanics are identical; only the Mic/Speaker implementations change.
+    phone: bool = False
+    phone_port: int = 8765
     # Audio kept from just BEFORE speech onset and prepended to the utterance.
     # Energy VADs miss quiet first phonemes, and without this the transcript
     # starts mid-word (live-run: "count down to fifty" -> "down to 50").

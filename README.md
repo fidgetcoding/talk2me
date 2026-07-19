@@ -22,7 +22,7 @@ You say something. It hears you, types it to your coding agent, reads the answer
 | [Why I built this](#why-i-built-this) | [How long things take](#how-long-things-take) | [Saving your conversations](#saving-your-conversations) |
 | [What it actually does](#what-it-actually-does) | [Interrupting it](#interrupting-it) | [Tuning the ears](#tuning-the-ears) |
 | [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) · [Pausing the ears](#pausing-the-ears) | [The debugging playbook](#the-debugging-playbook) |
-| [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) | [Under the hood](#under-the-hood) |
+| [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) · [📱 Phone mode](#phone-mode-ssh-from-your-iphone) | [Under the hood](#under-the-hood) |
 | [Tests](#tests) · [FAQ](#faq) · [Versions](#versions) | [Ways to run it](#ways-to-run-it) | [Not done yet](#not-done-yet) |
 
 ---
@@ -118,6 +118,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
+| `t2m --phone` | Your iPhone becomes the mic + speaker over your SSH tunnel. See [Phone mode](#phone-mode-ssh-from-your-iphone). |
 | `t2m --setup` | The guided setup menu — brain, ears, voice, barge-in, tools, folder. Saves as your defaults. |
 | `Ctrl-T` (macOS, mid-session) | Reopen that settings menu without losing your place; relaunches with the new picks. |
 | `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
@@ -314,6 +315,20 @@ echo 'Ava (Premium)|236' > ~/.talk2me-speak   # ON, with a specific voice|rate
 Replies over ~1200 characters get summarized to their first chunk plus "the rest is on screen." A new reply cuts off the previous one mid-sentence, like a person who has moved on.
 
 Hook mode + Wispr (or any dictation) = full voice conversation inside the real Claude Code UI. talk2me's own loop = fully hands-free, mic and all. Pick per mood; they don't conflict.
+
+## Phone mode (SSH from your iPhone)
+
+You SSH into your machine from Blink (or any iOS terminal), run `t2m --phone`, and your **iPhone becomes the microphone and the speaker** — same loop, same barge-in, same pause words. The terminal stays your screen; the phone is just the ears and the mouth.
+
+The trick: SSH can't carry audio, so the audio rides your SSH tunnel instead. talk2me serves a one-tap page on `localhost` only (never your network), and the phone reaches it through a port-forward:
+
+1. In Blink, add a port forward to the host: `-L 8765:localhost:8765`
+2. On the Mac (over SSH): `t2m --phone`
+3. On the phone, open **http://localhost:8765** in Safari and tap connect
+
+That's it. `localhost` counts as a secure context, so the mic works with zero certificates, and everything is encrypted because it's literally inside your SSH connection. Keep the Safari page open (it IS the audio hardware) — split it with Blink or glance between them; the conversation renders in the terminal as always.
+
+Two details worth knowing: the phone's own echo cancellation is what makes barge-in workable on its bare speaker (it's been not-hearing-itself on calls for two decades — AirPods make it even better), and playback timing is honest — the loop reopens the mic when the **phone** finishes speaking, not when the Mac finishes sending.
 
 ## Quickstart
 

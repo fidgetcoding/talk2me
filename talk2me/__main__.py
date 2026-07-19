@@ -199,6 +199,20 @@ def _parse_args(argv: list[str]) -> Config:
         help="disable the soft 'still working' blip during long tool runs",
     )
     p.add_argument(
+        "--phone", action="store_true",
+        help=(
+            "use your phone as the mic + speaker (for SSH sessions from an "
+            "iPhone/iPad). Serves a one-tap page on localhost; forward the "
+            "port in your SSH app (Blink: -L 8765:localhost:8765) and open "
+            "http://localhost:8765 in Safari. Same loop, same barge-in — the "
+            "phone's own echo cancellation does the heavy lifting."
+        ),
+    )
+    p.add_argument(
+        "--phone-port", type=int, default=8765,
+        help="port for the --phone bridge (default 8765)",
+    )
+    p.add_argument(
         "--speech-check", action=argparse.BooleanOptionalAction, default=True,
         help=(
             "confirm audio is actually speech (Silero classifier) before "
@@ -268,6 +282,8 @@ def _parse_args(argv: list[str]) -> Config:
         working_ticks=not a.no_ticks,
         plain=a.plain,
         speech_check=a.speech_check,
+        phone=a.phone,
+        phone_port=a.phone_port,
         model=a.model,
         cwd=a.cwd,
         permission_mode=permission_mode,
@@ -388,25 +404,51 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
     from .render import build_renderer
 
     renderer = build_renderer(cfg)
+    tts = factory.build_tts(cfg)
+    bridge = None
 
-    # Resolve name/index specs to PortAudio indices up front so a typo'd device
-    # fails with a clean message before the agent process spins up. Independent
-    # input/output indices are what enable the "BT out + laptop mic in" topology.
-    try:
-        input_idx = resolve_device(cfg.input_device, "input")
-        output_idx = resolve_device(cfg.output_device, "output")
-    except ValueError as exc:
-        renderer.device_error(str(exc))
-        return 2, False
+    if cfg.phone:
+        # Phone mode: the mic and speaker live on the phone, reached through
+        # the SSH session's own port-forward. No local devices are touched,
+        # and the speaker-downgrade check doesn't apply — the phone's echo
+        # cancellation is what makes barge-in workable on its speaker.
+        from .phone import PhoneBridge, WebMic, WebSpeaker
 
-    # Adaptive duplex: --barge-in is the user's intent, but if the audio is
-    # about to come out of open-air speakers (system default included), the mic
-    # would hear the TTS and cut every answer on its own echo. Downgrade to the
-    # safe half-duplex loop for this session instead of misbehaving.
-    if cfg.barge_in and output_is_speakers(output_idx):
-        renderer.speaker_downgrade()
-        cfg.barge_in = False
-        cfg.half_duplex = True
+        bridge = PhoneBridge(cfg.phone_port)
+        await bridge.start()
+        renderer.status_note(
+            f"phone bridge on {bridge.url()} — forward the port in your SSH "
+            f"app (Blink: -L {cfg.phone_port}:localhost:{cfg.phone_port}), "
+            "then open that URL in the phone's Safari and tap connect"
+        )
+        renderer.status_note("waiting for the phone…")
+        await bridge.wait_connected()
+        renderer.status_note("phone connected 📱")
+        mic = WebMic(bridge, factory.frame_samples(cfg))
+        speaker = WebSpeaker(bridge, tts.sample_rate)
+    else:
+        # Resolve name/index specs to PortAudio indices up front so a typo'd
+        # device fails with a clean message before the agent process spins up.
+        # Independent input/output indices are what enable the "BT out +
+        # laptop mic in" topology.
+        try:
+            input_idx = resolve_device(cfg.input_device, "input")
+            output_idx = resolve_device(cfg.output_device, "output")
+        except ValueError as exc:
+            renderer.device_error(str(exc))
+            return 2, False
+
+        # Adaptive duplex: --barge-in is the user's intent, but if the audio
+        # is about to come out of open-air speakers (system default included),
+        # the mic would hear the TTS and cut every answer on its own echo.
+        # Downgrade to the safe half-duplex loop instead of misbehaving.
+        if cfg.barge_in and output_is_speakers(output_idx):
+            renderer.speaker_downgrade()
+            cfg.barge_in = False
+            cfg.half_duplex = True
+
+        mic = Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx)
+        speaker = Speaker(tts.sample_rate, device=output_idx)
 
     session_log = None
     if cfg.save_dir:
@@ -419,15 +461,14 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
 
     from .speechcheck import build_speech_check
 
-    tts = factory.build_tts(cfg)
     orch = Orchestrator(
         cfg=cfg,
         backend=factory.build_backend(cfg),
         vad=factory.build_vad(cfg),
         stt=factory.build_stt(cfg),
         tts=tts,
-        mic=Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx),
-        speaker=Speaker(tts.sample_rate, device=output_idx),
+        mic=mic,
+        speaker=speaker,
         session_log=session_log,
         renderer=renderer,
         speech_check=build_speech_check(cfg.speech_check),
@@ -472,6 +513,9 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         if siginfo is not None:
             with contextlib.suppress(Exception):
                 loop.remove_signal_handler(siginfo)
+        if bridge is not None:
+            with contextlib.suppress(Exception):
+                await bridge.close()
 
 
 async def _run_text(cfg: Config) -> int:
