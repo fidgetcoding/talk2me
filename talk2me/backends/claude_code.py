@@ -314,6 +314,23 @@ class ClaudeCodeBackend:
         self._proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
         await self._proc.stdin.drain()
 
+    async def switch_session(self, resume_session_id: str) -> None:
+        """Swap the live conversation for an earlier one (the spoken session
+        picker): stop the current CLI, drop its queued events, relaunch
+        resuming the chosen session. The event ITERATOR survives — it reads
+        the same queue the new process feeds."""
+        await self.close()
+        while not self._events.empty():
+            try:
+                self._events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self._resume_session_id = resume_session_id
+        self._session_id = resume_session_id
+        self._turn_text.clear()
+        self._turn_streamed = False
+        await self.start()
+
     async def close(self) -> None:
         # Cancel the reader/stderr tasks, then AWAIT them so they fully unwind
         # before we touch the process — otherwise asyncio emits "Task destroyed

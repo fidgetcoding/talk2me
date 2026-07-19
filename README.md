@@ -103,6 +103,7 @@ Everything on one screen. This is the whole manual for day one.
 | *keep talking over it* | it's mid-answer (on by default; needs headphones — auto-off on speakers) | Voice AND thinking stop; what you said becomes the next message. No magic word — any sustained speech cuts it. |
 | **"pause listening"** · "stop listening" · "sleep" · "go to sleep" · "go to bed" · "take a break" · "pause" | any time — even mid-task | Ears go quiet until you wake it. Never cancels running work: an interrupted task auto-resumes. |
 | **"wake up"** · "resume listening" · "I'm back" · "unpause" | while paused | Back to normal listening. |
+| **"resume previous session"** · "continue previous session" · "list sessions" | while it's listening | Speaks a numbered list of this folder's earlier sessions (named by their first instruction) — say a number to switch the live conversation onto it, or "cancel". |
 | **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (`--gated` mode only) | Runs or declines the tool call. Mumble twice = it declines for you. |
 
 **Things you TYPE:**

@@ -39,6 +39,7 @@ from .events import (
     ToolActivity,
     TurnComplete,
 )
+from .continuity import list_sessions, record_title, save_last_session
 from .protocols import STT, TTS, VAD, AgentBackend
 from .render import PlainRenderer, Renderer
 from .segment import segment_utterances
@@ -177,6 +178,7 @@ class Orchestrator:
         self._stdin_lines: asyncio.Queue[str] = asyncio.Queue()
         self._turn_lock = asyncio.Lock()
         self._events = None  # the backend event iterator, shared across paths
+        self._titled = False  # first user message becomes the session title
         # The last instruction that reached the agent — continuation stitching
         # and the noise/pause recovery resends read it; typed turns update it
         # too so an interrupted typed task can auto-resume.
@@ -483,6 +485,9 @@ class Orchestrator:
         if intent == "pause":
             await self._set_paused(True)
             return
+        if intent == "sessions":
+            await self._session_picker()
+            return
         if not typed:
             # An unfinished-sounding transcript is NOT sent yet: keep the
             # mic open and stitch the rest on BEFORE the agent ever sees a
@@ -493,6 +498,12 @@ class Orchestrator:
         if self.log:
             self.log.user(text, "typed" if typed else "")
         self._last_text = text
+        if not self._titled:
+            # First instruction = the session's handle in the spoken picker.
+            self._titled = True
+            sid = getattr(self.backend, "_session_id", None)
+            if sid:
+                record_title(self.cfg.cwd, sid, text)
         self._t_sent = time.monotonic()
         try:
             await self.backend.send(text)
@@ -522,6 +533,13 @@ class Orchestrator:
                 # stitching so a control word can't be glued onto the
                 # previous turn.
                 intent = control_intent(barge)
+                if intent == "sessions":
+                    # Never swap conversations out from under running work.
+                    self.render.status_note(
+                        "can't switch sessions mid-task — say it while "
+                        "I'm listening"
+                    )
+                    break
                 if intent is not None:
                     await self._set_paused(intent == "pause")
                     if self._saw_tool and self._last_text and control_resends < 1:
@@ -575,6 +593,73 @@ class Orchestrator:
             self.render.still_paused()
         else:
             self._show_listening()
+
+    async def _session_picker(self) -> None:
+        """Spoken 'resume previous session': list this folder's earlier
+        sessions by their first instruction, hear a number, switch the live
+        backend onto that conversation."""
+        current = getattr(self.backend, "_session_id", None)
+        sessions = list_sessions(self.cfg.cwd, exclude=current)
+        if not sessions:
+            self.render.status_note("no earlier sessions for this folder")
+            await self._speak_confirm(
+                "There are no earlier sessions for this folder."
+            )
+            return
+        if not hasattr(self.backend, "switch_session"):
+            self.render.status_note("this backend can't switch sessions")
+            return
+        self._listening_fresh = False
+        self.render.status_note("earlier sessions here — say a number, or cancel:")
+        for i, s in enumerate(sessions, 1):
+            when = f"  ({s['started']})" if s.get("started") else ""
+            self.render.status_note(f"  {i} · {s['title']}{when}")
+        spoken = ". ".join(
+            f"{i}: {s['title']}" for i, s in enumerate(sessions[:3], 1)
+        )
+        if self.cfg.half_duplex:
+            self.mic.set_muted(True)
+        await self._speak(
+            f"Earlier sessions. {spoken}. Say a number, or cancel."
+        )
+        self.mic.set_muted(False)
+        self.vad.reset()
+
+        pick: int | None = None
+        for attempt in range(2):
+            heard = await self._listen_once(PERMISSION_LISTEN_TIMEOUT_S)
+            words = re.findall(r"[a-z0-9]+", heard.lower())
+            normalized = " ".join(words)
+            if not heard:
+                continue
+            if normalized in _PICK_CANCEL or "cancel" in words:
+                self.render.status_note("okay — staying here")
+                await self._speak_confirm("Okay, staying here.")
+                return
+            for w in words:
+                n = _PICK_WORDS.get(w)
+                if n is not None and 1 <= n <= len(sessions):
+                    pick = n
+                    break
+            if pick is not None:
+                break
+            if attempt == 0:
+                await self._speak_confirm(
+                    f"Say a number from one to {len(sessions)}, or cancel."
+                )
+        if pick is None:
+            self.render.status_note("didn't catch a number — staying here")
+            await self._speak_confirm("Didn't catch that — staying here.")
+            return
+
+        chosen = sessions[pick - 1]
+        self.render.status_note(f"switching to: {chosen['title']}")
+        await self.backend.switch_session(chosen["id"])
+        save_last_session(self.cfg.cwd, chosen["id"])
+        self._titled = True  # the resumed session already has its title
+        self._last_text = ""
+        await self._speak_confirm(f"Resumed: {chosen['title']}")
+        self._show_listening()
 
     async def _typed_worker(self) -> None:
         """Consume assembled keyboard messages and run them as user turns."""
@@ -1199,6 +1284,33 @@ _PAUSE_COMMANDS = frozenset(
 _RESUME_COMMANDS = frozenset(
     ("unpause", "wake up", "resume listening", "start listening", "im back")
 )
+# Whole-utterance triggers for the spoken session picker.
+_SESSION_COMMANDS = frozenset(
+    (
+        "resume previous session",
+        "continue previous session",
+        "resume a previous session",
+        "continue a previous session",
+        "resume last session",
+        "continue last session",
+        "resume session",
+        "previous session",
+        "list sessions",
+        "session list",
+        "continue where we left off",
+        "resume where we left off",
+    )
+)
+
+# Spoken pick -> list index (1-based). "cancel"-family aborts.
+_PICK_WORDS = {
+    "one": 1, "1": 1, "first": 1, "latest": 1, "last": 1,
+    "two": 2, "2": 2, "second": 2,
+    "three": 3, "3": 3, "third": 3,
+    "four": 4, "4": 4, "fourth": 4,
+    "five": 5, "5": 5, "fifth": 5,
+}
+_PICK_CANCEL = frozenset(("cancel", "never mind", "nevermind", "stop", "forget it"))
 
 
 def _single_control_intent(text: str) -> str | None:
@@ -1211,6 +1323,8 @@ def _single_control_intent(text: str) -> str | None:
         return "pause"
     if normalized in _RESUME_COMMANDS:
         return "resume"
+    if normalized in _SESSION_COMMANDS:
+        return "sessions"
     return None
 
 

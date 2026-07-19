@@ -299,6 +299,54 @@ async def test_typed_intervention() -> None:
     )
 
 
+async def test_session_picker() -> None:
+    """'Resume previous session.' lists earlier sessions; a spoken number
+    switches the live backend onto that conversation."""
+    import os
+    import tempfile
+
+    from talk2me.continuity import record_title, save_last_session
+
+    class SwitchBackend(FakeBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.switched: list[str] = []
+            self._session_id = "current-sess"
+
+        async def switch_session(self, sid: str) -> None:
+            self.switched.append(sid)
+
+    keep = os.environ.get("TALK2ME_STATE")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["TALK2ME_STATE"] = os.path.join(tmp, "state.json")
+        save_last_session(tmp, "sess-old")
+        record_title(tmp, "sess-old", "build the pong game")
+        save_last_session(tmp, "sess-new")
+        record_title(tmp, "sess-new", "fix the fps zombies")
+
+        backend = SwitchBackend()
+        orch = Orchestrator(
+            cfg=Config(silence_ms=900, min_speech_ms=250, cwd=tmp),
+            backend=backend,
+            vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+            stt=FakeSTT(["Resume previous session.", "Two."]),
+            tts=FakeTTS(),
+            mic=FakeMic(
+                _speech(15) + _silence(80) + _speech(15) + _silence(120),
+                sample_rate=SR,
+            ),
+            speaker=FakeSpeaker(SR),
+        )
+        await asyncio.wait_for(orch.run(), timeout=15)
+        check(
+            "picker switched to the spoken pick (2 = older session)",
+            backend.switched == ["sess-old"],
+            str(backend.switched),
+        )
+        check("nothing was sent to the agent", backend.sent == [], str(backend.sent))
+    os.environ["TALK2ME_STATE"] = keep or "/nonexistent-t2m-test-state"
+
+
 async def test_speech_check_gate() -> None:
     def _orch(gate):
         backend = FakeBackend(replies=["Hi there!"])
@@ -340,6 +388,7 @@ async def main() -> int:
     await test_presend_timeout_sends_fragment()
     await test_half_duplex_tool_gap_unmute()
     await test_typed_intervention()
+    await test_session_picker()
     await test_speech_check_gate()
 
     passed = sum(1 for _, ok in RESULTS if ok)
