@@ -127,6 +127,15 @@ def _parse_args(argv: list[str]) -> Config:
         help="file of bias terms, one per line or comma-separated",
     )
     p.add_argument(
+        "--barge-in", action="store_true",
+        help=(
+            "full-duplex: keep the mic live while the agent speaks; when you "
+            "start talking, playback stops and the agent's turn is interrupted. "
+            "REQUIRES HEADPHONES — with speakers the mic hears the TTS and "
+            "self-triggers (no echo cancellation)."
+        ),
+    )
+    p.add_argument(
         "--debug", action="store_true",
         help="print VAD speech/turn transitions (for tuning --energy-threshold)",
     )
@@ -167,6 +176,8 @@ def _parse_args(argv: list[str]) -> Config:
         voice_approval=not a.no_voice_approval,
         allowed_tools=list(DEFAULT_ALLOWED_TOOLS) + a.allow_tool,
         disallowed_tools=list(DEFAULT_DISALLOWED_TOOLS) + a.deny_tool,
+        barge_in=a.barge_in,
+        half_duplex=not a.barge_in,
         input_mode=input_mode,
         whisper_model=a.whisper_model,
         tts=a.tts,

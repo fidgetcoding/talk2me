@@ -6,9 +6,11 @@ Half-duplex flow (the default — no echo-cancellation hardware needed):
            -> stream agent text, speaking sentence-by-sentence (mic muted)
            -> hand the mic back, listen again
 
-Barge-in / full duplex keeps the mic live during playback and stops the Speaker
-when fresh speech is detected. That path is gated behind cfg.barge_in and needs
-echo handling; half-duplex is what runs today.
+Full-duplex barge-in (--barge-in, requires headphones so the mic never hears
+the TTS): the mic stays live while the agent speaks. A monitor task watches the
+frames; on sustained speech it stops the Speaker, sends the backend a real
+interrupt (the CLI cancels generation and ends the turn — spike-verified), and
+keeps collecting the interrupting utterance, which becomes the next user turn.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ import os
 import re
 import sys
 from collections.abc import AsyncIterator
+
+import numpy as np
 
 from .audio import Mic, Speaker
 from .config import Config
@@ -96,6 +100,10 @@ class Orchestrator:
         # Set when a turn dies on a BackendError; tells run() to stop cleanly
         # instead of looping forever against a dead backend process.
         self._fatal = False
+        # Barge-in state, reset per turn: the monitor task watching the live
+        # mic, and whether it already cut this turn's playback.
+        self._barge_task: asyncio.Task[str | None] | None = None
+        self._interrupted = False
 
     async def run(self) -> None:
         await self.backend.start()
@@ -123,7 +131,18 @@ class Orchestrator:
                     print(f"\n[backend send failed] {e}", flush=True)
                     self._fatal = True
                     break
-                await self._consume_turn(events)
+                barge = await self._consume_turn(events)
+                # A barge-in already contains the user's next utterance — send
+                # it straight through instead of going back to listening.
+                while barge and not self._fatal:
+                    print(f"\n🗣  you (barge-in): {barge}", flush=True)
+                    try:
+                        await self.backend.send(barge)
+                    except (BrokenPipeError, ConnectionError, RuntimeError, OSError) as e:
+                        print(f"\n[backend send failed] {e}", flush=True)
+                        self._fatal = True
+                        break
+                    barge = await self._consume_turn(events)
                 if self._fatal:
                     print("\nbackend gone — shutting down.", flush=True)
                     break
@@ -135,10 +154,18 @@ class Orchestrator:
             self.speaker.stop()
             await self.backend.close()
 
-    async def _consume_turn(self, events: AsyncIterator[AgentEvent]) -> None:
-        """Drive one agent turn: stream text to TTS, surface tools, end on result."""
+    async def _consume_turn(self, events: AsyncIterator[AgentEvent]) -> str | None:
+        """Drive one agent turn: stream text to TTS, surface tools, end on result.
+
+        Returns the transcript of a barge-in utterance if the user cut this
+        turn off (full-duplex only), else None.
+        """
         pending = ""
         speaking = False
+        self._interrupted = False
+        barge_enabled = self.cfg.barge_in and not self.cfg.half_duplex
+        if barge_enabled:
+            self._barge_task = asyncio.create_task(self._barge_monitor())
         sys.stdout.write("🤖 ")
         sys.stdout.flush()
 
@@ -149,6 +176,8 @@ class Orchestrator:
                 pending += ev.text
                 pending, ready = _drain_sentences(pending)
                 for sentence in ready:
+                    if self._interrupted:
+                        continue  # user cut playback; keep text on screen only
                     speaking = self._begin_speaking(speaking)
                     await self._speak(sentence)
             elif isinstance(ev, ToolActivity):
@@ -161,7 +190,7 @@ class Orchestrator:
                 await self._handle_permission(ev)
                 speaking = False
             elif isinstance(ev, TurnComplete):
-                if pending.strip():
+                if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
                     await self._speak(pending)
                 print(flush=True)
@@ -179,6 +208,76 @@ class Orchestrator:
             self.mic.set_muted(False)
             self.vad.reset()
 
+        return await self._reap_barge_monitor()
+
+    async def _reap_barge_monitor(self) -> str | None:
+        """Collect the barge-in transcript (waiting out the utterance if the
+        user is still mid-sentence), or cancel the monitor on a clean turn."""
+        task, self._barge_task = self._barge_task, None
+        if task is None:
+            return None
+        if not self._interrupted:
+            task.cancel()
+        try:
+            return await task
+        except asyncio.CancelledError:
+            return None
+
+    async def _barge_monitor(self) -> str | None:
+        """Watch the live mic during agent speech; cut playback on real speech.
+
+        Onset (min_speech_ms of consecutive voiced frames) -> stop the Speaker
+        and interrupt the backend, then keep buffering until silence_ms of
+        trailing silence and transcribe the whole interruption — including the
+        onset audio, so the first word isn't clipped. Returns the transcript
+        (or None if the stream ended before speech).
+        """
+        frame_ms = (self.vad.frame_samples / self.vad.sample_rate) * 1000.0
+        onset_needed = max(1, int(self.cfg.min_speech_ms / frame_ms))
+        silence_needed = max(1, int(self.cfg.silence_ms / frame_ms))
+        max_frames = (
+            max(1, int(self.cfg.max_utterance_ms / frame_ms))
+            if self.cfg.max_utterance_ms > 0
+            else 0
+        )
+        self.vad.reset()
+        buf: list = []
+        consecutive = 0
+        trailing = 0
+        cut = False
+
+        async for frame in self.mic.frames():
+            speech = self.vad.is_speech(frame)
+            if not cut:
+                if speech:
+                    buf.append(frame)
+                    consecutive += 1
+                    if consecutive >= onset_needed:
+                        cut = True
+                        self._interrupted = True
+                        self.speaker.stop()
+                        await self.backend.interrupt()
+                        print("\n   [barge-in] listening…", flush=True)
+                else:
+                    buf.clear()
+                    consecutive = 0
+                continue
+            buf.append(frame)
+            if speech:
+                trailing = 0
+            else:
+                trailing += 1
+                if trailing >= silence_needed:
+                    break
+            if max_frames and len(buf) >= max_frames:
+                break
+
+        if not cut or not buf:
+            return None
+        utterance = np.concatenate(buf).astype(np.float32)
+        text = await self.stt.transcribe(utterance, self.mic.sample_rate)
+        return text or None
+
     def _begin_speaking(self, speaking: bool) -> bool:
         """Mark the start of agent speech, muting the mic in half-duplex mode.
 
@@ -189,11 +288,10 @@ class Orchestrator:
             return True
         if self.cfg.half_duplex:
             self.mic.set_muted(True)
-        else:
-            # TODO: full-duplex barge-in — keep the mic live during playback and
-            # stop the Speaker when fresh speech is detected. Needs acoustic echo
-            # cancellation; not implemented, so we leave the mic untouched here.
-            pass
+        # Full duplex: the mic stays live — the barge-in monitor started by
+        # _consume_turn owns interruption. Headphones are assumed (the mic
+        # never hears the TTS), which is what makes this work without acoustic
+        # echo cancellation.
         return True
 
     async def _speak(self, text: str) -> None:
@@ -209,6 +307,19 @@ class Orchestrator:
         """
         detail = _permission_detail(ev)
         print(f"\n   [permission] {ev.tool_name}: {detail}", flush=True)
+        # Full duplex: the barge-in monitor is also reading mic frames — park it
+        # so the gate's listener doesn't race it for the approve/deny utterance.
+        # (An approval prompt shouldn't be barge-able anyway.) _consume_turn
+        # restarts nothing here: the monitor stays down for the rest of the
+        # turn, which trades barge-in on post-approval speech for a race-free
+        # gate — the next turn re-arms it.
+        monitor, self._barge_task = self._barge_task, None
+        if monitor is not None:
+            monitor.cancel()
+            try:
+                await monitor
+            except asyncio.CancelledError:
+                pass
         decision: str | None = None
         for attempt in range(2):
             prompt = (
