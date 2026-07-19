@@ -103,8 +103,9 @@ class PlainRenderer:
 
     def speaker_downgrade(self) -> None:
         print(
-            "🔈 speakers on the output — barge-in off for this session so I "
-            "don't argue with my own echo. Plug in headphones to interrupt me.",
+            "🔈 speakers on the output — I'll mute my ears only while I'm "
+            "actually speaking (so I never hear myself). Interrupt me in any "
+            "gap; headphones add talk-over.",
             flush=True,
         )
 

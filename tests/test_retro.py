@@ -160,8 +160,8 @@ def test_downgrade_card_explains_itself() -> bool:
     ))
     plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", buf.getvalue())
     ok = (
-        "speakers detected" in plain
-        and "plug in headphones" in plain
+        "gaps only" in plain
+        and "Headphones add" in plain
         and "run with --barge-in" not in plain  # wrong hint for this case
     )
     return _report("downgraded card explains itself", ok)

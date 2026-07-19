@@ -201,9 +201,9 @@ class RetroRenderer:
             else "gated (spoken approvals)"
         )
         if cfg.barge_in:
-            barge = "ON"
+            barge = "ON — talk over it anytime"
         elif getattr(cfg, "barge_downgraded", False):
-            barge = "off — speakers detected; plug in headphones + relaunch"
+            barge = "gaps only (speakers — it mutes its ears ONLY while speaking)"
         else:
             barge = "off"
         rows = [
@@ -246,9 +246,9 @@ class RetroRenderer:
         self.console.print(hint, style="agent", markup=False)
         if cfg.half_duplex:
             hint = (
-                "(half-duplex: interrupting mid-speech is off because the "
-                "sound is going to open-air speakers — plug in headphones "
-                "and relaunch, no flag needed)"
+                "(speakers: you're heard any time it isn't mid-sentence — "
+                "thinking, tool runs, between turns. Headphones add "
+                "talk-over-its-voice; nothing else changes)"
                 if getattr(cfg, "barge_downgraded", False)
                 else "(half-duplex: talking over the agent mid-speech is "
                 "ignored — run with --barge-in and headphones to interrupt it)"
