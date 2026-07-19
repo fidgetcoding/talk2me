@@ -118,12 +118,14 @@ class Orchestrator:
         await self.backend.start()
         self.mic.start()
         events = self.backend.events()
-        # Pre-load the STT model in the background so the FIRST utterance
-        # doesn't stall for the multi-second model load. Duck-typed: engines
-        # without warmup() just lazy-load on first use as before.
-        warmup: asyncio.Task[None] | None = None
+        # Pre-load the STT model BEFORE opening the ears. Loading concurrently
+        # with live listening looked clever but a session froze inside that
+        # window on real hardware (model load + HF hub check while the first
+        # utterance streamed); a second of visible startup is the honest cost.
+        # Duck-typed: engines without warmup() lazy-load on first use.
         if hasattr(self.stt, "warmup"):
-            warmup = asyncio.create_task(asyncio.to_thread(self.stt.warmup))
+            print("(loading the ears…)", flush=True)
+            await asyncio.to_thread(self.stt.warmup)
         print("talk2me ready — start talking. Ctrl-C to quit.", flush=True)
         if self.cfg.half_duplex:
             print(
@@ -187,8 +189,6 @@ class Orchestrator:
                     break
                 print("\n🎧 listening…", flush=True)
         finally:
-            if warmup is not None and not warmup.done():
-                warmup.cancel()
             self.mic.stop()
             # Release the audio output device at session end. stop() is a no-op-safe
             # method on the real Speaker (and the fake), so this can't strand a handle.

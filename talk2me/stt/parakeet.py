@@ -49,9 +49,30 @@ class ParakeetMLXSTT:
         # Only ever runs on the single executor thread, so no lock is needed
         # and load + inference always share one MLX stream.
         if self._model is None:
+            import os
+
             from parakeet_mlx import from_pretrained
 
-            self._model = from_pretrained(self._model_name)
+            # Offline-first: once the model is cached, skip the HF Hub
+            # freshness check entirely — unauthenticated requests are
+            # rate-limited and a slow/hung check stalls startup. Only fall
+            # back to the network when the cache genuinely can't satisfy
+            # the load (first run).
+            prior = os.environ.get("HF_HUB_OFFLINE")
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            try:
+                self._model = from_pretrained(self._model_name)
+            except Exception:
+                if prior is None:
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = prior
+                self._model = from_pretrained(self._model_name)
+            finally:
+                if prior is None:
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = prior
         return self._model
 
     def warmup(self) -> None:
