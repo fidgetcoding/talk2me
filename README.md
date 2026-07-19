@@ -17,13 +17,13 @@ You say something. It hears you, types it to your coding agent, reads the answer
 | Start here | Talking to it | Make it yours |
 |---|---|---|
 | [Install (30 seconds)](#install-30-seconds) | [Reading the screen](#reading-the-screen-is-it-broken-or-is-it-waiting) | [Changing the voice](#changing-the-voice) |
-| [Quickstart](#quickstart) | [How long things take](#how-long-things-take) | [Switching the ears](#switching-the-ears) |
-| [Why I built this](#why-i-built-this) | [Saying yes out loud](#saying-yes-out-loud) | [Picking the brain](#picking-the-brain) |
-| [What it actually does](#what-it-actually-does) | [Interrupting it](#interrupting-it) | [Saving your conversations](#saving-your-conversations) |
-| [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) | [Tuning the ears](#tuning-the-ears) |
-| [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) | [The debugging playbook](#the-debugging-playbook) |
-| [Tests](#tests) | [Ways to run it](#ways-to-run-it) | [Under the hood](#under-the-hood) |
-| [FAQ](#faq) | [Pausing the ears](#pausing-the-ears) | [Not done yet](#not-done-yet) |
+| [**The cheat sheet**](#the-cheat-sheet) | [How long things take](#how-long-things-take) | [Switching the ears](#switching-the-ears) |
+| [Quickstart](#quickstart) | [Saying yes out loud](#saying-yes-out-loud) | [Picking the brain](#picking-the-brain) |
+| [Why I built this](#why-i-built-this) | [Interrupting it](#interrupting-it) | [Saving your conversations](#saving-your-conversations) |
+| [What it actually does](#what-it-actually-does) | [Finish your sentence](#finish-your-sentence) | [Tuning the ears](#tuning-the-ears) |
+| [The trick](#the-trick) | [Pausing the ears](#pausing-the-ears) | [The debugging playbook](#the-debugging-playbook) |
+| [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) | [Under the hood](#under-the-hood) |
+| [Tests](#tests) · [FAQ](#faq) | [Ways to run it](#ways-to-run-it) | [Not done yet](#not-done-yet) |
 
 ---
 
@@ -67,6 +67,36 @@ And the laziest path of all: paste this repo's URL into Claude Code and say *"in
 First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody.
 
 **Pro tip:** when your agent is doing the installing, give it this repo's link too. It's open source — you can do whatever tf you want — and an agent that has read the source debugs your machine's quirks (weird audio devices, mic permissions, your cursed Bluetooth setup) in one turn instead of guessing.
+
+## The cheat sheet
+
+Everything on one screen. This is the whole manual for day one.
+
+**Things you SAY** (to the mic, mid-session):
+
+| Say | When | What happens |
+|---|---|---|
+| *anything* | `🎧 listening…` is showing | It answers out loud, then listens again. That's the loop. |
+| *keep talking over it* | it's mid-answer (needs `--barge-in` + headphones) | Voice AND thinking stop; what you said becomes the next message. No magic word — any sustained speech cuts it. |
+| **"pause listening"** · "stop listening" · "go to sleep" · "take a break" · "pause" | any time it's listening | Ears stay open but NOTHING gets sent — it goes quiet until you wake it. |
+| **"wake up"** · "resume listening" · "I'm back" · "unpause" | while paused | Back to normal listening. |
+| **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (`--gated` mode only) | Runs or declines the tool call. Mumble twice = it declines for you. |
+
+**Things you TYPE:**
+
+| Type | What you get |
+|---|---|
+| `t2m` | The whole thing, defaults on. Talk. |
+| `Ctrl-C` | Done. (Transcript, if enabled, is already saved — it writes live.) |
+| `t2m --barge-in` | Interruptible mode. Headphones required. |
+| `t2m --gated` | Spoken approvals before any non-read tool runs (default is auto-approve, with the nasty stuff hard-blocked either way). |
+| `t2m --stt parakeet` | GPU ears — faster + more accurate (Apple Silicon; `pip install -e ".[parakeet]"` first). |
+| `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
+| `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
+| `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
+| `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
+
+Launch from the project folder you want it working on — the startup line confirms everything: model, ears, voice, barge, tools mode, directory.
 
 ## Why I built this
 
