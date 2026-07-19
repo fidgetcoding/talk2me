@@ -78,6 +78,14 @@ curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.s
 
 Re-run the installer with a different `--ref` any time to switch versions in place. Pinning by pip works too: `pip install "git+https://github.com/fidgetcoding/talk2me.git@v1.0.0"`.
 
+What changed from v1 to v2, in one glance:
+
+- **The retro face** — banner, dotted config card, green/pink/cyan theme, live work panel, syntax-highlighted code cards, visible thinking. (`--plain` = the v1 look, kept forever.)
+- **You can watch the work** — every file write, diff, and long command prints in the feed instead of hiding behind a tool counter.
+- **Noise immunity** — a real speech classifier gates everything: typing, taps, and coughs can't fire turns or cut the agent off mid-answer anymore.
+- **Barge-in is the default** — interrupting by talking just works (auto-off on open-air speakers). `--no-barge-in` for the polite loop.
+- **Pause got serious** — more wake/sleep vocabulary, works mid-task without cancelling the work, and the screen stays honest while asleep.
+
 ## The cheat sheet
 
 Everything on one screen. This is the whole manual for day one.
@@ -88,7 +96,7 @@ Everything on one screen. This is the whole manual for day one.
 |---|---|---|
 | *anything* | `🎧 listening…` is showing | It answers out loud, then listens again. That's the loop. |
 | *keep talking over it* | it's mid-answer (on by default; needs headphones — auto-off on speakers) | Voice AND thinking stop; what you said becomes the next message. No magic word — any sustained speech cuts it. |
-| **"pause listening"** · "stop listening" · "sleep" · "go to sleep" · "go to bed" · "take a break" · "pause" | any time it's listening | Ears stay open but NOTHING gets sent — it goes quiet until you wake it. |
+| **"pause listening"** · "stop listening" · "sleep" · "go to sleep" · "go to bed" · "take a break" · "pause" | any time — even mid-task | Ears go quiet until you wake it. Never cancels running work: an interrupted task auto-resumes. |
 | **"wake up"** · "resume listening" · "I'm back" · "unpause" | while paused | Back to normal listening. |
 | **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (`--gated` mode only) | Runs or declines the tool call. Mumble twice = it declines for you. |
 
@@ -96,7 +104,7 @@ Everything on one screen. This is the whole manual for day one.
 
 | Type | What you get |
 |---|---|
-| `t2m` | The whole thing, defaults on. Talk. |
+| `t2m` (or `talk2me`) | The whole thing, defaults on. Talk. |
 | `Ctrl-C` | Done. (Transcript, if enabled, is already saved — it writes live.) |
 | `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default; it auto-disarms on open-air speakers anyway). |
 | `t2m --gated` | Spoken approvals before any non-read tool runs (default is auto-approve, with the nasty stuff hard-blocked either way). |
@@ -105,6 +113,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
+| `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
 | `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
 
 Launch from the project folder you want it working on — the startup line confirms everything: model, ears, voice, barge, tools mode, directory.
@@ -188,6 +197,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `[go on…]` | Same cut, but it happened before the agent said anything — it thinks you're still finishing YOUR sentence. | Keep talking; your fragments get stitched together. |
 | `🗣 you (continued): …` | It stitched your interrupted sentence back together and sent the whole thing. | Nothing — this is the fix working. |
 | `(noise interrupt — repeating your question)` | Something cut the turn but transcribed to nothing (a cough, a chair). It's re-sending your question instead of eating it. | Nothing. Self-healing. |
+| `(resuming the interrupted task)` | You said "sleep"/"pause" while the agent was working. Ears are paused; the task was re-sent and continues. | Nothing — say "wake up" whenever. |
 | `[t] stt / first-token / first-audio` *(debug)* | The latency receipts for the turn. | Use them when tuning; see the table below. |
 | Long silence, no markers at all | NOW it might actually be stuck. | See [The debugging playbook](#the-debugging-playbook). |
 
@@ -263,13 +273,13 @@ You get ~6 seconds per pause, up to 3 pauses. Once you start talking again it al
 
 Someone walks in, the phone rings, you need to think out loud without a transcriptionist. Say:
 
-> **"pause listening"** (or "stop listening", "go to sleep", "take a break")
+> **"pause listening"** (or "pause", "sleep", "go to sleep", "go to bed", "stop listening", "take a break")
 
 It confirms out loud, prints `⏸ paused`, and from then on it hears everything and sends **nothing** — no agent turns, no transcript entries, no reactions. Until you say:
 
 > **"wake up"** (or "resume listening", "I'm back")
 
-The commands only trigger as a complete utterance — saying "pause listening to him" mid-sentence won't trip it. And a note for the observant: the mic hardware stays open while paused (that's how it hears "wake up"); "paused" means nothing leaves the loop, not that the microphone is off. Ctrl-C is the off switch.
+The commands only trigger as a complete utterance — saying "pause listening to him" mid-sentence won't trip it — and saying one **while the agent is mid-task** never cancels the work: the ears pause, the control word never reaches the agent, and if the interruption clipped a working turn, talk2me re-sends the task on its own (you'll see `(resuming the interrupted task)`). And a note for the observant: the mic hardware stays open while paused (that's how it hears "wake up"); "paused" means nothing leaves the loop, not that the microphone is off. Ctrl-C is the off switch.
 
 Related: transcripts that look like machine noise (the same word looped five-plus times — a known transcription artifact on fan hum and silence) get discarded automatically with an `(ignored — transcription noise)` note, so phantom "Okay. Okay. Okay." turns never reach the agent.
 

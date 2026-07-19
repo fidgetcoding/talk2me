@@ -1,0 +1,73 @@
+"""Silero speech confirmation — "was that actually a human talking?"
+
+The capture VADs (energy, webrtc) answer "is there sound energy shaped
+vaguely like voice?" and are fooled by typing, taps, coughs, and chair
+squeaks. Silero is a trained speech classifier and is not. This module wraps
+the Silero model that faster-whisper already bundles (zero new dependencies)
+as a yes/no gate used in two places:
+
+- the barge-in monitor, BEFORE it cuts the agent's turn — noise must never
+  kill generation;
+- the main loop, BEFORE an utterance is transcribed — noise dies silently
+  instead of becoming a hallucinated message.
+
+The gate is injected (Orchestrator ``speech_check=``), so headless tests —
+whose synthetic "speech" is random noise that Silero would rightly reject —
+run ungated unless a test injects its own.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+# Total Silero-detected speech required to call a buffer "speech". Real words
+# clear this trivially (a single vowel sustains longer); typing bursts and
+# taps almost never do. Coughs are genuinely vocal and sometimes pass — the
+# transcription-side gates (vad_filter + no-speech head) are their backstop.
+MIN_SPEECH_MS = 200
+
+
+class SileroSpeechCheck:
+    """Callable gate: (audio, sample_rate) -> bool. Thread-safe after warmup."""
+
+    def __call__(self, audio: np.ndarray, sample_rate: int) -> bool:
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+        if sample_rate != 16000:
+            audio = _resample_to_16k(audio, sample_rate)
+        audio = np.ascontiguousarray(audio, dtype=np.float32)
+        # speech_pad_ms=0: the default pads every region by 400ms, which would
+        # count silence around a click as "speech". We want honest durations.
+        opts = VadOptions(
+            min_speech_duration_ms=60,
+            min_silence_duration_ms=300,
+            speech_pad_ms=0,
+        )
+        regions = get_speech_timestamps(audio, opts, sampling_rate=16000)
+        speech_ms = sum(r["end"] - r["start"] for r in regions) / 16.0
+        return speech_ms >= MIN_SPEECH_MS
+
+    def warmup(self) -> None:
+        """Load the ONNX model off the hot path (first call pays ~100ms)."""
+        self(np.zeros(3200, dtype=np.float32), 16000)
+
+
+def build_speech_check(enabled: bool = True) -> SileroSpeechCheck | None:
+    """The production gate, or None when disabled/unavailable — a missing
+    classifier must degrade to v2.0.x behavior, never block the loop."""
+    if not enabled:
+        return None
+    try:
+        from faster_whisper import vad  # noqa: F401 — availability probe
+    except ImportError:
+        return None
+    return SileroSpeechCheck()
+
+
+def _resample_to_16k(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    n_out = int(round(audio.shape[0] * 16000 / sample_rate))
+    if n_out <= 0:
+        return audio.astype(np.float32)
+    x_old = np.linspace(0.0, 1.0, num=audio.shape[0], endpoint=False)
+    x_new = np.linspace(0.0, 1.0, num=n_out, endpoint=False)
+    return np.interp(x_new, x_old, audio).astype(np.float32)

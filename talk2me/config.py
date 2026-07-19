@@ -117,6 +117,10 @@ class Config:
     # past min_speech_ms and fire phantom turns (live-observed 2026-07-19);
     # real words hold vowels far longer than any tap.
     min_speech_run_ms: int = 150
+    # Silero confirmation gate (speechcheck.py): audio must be CLASSIFIED as
+    # speech before the barge monitor may cut a turn or an utterance reaches
+    # the transcriber. --no-speech-check restores frame-VAD-only behavior.
+    speech_check: bool = True
     # Audio kept from just BEFORE speech onset and prepended to the utterance.
     # Energy VADs miss quiet first phonemes, and without this the transcript
     # starts mid-word (live-run: "count down to fifty" -> "down to 50").

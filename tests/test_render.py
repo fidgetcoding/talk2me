@@ -213,6 +213,11 @@ def test_tool_and_permission_lines() -> bool:
     )
     _check(results, "thinking is silent in Plain", _capture(r.thinking, "hmm"), "")
     _check(
+        results, "status_note",
+        _capture(r.status_note, "resuming the interrupted task"),
+        "   (resuming the interrupted task)\n",
+    )
+    _check(
         results, "working singular", _capture(r.working, 1),
         "   ⚙ still working… (1 tool call so far)\n",
     )

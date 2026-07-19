@@ -136,6 +136,12 @@ def test_hallucination_and_controls() -> None:
         ("Unpause.", "resume"),
         ("pause listening to him and focus", None),  # embedded, not whole
         ("What time is it?", None),
+        # Multi-segment (live-observed "Sleep. pause" reached the agent):
+        ("Sleep. pause", "pause"),
+        ("Pause. Go to sleep.", "pause"),
+        ("Wake up. Wake up.", "resume"),
+        ("Keep working. Sleep.", None),  # mixed content is NOT a control
+        ("Sleep. What time is it?", None),
     ]
     for text, want in cases:
         got = control_intent(text)
@@ -216,6 +222,37 @@ async def test_presend_timeout_sends_fragment() -> None:
     )
 
 
+async def test_speech_check_gate() -> None:
+    def _orch(gate):
+        backend = FakeBackend(replies=["Hi there!"])
+        orch = Orchestrator(
+            cfg=Config(silence_ms=900, min_speech_ms=250),
+            backend=backend,
+            vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+            stt=FakeSTT(["Hello there."]),
+            tts=FakeTTS(),
+            mic=FakeMic(_speech(15) + _silence(35), sample_rate=SR),
+            speaker=FakeSpeaker(SR),
+            speech_check=gate,
+        )
+        return orch, backend
+
+    # Gate says "not speech": the utterance dies BEFORE transcription — the
+    # agent never hears typing, taps, or coughs.
+    orch, backend = _orch(lambda audio, sr: False)
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check("speech-check False: nothing sent", backend.sent == [], str(backend.sent))
+
+    # Gate says "speech": identical to the ungated flow.
+    orch, backend = _orch(lambda audio, sr: True)
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check(
+        "speech-check True: normal flow",
+        backend.sent == ["Hello there."],
+        str(backend.sent),
+    )
+
+
 async def main() -> int:
     test_seems_unfinished()
     test_overflow()
@@ -224,6 +261,7 @@ async def main() -> int:
     await test_voice_pause_resume()
     await test_presend_stitch()
     await test_presend_timeout_sends_fragment()
+    await test_speech_check_gate()
 
     passed = sum(1 for _, ok in RESULTS if ok)
     ok = passed == len(RESULTS)

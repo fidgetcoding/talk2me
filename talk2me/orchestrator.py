@@ -146,6 +146,7 @@ class Orchestrator:
         speaker: Speaker,
         session_log=None,
         renderer: Renderer | None = None,
+        speech_check=None,
     ) -> None:
         self.cfg = cfg
         self.backend = backend
@@ -159,6 +160,14 @@ class Orchestrator:
         # launch build's exact output (parity-locked by tests/test_render.py),
         # which is also why existing suites construct without it and pass.
         self.render: Renderer = renderer or PlainRenderer()
+        # Optional speech confirmation gate: (audio, sample_rate) -> bool.
+        # Injected by production wiring (Silero via speechcheck.py); None in
+        # tests, whose synthetic "speech" is random noise a real classifier
+        # would reject. Guards the barge cut and the pre-transcribe path.
+        self._speech_check = speech_check
+        # True right after "🎧 listening…" printed with nothing after it —
+        # suppresses the repeat-spam that noise utterances used to cause.
+        self._listening_fresh = False
         # Set when a turn dies on a BackendError; tells run() to stop cleanly
         # instead of looping forever against a dead backend process.
         self._fatal = False
@@ -202,14 +211,27 @@ class Orchestrator:
         if hasattr(self.stt, "warmup"):
             self.render.loading_ears()
             await asyncio.to_thread(self.stt.warmup)
+        if self._speech_check is not None and hasattr(self._speech_check, "warmup"):
+            # Load the speech classifier BEFORE the mic opens — its first call
+            # must never add latency inside the barge monitor's cut decision.
+            await asyncio.to_thread(self._speech_check.warmup)
         self.render.startup(self.cfg)
         try:
-            self.render.listening()
+            self._show_listening()
             last_text = ""
             async for utterance in segment_utterances(
                 self.mic.frames(), self.vad, self.cfg
             ):
                 t_captured = time.monotonic()
+                if self._speech_check is not None and not await asyncio.to_thread(
+                    self._speech_check, utterance, self.mic.sample_rate
+                ):
+                    # Typing, taps, a cough — the capture VAD was fooled but
+                    # the classifier wasn't. Drop SILENTLY (typing must not
+                    # spam ignored-lines onto the screen).
+                    if self.cfg.debug:
+                        self.render.debug("(speech check: not speech — dropped)")
+                    continue
                 raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
                 if self.cfg.debug:
                     self.render.debug(
@@ -219,11 +241,19 @@ class Orchestrator:
                     # Non-speech audio (fan hum, ambient) hallucinates as
                     # looped words — often the agent's own vocabulary, because
                     # the STT is context-seeded with it. Never send those.
-                    self.render.noise_ignored()
+                    if self._paused:
+                        # Asleep: noise gets no screen time at all.
+                        if self.cfg.debug:
+                            self.render.debug("(noise while paused — ignored)")
+                    else:
+                        self.render.noise_ignored()
                     raw = ""
                 text = collapse_stutter(raw)
                 if not text:
-                    self.render.listening(nl=False)
+                    # While paused, an empty transcript prints NOTHING —
+                    # "🎧 listening…" under a ⏸ was a lie (live-reported).
+                    if not self._paused:
+                        self._show_listening(nl=False)
                     continue
                 # Voice controls for the loop itself: "pause listening" mutes
                 # the conversation (everything heard, nothing sent) until a
@@ -231,30 +261,22 @@ class Orchestrator:
                 intent = control_intent(text)
                 if self._paused:
                     if intent == "resume":
-                        self._paused = False
-                        self.render.awake()
-                        if self.log:
-                            self.log.event("listening resumed by voice")
-                        await self._speak_confirm("I'm back.")
-                        self.render.listening()
+                        await self._set_paused(False)
+                        self._show_listening()
                     else:
                         if self.cfg.debug:
                             self.render.paused_ignored(text)
+                        self._listening_fresh = False
                         self.render.still_paused()
                     continue
                 if intent == "pause":
-                    self._paused = True
-                    self.render.paused()
-                    if self.log:
-                        self.log.event("listening paused by voice")
-                    await self._speak_confirm(
-                        "Paused. Say wake up when you need me."
-                    )
+                    await self._set_paused(True)
                     continue
                 # An unfinished-sounding transcript is NOT sent yet: keep the
                 # mic open and stitch the rest on BEFORE the agent ever sees a
                 # fragment ("So what do you call … [pause] … a linked list").
                 text = await self._extend_unfinished(text)
+                self._listening_fresh = False
                 self.render.you(text)
                 if self.log:
                     self.log.user(text)
@@ -278,23 +300,49 @@ class Orchestrator:
                 # segmenter ended the user's turn mid-sentence and they kept
                 # going, so stitch the fragments back into one instruction.
                 noise_resends = 0
+                control_resends = 0
                 while not self._fatal:
                     if barge:
-                        # A barge can trail off exactly like a normal turn —
-                        # give it the same stitch-before-send treatment so a
-                        # fragment never reaches the agent through this path.
-                        barge = await self._extend_unfinished(barge)
-                        if self._continuation and last_text:
-                            to_send = f"{last_text} {barge}"
-                            self.render.you(to_send, "continued")
-                            if self.log:
-                                self.log.user(to_send, "continued")
+                        # Control words arriving through the barge path
+                        # ("Sleep." spoken while the agent worked) must NEVER
+                        # reach the agent as a message — live sessions showed
+                        # Claude replying to them. Flip the ears instead, and
+                        # since the cut already killed the turn: if it was
+                        # mid-WORK, resend the task so pause never cancels a
+                        # job. Checked before continuation stitching so a
+                        # control word can't be glued onto the previous turn.
+                        intent = control_intent(barge)
+                        if intent is not None:
+                            await self._set_paused(intent == "pause")
+                            if (
+                                self._saw_tool
+                                and last_text
+                                and control_resends < 1
+                            ):
+                                control_resends += 1
+                                to_send = last_text
+                                self.render.status_note(
+                                    "resuming the interrupted task"
+                                )
+                            else:
+                                break
                         else:
-                            to_send = barge
-                            self.render.you(to_send, "barge-in")
-                            if self.log:
-                                self.log.user(to_send, "barge-in")
-                        last_text = to_send
+                            # A barge can trail off exactly like a normal turn —
+                            # give it the same stitch-before-send treatment so a
+                            # fragment never reaches the agent through this path.
+                            barge = await self._extend_unfinished(barge)
+                            self._listening_fresh = False
+                            if self._continuation and last_text:
+                                to_send = f"{last_text} {barge}"
+                                self.render.you(to_send, "continued")
+                                if self.log:
+                                    self.log.user(to_send, "continued")
+                            else:
+                                to_send = barge
+                                self.render.you(to_send, "barge-in")
+                                if self.log:
+                                    self.log.user(to_send, "barge-in")
+                            last_text = to_send
                     elif self._continuation and last_text and noise_resends < 1:
                         # A cut killed the turn before ANY answer but the
                         # captured audio transcribed to nothing — a noise
@@ -316,7 +364,13 @@ class Orchestrator:
                 if self._fatal:
                     self.render.error("backend gone — shutting down.")
                     break
-                self.render.listening()
+                if self._paused:
+                    # A task that finished while asleep must not claim the
+                    # ears are open — remind how to wake instead.
+                    self._listening_fresh = False
+                    self.render.still_paused()
+                else:
+                    self._show_listening()
         finally:
             self.mic.stop()
             # Release the audio output device at session end. stop() is a no-op-safe
@@ -470,6 +524,29 @@ class Orchestrator:
         self._continuation = self._interrupted and not self._spoke_any
         return await self._reap_barge_monitor()
 
+    def _show_listening(self, *, nl: bool = True) -> None:
+        """Print 🎧 once per quiet stretch — noise utterances used to reprint
+        it a dozen times in a row (live-observed)."""
+        if self._listening_fresh and not nl:
+            return
+        self.render.listening(nl=nl)
+        self._listening_fresh = True
+
+    async def _set_paused(self, paused: bool) -> None:
+        """Flip the ears, with the matching chip + spoken confirmation."""
+        self._paused = paused
+        self._listening_fresh = False
+        if paused:
+            self.render.paused()
+            if self.log:
+                self.log.event("listening paused by voice")
+            await self._speak_confirm("Paused. Say wake up when you need me.")
+        else:
+            self.render.awake()
+            if self.log:
+                self.log.event("listening resumed by voice")
+            await self._speak_confirm("I'm back.")
+
     async def _reap_barge_monitor(self) -> str | None:
         """Collect the barge-in transcript (waiting out the utterance if the
         user is still mid-sentence), or cancel the monitor on a clean turn."""
@@ -544,6 +621,13 @@ class Orchestrator:
         cut = False
 
         async for frame in self.mic.frames():
+            if self._paused and not cut:
+                # Asleep: the monitor never cuts a working turn. Wake-up
+                # happens between turns through the main loop.
+                preroll.clear()
+                buf.clear()
+                consecutive = 0
+                continue
             speech = self.vad.is_speech(frame)
             if not cut:
                 if speech:
@@ -555,6 +639,25 @@ class Orchestrator:
                     buf.append(frame)
                     consecutive += 1
                     if consecutive >= onset_needed:
+                        # Last gate before the point of no return: cutting
+                        # kills the agent's generation, so the onset audio
+                        # must be CONFIRMED speech — typing and coughs fool
+                        # the frame VAD but not the classifier. (Model is
+                        # pre-warmed at startup; this costs ~a millisecond.)
+                        if self._speech_check is not None:
+                            onset_audio = np.concatenate(buf).astype(np.float32)
+                            if not await asyncio.to_thread(
+                                self._speech_check,
+                                onset_audio,
+                                self.mic.sample_rate,
+                            ):
+                                if self.cfg.debug:
+                                    self.render.debug(
+                                        "(barge onset rejected — not speech)"
+                                    )
+                                buf.clear()
+                                consecutive = 0
+                                continue
                         cut = True
                         self._interrupted = True
                         self.speaker.stop()
@@ -976,12 +1079,9 @@ _RESUME_COMMANDS = frozenset(
 )
 
 
-def control_intent(text: str) -> str | None:
-    """Map a whole utterance to "pause" / "resume" / None.
-
-    Consecutive word repeats collapse before matching, so a human stutter —
-    "Pause. Pause, Listening." (live-observed) — still lands the command.
-    """
+def _single_control_intent(text: str) -> str | None:
+    """Whole-phrase match with consecutive-stutter collapse ("Pause. Pause,
+    Listening." still lands the command — live-observed)."""
     words = re.findall(r"[a-z]+", text.lower().replace("'", ""))
     deduped = [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
     normalized = " ".join(deduped)
@@ -989,6 +1089,27 @@ def control_intent(text: str) -> str | None:
         return "pause"
     if normalized in _RESUME_COMMANDS:
         return "resume"
+    return None
+
+
+def control_intent(text: str) -> str | None:
+    """Map an utterance to "pause" / "resume" / None.
+
+    Two passes: the whole utterance first, then — because the STT often glues
+    repeated commands into one line ("Sleep. pause", live-observed sailing
+    straight to the agent) — sentence segments, matching only when EVERY
+    segment carries the same intent. Mixed content ("Keep working. Sleep.")
+    stays None: a real instruction must never be swallowed as a control word.
+    """
+    whole = _single_control_intent(text)
+    if whole is not None:
+        return whole
+    segments = [s for s in re.split(r"[.!?;,]+", text) if s.strip()]
+    if len(segments) < 2:
+        return None
+    intents = {_single_control_intent(s) for s in segments}
+    if len(intents) == 1 and None not in intents:
+        return intents.pop()
     return None
 
 

@@ -183,6 +183,14 @@ def _parse_args(argv: list[str]) -> Config:
         help="disable the soft 'still working' blip during long tool runs",
     )
     p.add_argument(
+        "--speech-check", action=argparse.BooleanOptionalAction, default=True,
+        help=(
+            "confirm audio is actually speech (Silero classifier) before "
+            "interrupting the agent or transcribing — rejects typing, taps, "
+            "coughs. --no-speech-check restores raw-VAD behavior."
+        ),
+    )
+    p.add_argument(
         "--plain", action="store_true",
         help=(
             "classic v1 output: no colors, no panels. Auto-selected when "
@@ -241,6 +249,7 @@ def _parse_args(argv: list[str]) -> Config:
         save_dir=a.save_dir,
         working_ticks=not a.no_ticks,
         plain=a.plain,
+        speech_check=a.speech_check,
         model=a.model,
         cwd=a.cwd,
         permission_mode=permission_mode,
@@ -384,6 +393,8 @@ async def _run_voice(cfg: Config) -> int:
         )
         renderer.transcript_path(session_log.path)
 
+    from .speechcheck import build_speech_check
+
     tts = factory.build_tts(cfg)
     orch = Orchestrator(
         cfg=cfg,
@@ -395,6 +406,7 @@ async def _run_voice(cfg: Config) -> int:
         speaker=Speaker(tts.sample_rate, device=output_idx),
         session_log=session_log,
         renderer=renderer,
+        speech_check=build_speech_check(cfg.speech_check),
     )
     await orch.run()
     return 0

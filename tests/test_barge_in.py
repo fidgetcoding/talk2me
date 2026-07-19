@@ -14,7 +14,7 @@ import asyncio
 import numpy as np
 
 from talk2me.config import Config
-from talk2me.events import AssistantTextDelta, TurnComplete
+from talk2me.events import AssistantTextDelta, ToolActivity, TurnComplete
 from talk2me.orchestrator import Orchestrator
 from talk2me.vad import EnergyVAD
 
@@ -73,6 +73,67 @@ class StoppableSpeaker(FakeSpeaker):
         self.stops += 1
 
 
+class PauseBargeBackend(FakeBackend):
+    """Turn 1 runs a tool and streams prose, completing only on interrupt.
+    Turn 2 (the automatic task-resume) completes normally."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._turn = 0
+
+    async def send(self, user_text: str) -> None:
+        self.sent.append(user_text)
+        self._turn += 1
+        if self._turn == 1:
+            await self._q.put(ToolActivity(name="Write"))
+            await self._q.put(AssistantTextDelta(text="Building it now. "))
+        else:
+            await self._q.put(AssistantTextDelta(text="All done."))
+            await self._q.put(TurnComplete(text="All done."))
+
+    async def interrupt(self) -> None:
+        await super().interrupt()
+        await self._q.put(TurnComplete(text="Building it now."))
+
+
+async def pause_mid_work_case() -> None:
+    """'Sleep.' spoken while the agent works: ears pause, the control word
+    never reaches the agent, and the interrupted task is resent."""
+    cfg = Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False)
+    frames = _speech(15) + _silence(80) + _speech(20) + _silence(35)
+    mic = FakeMic(frames, sample_rate=SR)
+    backend = PauseBargeBackend()
+    tts = FakeTTS()
+    orch = Orchestrator(
+        cfg=cfg,
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Build the pong game.", "Sleep."]),
+        tts=tts,
+        mic=mic,
+        speaker=StoppableSpeaker(SR),
+    )
+    await asyncio.wait_for(orch.run(), timeout=10)
+
+    check(
+        "pause-barge: control word never sent, task resent instead",
+        backend.sent == ["Build the pong game.", "Build the pong game."],
+        str(backend.sent),
+    )
+    check("pause-barge: turn was interrupted once", backend.interrupts == 1)
+    check("pause-barge: ears ended paused", orch._paused is True)
+    check(
+        "pause-barge: pause confirmation spoken",
+        any("Paused" in s for s in tts.spoken),
+        str(tts.spoken),
+    )
+    check(
+        "pause-barge: resumed task completed",
+        any("All done." in s for s in tts.spoken),
+        str(tts.spoken),
+    )
+
+
 async def main() -> int:
     cfg = Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False)
     # Utterance 1 = the question. Then, while the agent "speaks", utterance 2 =
@@ -112,6 +173,8 @@ async def main() -> int:
         str(mic.muted_log),
     )
     check("clean shutdown", backend.closed and not mic.started)
+
+    await pause_mid_work_case()
 
     passed = sum(1 for _, ok in RESULTS if ok)
     ok = passed == len(RESULTS)

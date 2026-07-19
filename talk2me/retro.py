@@ -506,6 +506,12 @@ class RetroRenderer:
 
     # ---- errors / debug / teardown ---------------------------------------
 
+    def status_note(self, text: str) -> None:
+        self._collapse()
+        self.console.print(
+            f"   ({text})", style="quiet", markup=False, highlight=False
+        )
+
     def error(self, msg: str) -> None:
         self._collapse()
         self.console.print()

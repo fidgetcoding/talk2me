@@ -77,6 +77,7 @@ def test_smoke_all_methods() -> bool:
     r.permission_heard("mumble", None)
     r.permission_verdict("Bash", True)
     r.permission_verdict("Write", False)
+    r.status_note("resuming the interrupted task")
     r.error("[backend error] boom")
     r.debug("[t] stt 0.30s")
     r.debug("[t] first-token 1.10s", nl=True)
