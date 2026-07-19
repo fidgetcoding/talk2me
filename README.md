@@ -172,6 +172,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `▶ speech` *(only with `--debug`)* | It heard you start talking. | Keep going. |
 | `⏹ turn end: ~1950ms speech -> transcribing` *(debug)* | You stopped, the silence window elapsed, your words are being transcribed. | Nothing — the answer is coming. |
 | `⏹ … ignored (too short)` *(debug)* | It heard a blip under ~250ms (a cough, a key-click) and threw it away. | Nothing. This is noise rejection working. |
+| `⏹ … ignored (no sustained speech — taps/clicks…)` *(debug)* | A burst of transients (desk taps, typing) added up to enough total noise but never held a voiced run like a real word does. Dropped before transcription. | Nothing. Type away. |
 | `(…waiting for the rest)` | **Not a bug. Not stuck.** Your sentence sounded unfinished ("so what do you call…"), so it's holding the turn and giving you up to ~6 seconds to keep going. It'll do this up to 3 times. | Finish your sentence. Or stay silent and it sends what it has. |
 | `🗣 you: …` | What it heard, final. This is exactly what the agent receives. | If it's wrong, just say "no, I said…" — it's a conversation. |
 | `(ignored — transcription noise)` | The transcript looked like a machine artifact (one word looped), not speech. Dropped. | Nothing — that's the noise filter working. |

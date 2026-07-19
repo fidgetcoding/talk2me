@@ -105,7 +105,25 @@ async def main() -> int:
           f"{(np_got[0].shape[0] if np_got else 0)} expected={45*FRAME} "
           f"-> {'PASS' if case6 else 'FAIL'}")
 
-    ok = case1 and case2 and case3 and case4 and case5 and case6
+    # --- Case 7: tap burst — cumulative bar passed, run bar NOT (must drop) ---
+    # 8 taps of 2 frames (60ms) with 90ms gaps: 16 voiced frames total (480ms
+    # cumulative — clears min_speech_ms) but the longest run is 60ms, far
+    # under min_speech_run_ms=150. Live-observed 2026-07-19: desk taps and
+    # clicks summed past the cumulative bar and fired phantom turns.
+    tap_stream = (_speech(2) + _silence(3)) * 8 + _silence(35)
+    tap_got = await _segment(tap_stream, cfg)
+    case7 = len(tap_got) == 0
+    print(f"[case7 tap burst rejected] utterances={len(tap_got)} "
+          f"expected=0 -> {'PASS' if case7 else 'FAIL'}")
+
+    # --- Case 8: short real word — one sustained 300ms run (must emit) ---
+    # "Yes." style answers are one continuous voiced run; both bars clear.
+    word_got = await _segment(_speech(10) + _silence(35), cfg)
+    case8 = len(word_got) == 1
+    print(f"[case8 short word emits] utterances={len(word_got)} "
+          f"expected=1 -> {'PASS' if case8 else 'FAIL'}")
+
+    ok = case1 and case2 and case3 and case4 and case5 and case6 and case7 and case8
     print(f"-> {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

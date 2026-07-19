@@ -111,7 +111,12 @@ class Config:
     # 900ms and the early cut wastes the whole turn — worse than the extra
     # 300ms of patience. Continuation stitching catches what still slips.
     silence_ms: int = 1200
-    min_speech_ms: int = 250  # ignore blips shorter than this
+    min_speech_ms: int = 250  # ignore blips shorter than this (cumulative)
+    # A turn must also contain ONE sustained voiced run at least this long.
+    # Cumulative-only gating let a series of taps/clicks (30-90ms each) sum
+    # past min_speech_ms and fire phantom turns (live-observed 2026-07-19);
+    # real words hold vowels far longer than any tap.
+    min_speech_run_ms: int = 150
     # Audio kept from just BEFORE speech onset and prepended to the utterance.
     # Energy VADs miss quiet first phonemes, and without this the transcript
     # starts mid-word (live-run: "count down to fifty" -> "down to 50").

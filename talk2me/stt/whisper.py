@@ -94,6 +94,11 @@ class WhisperSTT:
         if sample_rate != 16000:
             audio = _resample_to_16k(audio, sample_rate)
         audio = np.ascontiguousarray(audio, dtype=np.float32)
+        # vad_filter: a SECOND opinion on speechiness (Silero, bundled with
+        # faster-whisper). The upstream segmenter's VAD is energy/webrtc-based
+        # and taps, clicks, and key presses can fool it — Silero classifies on
+        # spectral shape, so a click-only "utterance" yields zero speech
+        # regions and decodes to "" instead of a hallucinated word.
         segments, _info = model.transcribe(
             audio,
             language="en",
@@ -101,9 +106,18 @@ class WhisperSTT:
             beam_size=5,
             temperature=0.0,
             condition_on_previous_text=False,
-            vad_filter=False,  # we already segmented upstream
+            vad_filter=True,
         )
-        return "".join(seg.text for seg in segments).strip()
+        # Whisper's own no-speech head, paired with low decode confidence —
+        # the exact heuristic OpenAI's reference implementation uses to mark
+        # a segment as silence. Kills the classic "Thank you." hallucination
+        # on residual non-speech audio without touching quiet real speech.
+        kept = [
+            seg.text
+            for seg in segments
+            if not (seg.no_speech_prob > 0.6 and seg.avg_logprob < -1.0)
+        ]
+        return "".join(kept).strip()
 
 
 def _resample_to_16k(audio: np.ndarray, sample_rate: int) -> np.ndarray:

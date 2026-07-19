@@ -2,7 +2,10 @@
 
 Watches VAD output and emits one float32 utterance buffer per turn. A turn ends
 when trailing silence exceeds `silence_ms`, provided we heard at least
-`min_speech_ms` of speech (so coughs and key-clicks don't fire a turn).
+`min_speech_ms` of speech in total AND one sustained voiced run of at least
+`min_speech_run_ms`. The run requirement is what rejects taps, clicks, and
+key presses: each is a 30-90ms transient, so no matter how many accumulate
+toward the cumulative bar, none ever sustains like a spoken word does.
 """
 
 from __future__ import annotations
@@ -28,6 +31,9 @@ async def segment_utterances(
     frame_ms = (vad.frame_samples / vad.sample_rate) * 1000.0
     silence_frames_needed = max(1, int(cfg.silence_ms / frame_ms))
     min_speech_frames = max(1, int(cfg.min_speech_ms / frame_ms))
+    min_run_frames = max(
+        1, int(getattr(cfg, "min_speech_run_ms", 0) / frame_ms)
+    )
     # Force-emit ceiling (frames of buffered audio). Guards against a stuck-open
     # VAD growing `buf` without bound and never ending a turn. 0 disables.
     max_buf_frames = (
@@ -44,6 +50,8 @@ async def segment_utterances(
 
     buf: list[np.ndarray] = []
     speech_frames = 0
+    run_frames = 0  # current consecutive voiced run
+    longest_run = 0  # best run this turn — must clear min_run_frames to emit
     trailing_silence = 0
     in_speech = False
 
@@ -61,6 +69,8 @@ async def segment_utterances(
                     preroll.clear()
             buf.append(frame)
             speech_frames += 1
+            run_frames += 1
+            longest_run = max(longest_run, run_frames)
             trailing_silence = 0
             if max_buf_frames and len(buf) >= max_buf_frames:
                 # Ceiling hit mid-speech: emit what we have so the loop makes
@@ -74,6 +84,8 @@ async def segment_utterances(
                 yield np.concatenate(buf).astype(np.float32)
                 buf = []
                 speech_frames = 0
+                run_frames = 0
+                longest_run = 0
                 trailing_silence = 0
                 in_speech = False
                 vad.reset()
@@ -88,21 +100,31 @@ async def segment_utterances(
         if in_speech:
             # Keep trailing silence in the buffer so whisper has natural padding.
             buf.append(frame)
+            run_frames = 0
             trailing_silence += 1
             if trailing_silence >= silence_frames_needed:
-                emitted = speech_frames >= min_speech_frames
+                enough = speech_frames >= min_speech_frames
+                sustained = longest_run >= min_run_frames
+                emitted = enough and sustained
                 if cfg.debug:
                     dur_ms = int(speech_frames * frame_ms)
-                    print(
-                        f"  ⏹ turn end: ~{dur_ms}ms speech -> "
-                        f"{'transcribing' if emitted else 'ignored (too short)'}",
-                        flush=True,
-                    )
+                    if emitted:
+                        verdict = "transcribing"
+                    elif not enough:
+                        verdict = "ignored (too short)"
+                    else:
+                        verdict = (
+                            "ignored (no sustained speech — taps/clicks, "
+                            f"longest run ~{int(longest_run * frame_ms)}ms)"
+                        )
+                    print(f"  ⏹ turn end: ~{dur_ms}ms speech -> {verdict}", flush=True)
                 if emitted:
                     yield np.concatenate(buf).astype(np.float32)
                 # Reset for the next turn regardless of whether we emitted.
                 buf = []
                 speech_frames = 0
+                run_frames = 0
+                longest_run = 0
                 trailing_silence = 0
                 in_speech = False
                 vad.reset()
@@ -110,7 +132,7 @@ async def segment_utterances(
     # Stream ended (finite source, or mic stopped mid-utterance). If we were
     # still mid-speech and it qualified, the silence-terminated path above never
     # fired — flush the buffered final utterance so it isn't silently lost.
-    if in_speech and speech_frames >= min_speech_frames:
+    if in_speech and speech_frames >= min_speech_frames and longest_run >= min_run_frames:
         if cfg.debug:
             dur_ms = int(speech_frames * frame_ms)
             print(
