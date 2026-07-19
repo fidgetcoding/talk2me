@@ -15,6 +15,7 @@ from talk2me.orchestrator import (
     Orchestrator,
     _drain_overflow,
     _seems_unfinished,
+    collapse_stutter,
 )
 from talk2me.vad import EnergyVAD
 
@@ -86,6 +87,23 @@ def test_overflow() -> None:
     )
 
 
+def test_collapse_stutter() -> None:
+    looped = ". ".join(["Okay"] * 26) + "."
+    out = collapse_stutter(looped)
+    check(
+        "stutter: 26x Okay -> 3x",
+        out.lower().count("okay") == 3,
+        out,
+    )
+    normal = "Okay, let's do it. That's okay with me."
+    check("stutter: normal text untouched", collapse_stutter(normal) == normal)
+    emphasis = "no no no, stop"
+    check(
+        "stutter: 3 repeats kept as-is",
+        collapse_stutter(emphasis) == emphasis,
+    )
+
+
 async def test_presend_stitch() -> None:
     # Two utterances: an unfinished fragment, then the rest after a pause.
     cfg = Config(silence_ms=900, min_speech_ms=250)
@@ -133,6 +151,7 @@ async def test_presend_timeout_sends_fragment() -> None:
 async def main() -> int:
     test_seems_unfinished()
     test_overflow()
+    test_collapse_stutter()
     await test_presend_stitch()
     await test_presend_timeout_sends_fragment()
 

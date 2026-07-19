@@ -224,7 +224,9 @@ class Orchestrator:
                 self.mic.frames(), self.vad, self.cfg
             ):
                 t_captured = time.monotonic()
-                text = await self.stt.transcribe(utterance, self.mic.sample_rate)
+                text = collapse_stutter(
+                    await self.stt.transcribe(utterance, self.mic.sample_rate)
+                )
                 if self.cfg.debug:
                     print(
                         f"  [t] stt {time.monotonic() - t_captured:.2f}s",
@@ -550,7 +552,9 @@ class Orchestrator:
         if not cut or not buf:
             return None
         utterance = np.concatenate(buf).astype(np.float32)
-        text = await self.stt.transcribe(utterance, self.mic.sample_rate)
+        text = collapse_stutter(
+            await self.stt.transcribe(utterance, self.mic.sample_rate)
+        )
         return text or None
 
     def _begin_speaking(self, speaking: bool) -> bool:
@@ -779,7 +783,9 @@ class Orchestrator:
         if not started or not buf:
             return ""
         utterance = np.concatenate(buf).astype(np.float32)
-        return await self.stt.transcribe(utterance, self.mic.sample_rate)
+        return collapse_stutter(
+            await self.stt.transcribe(utterance, self.mic.sample_rate)
+        )
 
     async def _extend_unfinished(self, text: str) -> str:
         """Keep the mic open while a transcript sounds unfinished, stitching
@@ -891,6 +897,17 @@ async def _iter_blocks(blocks: list):
     """Adapt a pre-rendered block list back to the async-iterable play() expects."""
     for block in blocks:
         yield block
+
+
+# Whisper's known repetition-loop artifact: ambiguous audio transcribes as the
+# same word dozens of times ("Okay. Okay. Okay. ×26", live-observed). Three
+# consecutive repeats carry all the human meaning there is.
+_STUTTER = re.compile(r"\b(\S+)((?:[\s.,!?]+\1\b){3,})", re.IGNORECASE)
+
+
+def collapse_stutter(text: str) -> str:
+    """Collapse >3 consecutive repeats of the same word down to three."""
+    return _STUTTER.sub(lambda m: " ".join([m.group(1)] * 3), text)
 
 
 def match_intent(text: str) -> str | None:
