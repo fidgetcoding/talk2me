@@ -183,20 +183,24 @@ def run_wizard(existing: dict | None = None) -> dict:
 
     # 6 — where it works
     p()
-    p(f"[bold {CYAN}]6 · the folder[/]  The project the agent works on. "
-      "[dim]You can also just launch t2m from inside any project folder.[/]")
-    cwd: str | None = None
+    p(f"[bold {CYAN}]6 · the folder[/]  What the agent works on. "
+      "[dim]Enter = no pin: it works on whatever folder you launch it from "
+      "(most people want this). Type a path to pin one project forever — "
+      "e.g. a notes vault you always want it pointed at.[/]")
+    _FOLLOW = "wherever you launch it"
+    cwd: str | None = prev.get("cwd")
     for _ in range(3):
-        raw = Prompt.ask(
-            "  folder", default=prev.get("cwd") or os.getcwd()
-        )
+        raw = Prompt.ask("  folder", default=cwd or _FOLLOW).strip()
+        if not raw or raw == _FOLLOW:
+            cwd = None
+            break
         candidate = os.path.abspath(os.path.expanduser(raw))
         if os.path.isdir(candidate):
             cwd = candidate
             break
         p(f"  [warn]not a folder:[/] {candidate}")
-    if cwd is None:
-        cwd = os.getcwd()
+    else:
+        cwd = None
 
     # 7 — transcripts
     p()
