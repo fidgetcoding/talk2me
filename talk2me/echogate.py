@@ -25,6 +25,7 @@ the transcriber is naturally echo-free.
 from __future__ import annotations
 
 import threading
+import time
 
 import numpy as np
 
@@ -74,7 +75,15 @@ def _envelope(audio: np.ndarray, sample_rate: int) -> np.ndarray:
 
 
 class EchoRef:
-    """Thread-safe ring of recently played PCM (float32 mono).
+    """Thread-safe ring of recently played PCM (float32 mono) on a WALL-CLOCK
+    timeline: silence between writes is recorded as zeros.
+
+    That timeline is load-bearing. A pure sample-appender compresses out the
+    gaps between sentences and between turns, so a mic window spanning a
+    sentence boundary — [end of sentence 1][render pause][start of sentence
+    2] — can't be explained by the gapless reference at ANY single alignment,
+    and the agent's own voice reads as foreign (live 2026-07-19: it barged on
+    itself and transcribed its own reply back as a user message).
 
     The Speaker feeds it from play(); the gate reads it from a worker thread
     (speech checks run via asyncio.to_thread), hence the lock.
@@ -85,57 +94,82 @@ class EchoRef:
         self._cap = int(sample_rate * _RING_S)
         self._buf = np.zeros(self._cap, dtype=np.float32)
         self._pos = 0  # next write index
-        self._written = 0  # total samples ever written
+        self._written = 0  # total samples ever appended (audio + gap zeros)
+        # Wall time of the ring head (the end of the last appended content).
+        # Writes pace at ~real time, so add-time is the block's start and
+        # head-time advances by the block's duration.
+        self._clock = time.monotonic()
         self._lock = threading.Lock()
+
+    def _append_locked(self, b: np.ndarray) -> None:
+        if b.shape[0] >= self._cap:
+            b = b[-self._cap :]
+        end = self._pos + b.shape[0]
+        if end <= self._cap:
+            self._buf[self._pos : end] = b
+        else:
+            first = self._cap - self._pos
+            self._buf[self._pos :] = b[:first]
+            self._buf[: end - self._cap] = b[first:]
+        self._pos = end % self._cap
+        self._written += b.shape[0]
 
     def add(self, block: np.ndarray) -> None:
         b = np.asarray(block, dtype=np.float32).reshape(-1)
         if b.shape[0] == 0:
             return
-        if b.shape[0] >= self._cap:
-            b = b[-self._cap :]
+        now = time.monotonic()
         with self._lock:
-            end = self._pos + b.shape[0]
-            if end <= self._cap:
-                self._buf[self._pos : end] = b
-            else:
-                first = self._cap - self._pos
-                self._buf[self._pos :] = b[:first]
-                self._buf[: end - self._cap] = b[first:]
-            self._pos = end % self._cap
-            self._written += b.shape[0]
+            gap_s = now - self._clock
+            if gap_s > 0.02:
+                gap_n = min(int(gap_s * self.sample_rate), self._cap)
+                self._append_locked(np.zeros(gap_n, dtype=np.float32))
+            self._append_locked(b)
+            self._clock = now + b.shape[0] / self.sample_rate
 
     def recent(self, seconds: float) -> np.ndarray:
-        """The last `seconds` of played audio, oldest-first.
-
-        When less has ever been written, the front is ZERO-padded to the full
-        requested length — silence is literally what preceded the first
-        block, and the pad is what keeps the gate's alignment search
-        full-range at the START of a sentence. (Live bug 2026-07-19: a
-        truncated return collapsed the search to one misaligned lag on the
-        first sentence of a turn, the fit failed, and the agent cut itself
-        off at "1" of "count to 30".) A never-written ring still returns
-        empty so callers can tell 'nothing has ever played'."""
+        """The last `seconds` of the playback TIMELINE ending now, oldest-
+        first: ring audio, plus zeros for the silence since the last write
+        (the live tail-gap), plus front zero-padding when less has ever been
+        written — silence is literally what preceded the first block, and the
+        pad keeps the gate's alignment search full-range at the START of a
+        sentence. (Live bug 2026-07-19: a truncated return collapsed the
+        search to one misaligned lag on the first sentence of a turn, the fit
+        failed, and the agent cut itself off at "1" of "count to 30".) A
+        never-written ring still returns empty so callers can tell 'nothing
+        has ever played'."""
         n = min(int(seconds * self.sample_rate), self._cap)
         if n <= 0:
             return np.zeros(0, dtype=np.float32)
+        now = time.monotonic()
         with self._lock:
             if self._written <= 0:
                 return np.zeros(0, dtype=np.float32)
-            have = min(n, self._written) if self._written < self._cap else n
-            start = (self._pos - have) % self._cap
-            if start + have <= self._cap:
-                tail = self._buf[start : start + have].copy()
-            else:
-                first = self._cap - start
-                tail = np.concatenate(
-                    (self._buf[start:], self._buf[: have - first])
-                )
-        if have < n:
-            tail = np.concatenate(
-                (np.zeros(n - have, dtype=np.float32), tail)
+            tail_gap = min(
+                int(max(0.0, now - self._clock) * self.sample_rate), n
             )
-        return tail
+            want = n - tail_gap  # samples of actual ring content
+            have = (
+                min(want, self._written) if self._written < self._cap else want
+            )
+            if have > 0:
+                start = (self._pos - have) % self._cap
+                if start + have <= self._cap:
+                    tail = self._buf[start : start + have].copy()
+                else:
+                    first = self._cap - start
+                    tail = np.concatenate(
+                        (self._buf[start:], self._buf[: have - first])
+                    )
+            else:
+                tail = np.zeros(0, dtype=np.float32)
+        parts = []
+        if have < n - tail_gap or have <= 0:
+            parts.append(np.zeros(n - tail_gap - max(have, 0), dtype=np.float32))
+        parts.append(tail)
+        if tail_gap > 0:
+            parts.append(np.zeros(tail_gap, dtype=np.float32))
+        return np.concatenate(parts) if len(parts) > 1 else parts[0]
 
 
 class EchoGate:

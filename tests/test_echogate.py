@@ -138,6 +138,45 @@ def verdict_cases() -> None:
         f"residual={cold_gate.last_residual}",
     )
 
+    # SENTENCE BOUNDARY — the live 2026-07-19 self-barge: the mic window
+    # spans [end of sentence 1][render pause][start of sentence 2]. The ring
+    # must record that pause as timeline zeros; a gapless sample-appender
+    # can't explain the window at any single alignment and the agent's own
+    # voice reads as foreign ('▸ you (barge-in) Up to you, what are…').
+    import time as _time
+
+    s1 = _voice(1.0, seed=4, mod_hz=3.9)
+    s2 = _voice(1.0, seed=21, mod_hz=4.6, phase=0.4)
+    tl_ref = EchoRef(SR)
+    tl_gate = EchoGate(tl_ref)
+    tl_ref.add(s1)
+    _time.sleep(1.35)  # 1.0s "playback" of s1 + a 0.35s render pause
+    tl_ref.add(s2)
+    boundary_src = np.concatenate(
+        (
+            s1[-int(0.3 * SR):],
+            np.zeros(int(0.35 * SR), dtype=np.float32),
+            s2[: int(0.4 * SR)],
+        )
+    )
+    is_foreign = tl_gate.foreign(_as_echo(boundary_src, delay_s=0.05), SR)
+    check(
+        "gate: echo across a sentence pause is not foreign",
+        is_foreign is False,
+        f"residual={tl_gate.last_residual}",
+    )
+
+    # STALE RING — playback ended a while ago; a voice now must be foreign
+    # even though old audio still sits in the ring (the tail-gap zeros are
+    # what keep yesterday's sentence from 'explaining' today's speech).
+    _time.sleep(1.6)
+    is_foreign = tl_gate.foreign(_voice(1.0, seed=33, mod_hz=5.6), SR)
+    check(
+        "gate: speech after playback ended is foreign (stale ring)",
+        is_foreign is True,
+        f"residual={tl_gate.last_residual}",
+    )
+
 
 def _speech(n):
     return [(np.random.randn(FRAME) * 0.2).astype(np.float32) for _ in range(n)]
