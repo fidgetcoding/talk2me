@@ -70,8 +70,11 @@ def test_logic_with_stub_embedder() -> None:
         # went deaf).
         lock3 = VoiceLock(path="/nonexistent-model")
         embs = iter([
-            np.array([0.8, 0.6]), np.array([0.75, 0.66]),   # owner clips
-            np.array([0.95, 0.31]),                          # impostor > owner
+            # Owner clips that DISAGREE with each other (mutual sim 0.6)…
+            np.array([1.0, 0.0]), np.array([0.6, 0.8]),
+            # …while the impostor sits right on their mean: impostor sim
+            # (~1.0) > min self sim (0.6) — the inverted measurement.
+            np.array([0.894, 0.447]),
         ])
         lock3.embed = lambda a: (n := next(embs)) / np.linalg.norm(n)  # type: ignore[method-assign]
         meta3 = lock3.enroll(
