@@ -503,7 +503,20 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         from .voicelock import enrolled, run_enrollment
 
         if cfg.enroll_voice or not enrolled():
-            if not await run_enrollment(cfg):
+            if await run_enrollment(cfg):
+                # Persist the lock as the default — enrolling and then
+                # launching unlocked surprised in the field (a video's voice
+                # walked straight in because plain t2m never armed the lock).
+                from .wizard import load_saved_config, save_config
+
+                saved = load_saved_config()
+                saved["voice_lock"] = True
+                save_config(saved)
+                renderer.status_note(
+                    "voice-lock is now your DEFAULT for every launch "
+                    "(--no-voice-lock or the wizard turns it off)"
+                )
+            else:
                 renderer.status_note(
                     "enrollment didn't finish — voice-lock OFF this session"
                 )
