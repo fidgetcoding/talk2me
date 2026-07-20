@@ -36,28 +36,19 @@ async def main() -> int:
     await bridge.start()
     port = bridge.port
 
-    # --- the page is served over plain HTTP on the same port, token-gated ---
-    def _get_page(path: str) -> tuple[int, str]:
+    # --- the page is served over plain HTTP on the same port ---
+    def _get_page() -> tuple[int, str]:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        conn.request("GET", path)
+        conn.request("GET", "/")
         resp = conn.getresponse()
         body = resp.read().decode()
         conn.close()
         return resp.status, body
 
-    status, body = await asyncio.to_thread(_get_page, f"/?t={bridge.token}")
-    check("page served with token", status == 200 and "talk2me" in body and "getUserMedia" in body)
-    status_bad, _ = await asyncio.to_thread(_get_page, "/")
-    check("page refused without token", status_bad == 403)
+    status, body = await asyncio.to_thread(_get_page)
+    check("page served", status == 200 and "talk2me" in body and "getUserMedia" in body)
 
-    # A tokenless WebSocket is refused before the handshake completes.
-    try:
-        async with websockets.connect(f"ws://127.0.0.1:{port}/ws"):
-            check("ws refused without token", False, "connected?!")
-    except Exception:
-        check("ws refused without token", True)
-
-    async with websockets.connect(f"ws://127.0.0.1:{port}/ws?t={bridge.token}") as ws:
+    async with websockets.connect(f"ws://127.0.0.1:{port}/ws") as ws:
         await asyncio.wait_for(bridge.wait_connected(), timeout=5)
         check("phone connect detected", True)
 

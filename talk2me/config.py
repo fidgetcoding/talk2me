@@ -184,32 +184,6 @@ class Config:
     # Directory for plain-markdown session transcripts (None = don't save).
     # CLI --save-dir; persistent via the TALK2ME_SAVE_DIR env var.
     save_dir: str | None = None
-    # Voice-lock: the mic answers only to the enrolled voice ("solo").
-    # Toggleable live: "team session" / "solo session". Requires enrollment
-    # (t2m --enroll-voice, or automatic on first locked launch).
-    voice_lock: bool = False
-    enroll_voice: bool = False
-    # Set by the launcher when the loaded voiceprint is degraded: the lock
-    # scores every utterance but blocks nothing (observe mode).
-    voice_lock_observing: bool = False
-    # Set by the launcher when --barge-in was WANTED but the output resolved
-    # to open-air speakers (auto-downgrade) — the card explains itself
-    # instead of a bare "off" (live confusion 2026-07-19).
-    barge_downgraded: bool = False
-    # Echo-guarded talk-over: speakers + a HEALTHY (non-degraded) voice-lock
-    # keep full duplex — its own TTS voice fails the is-it-you check and can
-    # never cut; the enrolled voice can. Cut needs ~1s sustained speech (the
-    # identity check wants >=0.8s of audio).
-    echo_guard: bool = False
-    # Echo-gated speakers barge-in: on open-air speakers, keep full duplex
-    # and filter the agent's own playback out of every barge/listen decision
-    # (echogate.py — the Speaker records what it plays; mic sound the
-    # playback can't explain is foreign and may cut). Superseded echo_guard
-    # as the speakers mechanism: it works for anyone, no enrollment.
-    aec: bool = True
-    # Set by the launcher when the echo gate actually armed this session
-    # (speakers + barge-in + aec) — drives the card's barge-in row.
-    aec_active: bool = False
     # Force the launch build's plain output (no colors, no panels). The plain
     # renderer is also selected automatically on non-TTY stdout, NO_COLOR, or
     # a missing rich — a broken paint job must never mute the product.

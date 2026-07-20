@@ -24,9 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import secrets
 import struct
-from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 
@@ -42,10 +40,6 @@ class PhoneBridge:
 
     def __init__(self, port: int = 8765) -> None:
         self.port = port
-        # Per-session URL token: the bridge binds to localhost only, but
-        # localhost is shared with every process on the machine — the token
-        # keeps a curious local process from becoming the microphone.
-        self.token = secrets.token_urlsafe(16)
         self.mic_queue: asyncio.Queue[np.ndarray] = asyncio.Queue(maxsize=64)
         self.mic_muted = False
         self._ws = None
@@ -79,7 +73,7 @@ class PhoneBridge:
             self._server = None
 
     def url(self) -> str:
-        return f"http://localhost:{self.port}/?t={self.token}"
+        return f"http://localhost:{self.port}"
 
     async def wait_connected(self) -> None:
         await self._connected.wait()
@@ -87,11 +81,7 @@ class PhoneBridge:
     # ---- HTTP: serve the page --------------------------------------------
 
     def _http(self, connection, request):
-        parts = urlsplit(request.path)
-        token_ok = parse_qs(parts.query).get("t", [""])[0] == self.token
-        if not token_ok:
-            return connection.respond(403, "missing or bad token\n")
-        if parts.path == "/ws":
+        if request.path == "/ws":
             return None  # continue the WebSocket handshake
         from websockets.datastructures import Headers
         from websockets.http11 import Response
@@ -285,7 +275,7 @@ go.onclick = async () => {
     }});
   } catch (e) { st.textContent = 'mic blocked: ' + e; go.disabled = false; return; }
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://')
-                           + location.host + '/ws' + location.search);
+                           + location.host + '/ws');
   ws.binaryType = 'arraybuffer';
 
   // --- capture: downsample to 16 kHz int16 and ship ---

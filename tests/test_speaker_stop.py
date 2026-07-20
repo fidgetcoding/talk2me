@@ -3,11 +3,8 @@ crash the loop.
 
 Reproduces the live-run failure (PortAudio -9986): the barge-in monitor calls
 Speaker.stop() while play() has a blocking stream.write on a worker thread.
-The old stop() closed the stream under the write; the fix makes a mid-play
-stop() touch NO PortAudio call at all — the play loop notices the cancel flag
-after the in-flight write returns, and the healthy stream stays open for the
-next sentence (every cross-thread abort/close variant deadlocked CoreAudio in
-live runs).
+The old stop() closed the stream under the write; the fix aborts instead and
+play() treats the resulting PortAudioError as a cancellation.
 
 Uses a stub sounddevice module so no audio hardware is touched.
 
@@ -90,17 +87,7 @@ async def main() -> int:
         await stopper
         check("stop mid-write does not crash", not crashed)
         check("interrupted play returns False", result is False, f"result={result}")
-        check(
-            "stream survives the interrupt untouched (reused next sentence)",
-            sp._stream is not None
-            and not sp._stream.aborted
-            and not sp._stream.closed,
-        )
-        # A mid-play stop() must not call into PortAudio at all — the deadlock
-        # class this guards against is ANY cross-thread stream call.
-        check("no abort issued at the cut", not sp._stream.aborted)
-        sp.stop()  # idle stop AFTER play returned: normal turn-end teardown
-        check("idle stop after interrupt releases stream", sp._stream is None)
+        check("stream released after interrupt", sp._stream is None)
 
         # --- normal completion still works on a fresh speaker ---
         sp2 = audio.Speaker(16000)

@@ -200,32 +200,14 @@ class RetroRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
-        if getattr(cfg, "aec_active", False):
-            barge = "ON — speakers (its own voice is filtered out; just talk)"
-        elif getattr(cfg, "echo_guard", False):
-            barge = "ON — voice-locked talk-over (speakers; talk ~1s to cut)"
-        elif cfg.barge_in:
-            barge = "ON — talk over it anytime"
-        elif getattr(cfg, "barge_downgraded", False):
-            barge = "gaps only (speakers — it mutes its ears ONLY while speaking)"
-        else:
-            barge = "off"
         rows = [
             ("brain", cfg.model or "claude default"),
             ("ears", cfg.stt),
             ("voice", f"{cfg.voice or 'system'} @{cfg.rate_wpm or 'default'}wpm"),
-            ("barge-in", barge),
+            ("barge-in", "ON" if cfg.barge_in else "off"),
             ("tools", tools_mode),
             ("working on", tilde(cfg.cwd or os.getcwd())),
         ]
-        if getattr(cfg, "voice_lock", False):
-            lock_row = (
-                "observing (weak calibration — nothing blocked; re-enroll "
-                "to enforce)"
-                if getattr(cfg, "voice_lock_observing", False)
-                else 'ON — solo (say "team session" to open up)'
-            )
-            rows.insert(4, ("voice-lock", lock_row))
         if cfg.save_dir:
             rows.append(
                 ("saves to", tilde(os.path.expanduser(cfg.save_dir)))
@@ -257,15 +239,12 @@ class RetroRenderer:
         )
         self.console.print(hint, style="agent", markup=False)
         if cfg.half_duplex:
-            hint = (
-                "(speakers: you're heard any time it isn't mid-sentence — "
-                "thinking, tool runs, between turns. Headphones add "
-                "talk-over-its-voice; nothing else changes)"
-                if getattr(cfg, "barge_downgraded", False)
-                else "(half-duplex: talking over the agent mid-speech is "
-                "ignored — run with --barge-in to interrupt it)"
+            self.console.print(
+                "(half-duplex: talking over the agent mid-speech is ignored "
+                "— run with --barge-in and headphones to interrupt it)",
+                style="quiet",
+                markup=False,
             )
-            self.console.print(hint, style="quiet", markup=False)
 
     def transcript_path(self, path: str) -> None:
         self.console.print(
@@ -275,9 +254,8 @@ class RetroRenderer:
     def speaker_downgrade(self) -> None:
         self._collapse()
         self.console.print(
-            "🔈 speakers + --no-aec — barge-in off for this session so I "
-            "don't argue with my own echo. Drop --no-aec (or plug in "
-            "headphones) to interrupt me.",
+            "🔈 speakers on the output — barge-in off for this session so I "
+            "don't argue with my own echo. Plug in headphones to interrupt me.",
             style="warn",
             markup=False,
         )

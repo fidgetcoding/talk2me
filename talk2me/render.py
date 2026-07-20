@@ -94,7 +94,7 @@ class PlainRenderer:
         if cfg.half_duplex:
             print(
                 "   (half-duplex: talking over the agent mid-speech is ignored "
-                "— run with --barge-in to interrupt it)",
+                "— run with --barge-in and headphones to interrupt it)",
                 flush=True,
             )
 
@@ -103,9 +103,8 @@ class PlainRenderer:
 
     def speaker_downgrade(self) -> None:
         print(
-            "🔈 speakers + --no-aec — I'll mute my ears only while I'm "
-            "actually speaking (so I never hear myself). Interrupt me in any "
-            "gap; drop --no-aec for full talk-over.",
+            "🔈 speakers on the output — barge-in off for this session so I "
+            "don't argue with my own echo. Plug in headphones to interrupt me.",
             flush=True,
         )
 

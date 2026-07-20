@@ -150,7 +150,6 @@ class Orchestrator:
         session_log=None,
         renderer: Renderer | None = None,
         speech_check=None,
-        echo_gate=None,
     ) -> None:
         self.cfg = cfg
         self.backend = backend
@@ -169,11 +168,6 @@ class Orchestrator:
         # tests, whose synthetic "speech" is random noise a real classifier
         # would reject. Guards the barge cut and the pre-transcribe path.
         self._speech_check = speech_check
-        # Optional echo gate (speakers full duplex): foreign(audio, rate) is
-        # False when the sound is just our own TTS coming back off the
-        # speakers. Guards the barge cut AND the main listen loop, so the
-        # agent can neither be interrupted by nor talk to its own echo.
-        self._echo_gate = echo_gate
         # True right after "🎧 listening…" printed with nothing after it —
         # suppresses the repeat-spam that noise utterances used to cause.
         self._listening_fresh = False
@@ -185,7 +179,6 @@ class Orchestrator:
         self._turn_lock = asyncio.Lock()
         self._events = None  # the backend event iterator, shared across paths
         self._titled = False  # first user message becomes the session title
-        self._lock_rejects = 0  # consecutive voice-lock rejections (hint gate)
         # The last instruction that reached the agent — continuation stitching
         # and the noise/pause recovery resends read it; typed turns update it
         # too so an interrupted typed task can auto-resume.
@@ -207,12 +200,6 @@ class Orchestrator:
         # When the current user turn was handed to the backend; drives the
         # --debug latency lines (first-token / first-audio).
         self._t_sent = 0.0
-        # Sentences enqueued for speech THIS turn — the echo-transcript
-        # backstop compares a barge transcript against them: a "user
-        # message" that is a fragment of what the agent itself just said is
-        # its own echo that slipped the gate, and must never reach the
-        # backend (live 2026-07-19: it answered its own words three times).
-        self._spoken_texts: list[str] = []
         # Per-turn render/play pipeline: sentence n+1 renders WHILE sentence n
         # plays, so the voice never stalls between chunks waiting on `say`.
         self._render_q: asyncio.Queue[str | None] | None = None
@@ -266,40 +253,10 @@ class Orchestrator:
                 ):
                     # Typing, taps, a cough — the capture VAD was fooled but
                     # the classifier wasn't. Drop SILENTLY (typing must not
-                    # spam ignored-lines onto the screen). Exception: when
-                    # the VOICE-LOCK is doing the rejecting, repeated drops
-                    # mean the lock may be doubting its own owner — say so
-                    # with the escape hatch (typed input bypasses the gate).
-                    if getattr(self._speech_check, "locked", False) and getattr(
-                        self._speech_check, "last_score", None
-                    ) is not None:
-                        self._lock_rejects += 1
-                        if self._lock_rejects in (3, 10):
-                            self.render.status_note(
-                                "voice-lock keeps rejecting — if that's YOU, "
-                                'type "team session" + Enter, or re-enroll '
-                                "with t2m --enroll-voice"
-                            )
+                    # spam ignored-lines onto the screen).
                     if self.cfg.debug:
                         self.render.debug("(speech check: not speech — dropped)")
                     continue
-                self._lock_rejects = 0
-                if self._echo_gate is not None and not await asyncio.to_thread(
-                    self._echo_gate.foreign, utterance, self.mic.sample_rate
-                ):
-                    # Speakers full duplex: the segmenter captured our own
-                    # spoken confirmation ("Paused. Say wake up…") coming
-                    # back off the speakers. Drop it silently — transcribing
-                    # it would have the agent answering itself.
-                    if self.cfg.debug:
-                        self.render.debug("(my own echo — dropped)")
-                    continue
-                if self.cfg.debug and getattr(
-                    self._speech_check, "last_score", None
-                ) is not None:
-                    self.render.debug(
-                        f"(voice score {self._speech_check.last_score:+.2f})"
-                    )
                 raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
                 if self.cfg.debug:
                     self.render.debug(
@@ -350,7 +307,6 @@ class Orchestrator:
         saw_token = False
         self._interrupted = False
         self._spoke_any = False  # unlike `speaking`, never reset by the gate
-        self._spoken_texts = []
         # The monitor runs in BOTH duplex modes. In half-duplex the mic mutes
         # once the agent starts speaking, so the monitor naturally only hears
         # the "thinking" gap — where fresh speech is almost always the user
@@ -406,7 +362,6 @@ class Orchestrator:
                     # cut after this point means the user reacted to (or
                     # talked over) real agent speech, not a silent turn.
                     self._spoke_any = True
-                    self._spoken_texts.append(sentence)
                     assert self._render_q is not None
                     await self._render_q.put(sentence)
             elif isinstance(ev, ThinkingDelta):
@@ -457,7 +412,6 @@ class Orchestrator:
                 if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
                     self._spoke_any = True
-                    self._spoken_texts.append(pending)
                     assert self._render_q is not None
                     await self._render_q.put(pending)
                 # Feed proper nouns / identifiers from the agent's reply to the
@@ -534,9 +488,6 @@ class Orchestrator:
         if intent == "sessions":
             await self._session_picker()
             return
-        if intent in ("team", "solo"):
-            await self._set_voice_lock(intent == "solo")
-            return
         if not typed:
             # An unfinished-sounding transcript is NOT sent yet: keep the
             # mic open and stitch the rest on BEFORE the agent ever sees a
@@ -590,51 +541,9 @@ class Orchestrator:
                     )
                     break
                 if intent is not None:
-                    if intent in ("team", "solo"):
-                        # Lock switch mid-work: flip silently and resume the
-                        # interrupted task via the same never-cancel logic.
-                        await self._set_voice_lock(
-                            intent == "solo", spoken=False
-                        )
-                    else:
-                        await self._set_paused(intent == "pause")
-                    # Pause must never cancel work. "Work" = the turn ran
-                    # tools OR hadn't spoken yet (cut mid-thinking — the
-                    # answer never reached the user; live bug killed a build
-                    # in its thinking phase). The one non-resend case: it was
-                    # mid-SPEECH with no tools — that pause means "shut up",
-                    # and resending would make it start talking again.
-                    interrupted_work = self._saw_tool or not self._spoke_any
-                    if (
-                        interrupted_work
-                        and self._last_text
-                        and control_resends < 1
-                    ):
+                    await self._set_paused(intent == "pause")
+                    if self._saw_tool and self._last_text and control_resends < 1:
                         control_resends += 1
-                        to_send = self._last_text
-                        self.render.status_note("resuming the interrupted task")
-                    else:
-                        break
-                elif self._own_speech_echo(barge):
-                    # The gate let a false cut through, and the "user
-                    # message" transcribed to the agent's own words. Never
-                    # send it — the agent answering itself is the one
-                    # failure that makes the whole loop feel insane. The
-                    # cut already happened; resume killed WORK, otherwise
-                    # just go back to listening (the answer was already
-                    # mostly delivered).
-                    self.render.status_note(
-                        "(that was my own voice off the speakers — ignoring)"
-                    )
-                    if self.log:
-                        self.log.event(f"echo transcript swallowed: {barge!r}")
-                    interrupted_work = self._saw_tool or not self._spoke_any
-                    if (
-                        interrupted_work
-                        and self._last_text
-                        and noise_resends < 1
-                    ):
-                        noise_resends += 1
                         to_send = self._last_text
                         self.render.status_note("resuming the interrupted task")
                     else:
@@ -807,31 +716,6 @@ class Orchestrator:
         self.render.listening(nl=nl)
         self._listening_fresh = True
 
-    async def _set_voice_lock(self, locked: bool, *, spoken: bool = True) -> None:
-        """Flip solo/team mode on the speech gate (duck-typed)."""
-        gate = self._speech_check
-        if gate is None or not hasattr(gate, "set_locked") or getattr(
-            gate, "voicelock", None
-        ) is None:
-            self.render.status_note(
-                "voice-lock isn't enrolled — run t2m --enroll-voice"
-            )
-            return
-        gate.set_locked(locked)
-        self._listening_fresh = False
-        if locked:
-            self.render.status_note("solo session — locked to your voice")
-            if self.log:
-                self.log.event("voice-lock: solo session")
-            if spoken:
-                await self._speak_confirm("Locked to your voice.")
-        else:
-            self.render.status_note("team session — everyone can talk")
-            if self.log:
-                self.log.event("voice-lock: team session")
-            if spoken:
-                await self._speak_confirm("Team session. Everyone can talk.")
-
     async def _set_paused(self, paused: bool) -> None:
         """Flip the ears, with the matching chip + spoken confirmation."""
         self._paused = paused
@@ -858,15 +742,6 @@ class Orchestrator:
         try:
             return await task
         except asyncio.CancelledError:
-            # Only swallow OUR OWN monitor-cancel. If the session itself is
-            # being cancelled (Ctrl-C / Ctrl-T), swallowing here eats the
-            # one-shot cancellation and the session RESURRECTS — live bug
-            # 2026-07-19: the first Ctrl-C printed '🎧 listening…' and kept
-            # running instead of quitting.
-            current = asyncio.current_task()
-            if current is not None and getattr(current, "cancelling", None):
-                if current.cancelling():
-                    raise
             return None
 
     async def _working_ticker(self) -> None:
@@ -907,18 +782,9 @@ class Orchestrator:
         (or None if the stream ended before speech).
         """
         frame_ms = (self.vad.frame_samples / self.vad.sample_rate) * 1000.0
-        onset_ms = max(self.cfg.min_speech_ms, BARGE_ONSET_MIN_MS)
-        if getattr(self.cfg, "echo_guard", False):
-            # Echo-guarded speakers: the pre-cut identity check needs >=0.8s
-            # of audio to be reliable (shorter clips pass the lock
-            # unchecked, which here would mean cutting on its own echo).
-            onset_ms = max(onset_ms, 900)
-        if self._echo_gate is not None:
-            # Echo-gated speakers: a longer onset gives the gate more
-            # envelope structure per verdict — live false cuts clustered on
-            # short windows over dynamic prose.
-            onset_ms = max(onset_ms, 650)
-        onset_needed = max(1, int(onset_ms / frame_ms))
+        onset_needed = max(
+            1, int(max(self.cfg.min_speech_ms, BARGE_ONSET_MIN_MS) / frame_ms)
+        )
         silence_needed = max(1, int(self.cfg.silence_ms / frame_ms))
         cap_ms = (
             min(self.cfg.max_utterance_ms, BARGE_MAX_UTTERANCE_MS)
@@ -937,215 +803,67 @@ class Orchestrator:
         consecutive = 0
         trailing = 0
         cut = False
-        # Wake-word listener state, used ONLY while paused: collects
-        # utterances WITHOUT ever cutting the turn, and acts solely on
-        # resume commands. This is what keeps "wake up" audible mid-task
-        # after a mid-task "sleep" — previously the monitor went fully deaf
-        # while paused and wake words were swallowed (live-reported).
-        wake_onset = max(1, int(self.cfg.min_speech_ms / frame_ms))
-        w_buf: list = []
-        w_voiced = 0
-        w_trailing = 0
-        w_started = False
-        # Absolute wall-clock ceiling on the post-cut collection, set at the
-        # cut. The frame-count cap bounds the same thing ONLY while frames
-        # flow; if the pipeline ever starves (live 2026-07-19: a blocked
-        # PortAudio abort froze the loop and '[barge-in] listening…' wedged
-        # for minutes), this deadline flushes what was captured instead of
-        # hanging the session.
-        deadline = 0.0
-        # Echo-gated speakers need TWO consecutive foreign verdicts before a
-        # cut: field logs (2026-07-19) show own-echo scores flickering near
-        # the bar (0.30, 0.41 on prose), while a real talk-over sustains
-        # high. The second look, ~300ms later, sees a longer window — more
-        # envelope structure — and echo transients don't survive it.
-        confirm_frames = max(1, int(300 / frame_ms))
-        check_at = onset_needed
-        foreign_streak = 0
 
-        frames = self.mic.frames()
-        try:
-            while True:
-                if cut:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        break  # starved or over-long: flush what we have
-                    try:
-                        frame = await asyncio.wait_for(anext(frames), remaining)
-                    except (StopAsyncIteration, asyncio.TimeoutError):
-                        break
-                else:
-                    try:
-                        frame = await anext(frames)
-                    except StopAsyncIteration:
-                        break
-                if self._paused and not cut:
-                    speech = self.vad.is_speech(frame)
-                    if not w_started:
-                        if speech:
-                            w_buf.append(frame)
-                            w_voiced += 1
-                            if w_voiced >= wake_onset:
-                                w_started = True
-                        else:
-                            w_buf.clear()
-                            w_voiced = 0
-                        continue
-                    w_buf.append(frame)
-                    if speech:
-                        w_trailing = 0
-                    else:
-                        w_trailing += 1
-                    if w_trailing >= silence_needed or len(w_buf) >= max_frames:
-                        utterance = np.concatenate(w_buf).astype(np.float32)
-                        w_buf, w_voiced, w_trailing, w_started = [], 0, 0, False
-                        if self._speech_check is not None and not await asyncio.to_thread(
-                            self._speech_check, utterance, self.mic.sample_rate
-                        ):
-                            continue
-                        raw = await self.stt.transcribe(
-                            utterance, self.mic.sample_rate
-                        )
-                        if control_intent(collapse_stutter(raw)) == "resume":
-                            # Wake WITHOUT touching the running turn: screen
-                            # confirm only — a spoken one would talk over the
-                            # agent. Barge re-arms naturally (paused is False).
-                            self._paused = False
-                            self._listening_fresh = False
-                            self.render.awake()
-                            self.render.status_note(
-                                "still working — I'm listening again"
-                            )
-                            if self.log:
-                                self.log.event(
-                                    "listening resumed by voice (mid-task)"
-                                )
-                        elif self.cfg.debug and raw:
-                            self.render.debug(f"(paused — ignored: {raw})")
-                    continue
-                speech = self.vad.is_speech(frame)
-                if not cut:
-                    if speech:
-                        if consecutive == 0 and pre_roll_frames and preroll:
-                            # Prepend the just-before-onset audio so the first
-                            # word of the interruption isn't clipped.
-                            buf.extend(preroll)
-                            preroll.clear()
-                        buf.append(frame)
-                        consecutive += 1
-                        if consecutive >= check_at:
-                            # Last gate before the point of no return: cutting
-                            # kills the agent's generation, so the onset audio
-                            # must be CONFIRMED speech — typing and coughs fool
-                            # the frame VAD but not the classifier. (Model is
-                            # pre-warmed at startup; this costs ~a millisecond.)
-                            if self._speech_check is not None:
-                                onset_audio = np.concatenate(buf).astype(np.float32)
-                                if not await asyncio.to_thread(
-                                    self._speech_check,
-                                    onset_audio,
-                                    self.mic.sample_rate,
-                                ):
-                                    if self.cfg.debug:
-                                        self.render.debug(
-                                            "(barge onset rejected — not speech)"
-                                        )
-                                    buf.clear()
-                                    consecutive = 0
-                                    check_at = onset_needed
-                                    foreign_streak = 0
-                                    continue
-                            if self._echo_gate is not None:
-                                # Speakers full duplex: its own voice off the
-                                # speaker IS speech and passes the classifier —
-                                # the echo gate is what tells "me talking back"
-                                # from "someone talking over me". Not foreign =
-                                # keep playing; the window re-arms so a real
-                                # talk-over still cuts within ~an onset.
-                                onset_audio = np.concatenate(buf).astype(np.float32)
-                                if not await asyncio.to_thread(
-                                    self._echo_gate.foreign,
-                                    onset_audio,
-                                    self.mic.sample_rate,
-                                ):
-                                    if self.cfg.debug:
-                                        res = getattr(
-                                            self._echo_gate, "last_residual", None
-                                        )
-                                        lb = getattr(
-                                            self._echo_gate, "last_lowband", None
-                                        )
-                                        tag = (
-                                            f" {res:.2f}" if res is not None else ""
-                                        )
-                                        if lb is not None:
-                                            tag += f" · low {lb:.2f}"
-                                        self.render.debug(
-                                            "(barge onset rejected — my own "
-                                            f"echo{tag})"
-                                        )
-                                    buf.clear()
-                                    consecutive = 0
-                                    check_at = onset_needed
-                                    foreign_streak = 0
-                                    continue
-                                foreign_streak += 1
-                                if foreign_streak < 2:
-                                    # First foreign verdict: hold fire and
-                                    # re-judge on a longer window — echo
-                                    # scores flicker, real talk-over holds.
-                                    check_at = consecutive + confirm_frames
-                                    continue
-                            cut = True
-                            deadline = (
-                                time.monotonic() + cap_ms / 1000.0 + 2.0
-                            )
-                            self._interrupted = True
-                            self.speaker.stop()
-                            if self._echo_gate is not None:
-                                # Field record of every cut's foreign score —
-                                # threshold tuning runs on real numbers from
-                                # normal sessions, not on lab guesses.
-                                res = getattr(
-                                    self._echo_gate, "last_residual", None
-                                )
-                                lb = getattr(
-                                    self._echo_gate, "last_lowband", None
-                                )
-                                score = (
-                                    f"foreign {res:.2f}"
-                                    if res is not None
-                                    else "foreign n/a"
-                                )
-                                if lb is not None:
-                                    score += f" · low {lb:.2f}"
-                                if self.log:
-                                    self.log.event(f"barge cut ({score})")
-                                if self.cfg.debug:
-                                    self.render.debug(f"(cut — {score})")
-                            await self.backend.interrupt()
-                            self.render.barge_label(self._spoke_any)
-                    else:
-                        if pre_roll_frames:
-                            # A near-miss blip: keep its audio in the window too.
-                            preroll.extend(buf)
-                            preroll.append(frame)
-                        buf.clear()
-                        consecutive = 0
-                        check_at = onset_needed
-                        foreign_streak = 0
-                    continue
-                buf.append(frame)
+        async for frame in self.mic.frames():
+            if self._paused and not cut:
+                # Asleep: the monitor never cuts a working turn. Wake-up
+                # happens between turns through the main loop.
+                preroll.clear()
+                buf.clear()
+                consecutive = 0
+                continue
+            speech = self.vad.is_speech(frame)
+            if not cut:
                 if speech:
-                    trailing = 0
+                    if consecutive == 0 and pre_roll_frames and preroll:
+                        # Prepend the just-before-onset audio so the first
+                        # word of the interruption isn't clipped.
+                        buf.extend(preroll)
+                        preroll.clear()
+                    buf.append(frame)
+                    consecutive += 1
+                    if consecutive >= onset_needed:
+                        # Last gate before the point of no return: cutting
+                        # kills the agent's generation, so the onset audio
+                        # must be CONFIRMED speech — typing and coughs fool
+                        # the frame VAD but not the classifier. (Model is
+                        # pre-warmed at startup; this costs ~a millisecond.)
+                        if self._speech_check is not None:
+                            onset_audio = np.concatenate(buf).astype(np.float32)
+                            if not await asyncio.to_thread(
+                                self._speech_check,
+                                onset_audio,
+                                self.mic.sample_rate,
+                            ):
+                                if self.cfg.debug:
+                                    self.render.debug(
+                                        "(barge onset rejected — not speech)"
+                                    )
+                                buf.clear()
+                                consecutive = 0
+                                continue
+                        cut = True
+                        self._interrupted = True
+                        self.speaker.stop()
+                        await self.backend.interrupt()
+                        self.render.barge_label(self._spoke_any)
                 else:
-                    trailing += 1
-                    if trailing >= silence_needed:
-                        break
-                if max_frames and len(buf) >= max_frames:
+                    if pre_roll_frames:
+                        # A near-miss blip: keep its audio in the window too.
+                        preroll.extend(buf)
+                        preroll.append(frame)
+                    buf.clear()
+                    consecutive = 0
+                continue
+            buf.append(frame)
+            if speech:
+                trailing = 0
+            else:
+                trailing += 1
+                if trailing >= silence_needed:
                     break
-        finally:
-            await frames.aclose()
+            if max_frames and len(buf) >= max_frames:
+                break
 
         if not cut or not buf:
             return None
@@ -1162,36 +880,6 @@ class Orchestrator:
             # None routes into the repeat-your-question recovery upstream.
             return None
         return collapse_stutter(raw) or None
-
-    def _own_speech_echo(self, text: str) -> bool:
-        """True when a barge transcript is a (fuzzy) fragment of what the
-        agent itself said this turn — the echo-transcript backstop. Only
-        meaningful in echo-gated speakers mode; STT mishears the echo
-        ('which are commonest' for 'which are common this…'), so the match
-        is similarity over a sliding window, not equality."""
-        if self._echo_gate is None or not self._spoken_texts:
-            return False
-        b = _norm_speech(text)
-        if len(b.split()) < 3:
-            # One- or two-word fragments are too ambiguous to swallow — a
-            # real "stop" must survive even if the agent just said "stop".
-            return False
-        s = _norm_speech(" ".join(self._spoken_texts))[-600:]
-        if not s:
-            return False
-        if b in s:
-            return True
-        from difflib import SequenceMatcher
-
-        # Window ≈ fragment length: a much longer window dilutes the ratio
-        # (missed 'which are commonest' vs 'which are common this…' live).
-        win = len(b) + 4
-        best = 0.0
-        for i in range(0, max(1, len(s) - len(b) + 1), 4):
-            best = max(best, SequenceMatcher(None, b, s[i : i + win]).ratio())
-            if best >= 0.72:
-                return True
-        return False
 
     async def _reopen_ears_for_gap(self) -> bool:
         """Half-duplex only: the agent went quiet (tools/thinking) — let the
@@ -1439,12 +1127,6 @@ class Orchestrator:
             # Typing during a continuation window or a permission prompt must
             # never be stitched into a sentence or read as a verdict.
             return ""
-        if self._echo_gate is not None and not await asyncio.to_thread(
-            self._echo_gate.foreign, utterance, self.mic.sample_rate
-        ):
-            # A late echo tail of the prompt itself must never read as an
-            # approve/deny verdict or a session pick.
-            return ""
         return collapse_stutter(
             await self.stt.transcribe(utterance, self.mic.sample_rate)
         )
@@ -1567,12 +1249,6 @@ async def _iter_blocks(blocks: list):
 _STUTTER = re.compile(r"\b(\S+)((?:[\s.,!?]+\1\b){3,})", re.IGNORECASE)
 
 
-def _norm_speech(text: str) -> str:
-    """Lowercase alpha-numeric words, single-spaced — the comparison space
-    for the echo-transcript backstop (punctuation and case are STT noise)."""
-    return " ".join(re.findall(r"[a-z0-9']+", text.lower()))
-
-
 def collapse_stutter(text: str) -> str:
     """Collapse >3 consecutive repeats of the same word down to three."""
     return _STUTTER.sub(lambda m: " ".join([m.group(1)] * 3), text)
@@ -1608,29 +1284,6 @@ _PAUSE_COMMANDS = frozenset(
 _RESUME_COMMANDS = frozenset(
     ("unpause", "wake up", "resume listening", "start listening", "im back")
 )
-# Voice-lock mode switches: "team session" opens the ears to everyone;
-# "solo session" locks them back to the enrolled voice.
-_TEAM_COMMANDS = frozenset(
-    (
-        "team session",
-        "team mode",
-        "everyone can talk",
-        "listen to everyone",
-        "unlock my voice",
-        "voice lock off",
-    )
-)
-_SOLO_COMMANDS = frozenset(
-    (
-        "solo session",
-        "solo mode",
-        "only me",
-        "just me",
-        "lock to my voice",
-        "voice lock on",
-    )
-)
-
 # Whole-utterance triggers for the spoken session picker.
 _SESSION_COMMANDS = frozenset(
     (
@@ -1660,25 +1313,11 @@ _PICK_WORDS = {
 _PICK_CANCEL = frozenset(("cancel", "never mind", "nevermind", "stop", "forget it"))
 
 
-# Politeness and hesitation wrapped around a command must not defeat it:
-# "Hey actually, pause." reached the AGENT (which cheerfully faked a pause —
-# live-observed). Stripped from the ends only, so words inside a phrase and
-# real instructions ("keep working") stay untouched.
-_FILLER_WORDS = frozenset(
-    "hey ok okay so um uh well please now wait actually alright yeah like".split()
-)
-
-
 def _single_control_intent(text: str) -> str | None:
     """Whole-phrase match with consecutive-stutter collapse ("Pause. Pause,
-    Listening." still lands the command — live-observed) and end-filler
-    stripping ("Hey actually, pause." / "pause please")."""
+    Listening." still lands the command — live-observed)."""
     words = re.findall(r"[a-z]+", text.lower().replace("'", ""))
     deduped = [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
-    while deduped and deduped[0] in _FILLER_WORDS:
-        deduped.pop(0)
-    while deduped and deduped[-1] in _FILLER_WORDS:
-        deduped.pop()
     normalized = " ".join(deduped)
     if normalized in _PAUSE_COMMANDS:
         return "pause"
@@ -1686,10 +1325,6 @@ def _single_control_intent(text: str) -> str | None:
         return "resume"
     if normalized in _SESSION_COMMANDS:
         return "sessions"
-    if normalized in _TEAM_COMMANDS:
-        return "team"
-    if normalized in _SOLO_COMMANDS:
-        return "solo"
     return None
 
 

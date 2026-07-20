@@ -7,7 +7,6 @@ and the current synthesize→play pipeline is abandoned within one block (~tens 
 from __future__ import annotations
 
 import asyncio
-import threading
 
 import numpy as np
 
@@ -229,23 +228,16 @@ class Speaker:
 
     The underlying PortAudio OutputStream is opened lazily on the first play() and
     reused across calls — opening one per sentence costs ~30-150 ms of startup
-    latency and produces an audible click/gap at every sentence boundary. An
-    IDLE stop() (turn end, shutdown) closes it so the device handle never
-    leaks; a stop() during playback deliberately touches nothing (see stop())
-    and the healthy stream is reused by the next sentence.
+    latency and produces an audible click/gap at every sentence boundary. close()
+    tears it down; stop() also tears it down (it ends a turn and also catches any
+    error mid-write), so the device handle never leaks across a session.
     """
 
-    def __init__(
-        self, sample_rate: int, device: int | None = None, echo_ref=None
-    ) -> None:
+    def __init__(self, sample_rate: int, device: int | None = None) -> None:
         if sd is None:
             raise RuntimeError("sounddevice/portaudio unavailable")
         self.sample_rate = sample_rate
         self.device = device  # PortAudio index, or None for the system default
-        # Optional EchoRef: every block written to the output stream is also
-        # recorded here, giving the echo gate its playback reference (what
-        # the mic is about to hear coming off open-air speakers).
-        self.echo_ref = echo_ref
         self._cancel = asyncio.Event()
         self._stream: sd.OutputStream | None = None
         # True while play() has a write in flight on a worker thread. stop()
@@ -260,12 +252,6 @@ class Speaker:
                 channels=1,
                 dtype="float32",
                 device=self.device,
-                # Small driver buffer: a barge-in cut works by letting the
-                # in-flight write finish naturally (see stop()), so the only
-                # audio that keeps playing after a cut is what the driver
-                # already buffered. 100ms keeps that tail short while leaving
-                # underrun headroom when the CPU is busy (whisper mid-turn).
-                latency=0.1,
             )
             try:
                 stream.start()
@@ -278,26 +264,11 @@ class Speaker:
         return self._stream
 
     def close(self) -> None:
-        """Retire the shared OutputStream. Safe to call when none is open.
-
-        The actual PortAudio stop/close runs on a throwaway daemon thread:
-        Pa_StopStream blocks while the buffer drains, and a Ctrl-C landing
-        inside that C call on the main thread produced the shutdown
-        traceback spew (live 2026-07-19). The handle is detached
-        synchronously, so a reopen on the same device never races it."""
+        """Tear down the shared OutputStream. Safe to call when none is open."""
         stream, self._stream = self._stream, None
         if stream is not None:
-
-            def _teardown() -> None:
-                try:
-                    stream.stop()
-                    stream.close()
-                except Exception:
-                    pass
-
-            threading.Thread(
-                target=_teardown, daemon=True, name="t2m-close"
-            ).start()
+            stream.stop()
+            stream.close()
 
     def switch_device(self, device: int | None) -> None:
         """Repoint playback at `device`. Closes the current stream; the next
@@ -308,18 +279,16 @@ class Speaker:
 
     def stop(self) -> None:
         self._cancel.set()
-        if self._playing:
+        if self._playing and self._stream is not None:
             # A play() is mid-write on a worker thread (barge-in cutting live
-            # playback). Deliberately NO PortAudio call here: the play loop
-            # checks _cancel before every ~128ms block and the in-flight
-            # write returns on its own within one block, so playback dies in
-            # ~130ms + the driver's (low-latency) buffer tail. Every attempt
-            # to make the cut instant with a cross-thread abort() deadlocked
-            # CoreAudio against the blocked write — first freezing the event
-            # loop, then (abort moved off-thread) leaving the writer thread
-            # permanently stuck, wedging the turn and segfaulting interpreter
-            # exit (live runs 2026-07-19). A ~150ms audio tail is the price
-            # of a cut that can never hang anything.
+            # playback). abort() drops the queued audio instantly, but the
+            # close is deferred to play()'s cleanup — closing here races the
+            # blocked write and crashes the loop (live-run bug: PortAudio
+            # -9986 when barge-in stopped the speaker mid-sentence).
+            try:
+                self._stream.abort()
+            except Exception:
+                pass
             return
         # Idle stop (turn end, shutdown) — release the device so the next turn
         # reopens cleanly and a long idle gap doesn't hold the handle.
@@ -336,27 +305,23 @@ class Speaker:
                     return False
                 # write() blocks; hand it to a thread so the event loop (and the
                 # mic VAD that drives barge-in) keeps running.
-                if self.echo_ref is not None:
-                    self.echo_ref.add(block)
                 try:
                     await asyncio.to_thread(stream.write, block.astype(np.float32))
                 except sd.PortAudioError:
                     if self._cancel.is_set():
-                        # The stream died under a write that was already being
-                        # cancelled — treat as the cancellation, not a device
-                        # failure.
+                        # stop() aborted the stream underneath this write — an
+                        # expected cancellation, not a device failure.
                         return False
                     raise
             return not self._cancel.is_set()
         except BaseException:
-            # On any error (or task cancellation) retire the stream so a
-            # half-broken handle isn't reused. close() is daemon-threaded,
-            # so this never blocks the loop against a write that may still
-            # be running on its worker thread (the CoreAudio deadlock).
+            # On any error (or cancellation) tear the stream down so a half-broken
+            # handle isn't reused on the next play().
             self.close()
             raise
         finally:
-            # No teardown on a cancelled play: without an abort the stream is
-            # healthy — the driver just plays out its small buffer — and the
-            # next sentence reuses it without a reopen click.
             self._playing = False
+            if self._cancel.is_set():
+                # Interrupted playback: the writer thread is out of the stream
+                # now, so finish the close that stop() deferred.
+                self.close()
