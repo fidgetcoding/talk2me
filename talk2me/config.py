@@ -189,6 +189,9 @@ class Config:
     # (t2m --enroll-voice, or automatic on first locked launch).
     voice_lock: bool = False
     enroll_voice: bool = False
+    # Set by the launcher when the loaded voiceprint is degraded: the lock
+    # scores every utterance but blocks nothing (observe mode).
+    voice_lock_observing: bool = False
     # Set by the launcher when --barge-in was WANTED but the output resolved
     # to open-air speakers (auto-downgrade) — the card explains itself
     # instead of a bare "off" (live confusion 2026-07-19).

@@ -272,6 +272,12 @@ class Orchestrator:
                         self.render.debug("(speech check: not speech — dropped)")
                     continue
                 self._lock_rejects = 0
+                if self.cfg.debug and getattr(
+                    self._speech_check, "last_score", None
+                ) is not None:
+                    self.render.debug(
+                        f"(voice score {self._speech_check.last_score:+.2f})"
+                    )
                 raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
                 if self.cfg.debug:
                     self.render.debug(

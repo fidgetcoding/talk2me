@@ -68,6 +68,13 @@ class SileroSpeechCheck:
         if self.locked and self.voicelock is not None:
             ok, score = self.voicelock.verify(audio, sample_rate)
             self.last_score = score
+            # A DEGRADED calibration never blocks — it observes. Field
+            # lesson (three enrollments in): offline calibration doesn't
+            # transfer to the live mic/room channel; an armed-but-miscalibrated
+            # lock kept going deaf on its own owner. Scores stay visible
+            # (--debug) so a real threshold can come from live evidence.
+            if getattr(self.voicelock, "meta", {}).get("degraded", False):
+                return True
             return ok
         return True
 

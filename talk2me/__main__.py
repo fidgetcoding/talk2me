@@ -548,6 +548,15 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         and getattr(speech_check, "voicelock", None) is not None
         and not getattr(speech_check.voicelock, "meta", {}).get("degraded", True)
     )
+    if cfg.voice_lock and not lock_healthy and getattr(
+        speech_check, "voicelock", None
+    ) is not None:
+        renderer.status_note(
+            "voice-lock: calibration is weak on this mic/room — OBSERVING "
+            "only (nothing gets blocked; --debug shows the scores). A "
+            "quiet-room re-enroll can upgrade it to enforcing."
+        )
+        cfg.voice_lock_observing = True
 
     tts = factory.build_tts(cfg)
     bridge = None
