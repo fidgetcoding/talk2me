@@ -61,6 +61,17 @@ _MIC_SILENCE_RMS = 1e-4
 # rooms (reverb tails raise the echo residual; loud talk-overs raise the
 # foreign one).
 _RESIDUAL_FRAC = 0.30
+
+# The gain fit is PIECEWISE — one gain per ~250ms segment, clamped to a
+# spread around the segments' median. One global gain false-triggered on
+# real hardware (live 2026-07-19, three self-barges on prose answers): the
+# mic's AGC/room compression squashes loud syllables, so dynamic speech
+# can't be explained by a single scale factor and its own echo read as
+# foreign — while the monotone counting test sailed through. Per-segment
+# gains absorb that slow gain warp; the clamp keeps a foreign voice from
+# being 'explained' by wild gain jumps.
+_SEG_HOPS = 25  # 250ms at the 10ms hop
+_GAIN_SPREAD = 3.0
 _RESIDUAL_ABS = 3e-4
 
 
@@ -205,21 +216,17 @@ class EchoGate:
         if r.shape[0] < m.shape[0]:
             r = np.concatenate((np.zeros(m.shape[0] - r.shape[0], dtype=r.dtype), r))
 
-        # Best-gain least-squares fit of the reference envelope at every lag;
-        # keep the lag whose residual is smallest (equivalently, the best
-        # explanation of the mic by the playback).
+        # Best piecewise-gain fit of the reference envelope at every lag;
+        # keep the lag whose residual is smallest (the best explanation of
+        # the mic by the playback).
         best_res = None
         lags = r.shape[0] - m.shape[0] + 1
         mm = float(np.dot(m, m))
         for lag in range(lags):
             seg = r[lag : lag + m.shape[0]]
-            rr = float(np.dot(seg, seg))
-            if rr <= 0.0:
+            if float(np.dot(seg, seg)) <= 0.0:
                 continue
-            g = max(0.0, float(np.dot(m, seg)) / rr)
-            res = m - g * seg
-            np.clip(res, 0.0, None, out=res)
-            res_e = float(np.dot(res, res))
+            res_e = _piecewise_residual(m, seg)
             if best_res is None or res_e < best_res:
                 best_res = res_e
         if best_res is None:
@@ -228,3 +235,26 @@ class EchoGate:
         self.last_residual = frac
         res_rms = float(np.sqrt(best_res / m.shape[0]))
         return frac > _RESIDUAL_FRAC and res_rms > _RESIDUAL_ABS
+
+
+def _piecewise_residual(m: np.ndarray, seg: np.ndarray) -> float:
+    """Residual energy of `m` after subtracting the best per-segment-gain
+    fit of `seg`, gains clamped to a spread around their median."""
+    n = m.shape[0]
+    bounds = [(a, min(a + _SEG_HOPS, n)) for a in range(0, n, _SEG_HOPS)]
+    gains = []
+    for a, b in bounds:
+        rr = float(np.dot(seg[a:b], seg[a:b]))
+        g = max(0.0, float(np.dot(m[a:b], seg[a:b])) / rr) if rr > 0.0 else 0.0
+        gains.append(g)
+    positive = [g for g in gains if g > 0.0]
+    if positive:
+        gmed = float(np.median(positive))
+        if gmed > 0.0:
+            lo, hi = gmed / _GAIN_SPREAD, gmed * _GAIN_SPREAD
+            gains = [min(max(g, lo), hi) if g > 0.0 else 0.0 for g in gains]
+    res_e = 0.0
+    for (a, b), g in zip(bounds, gains):
+        res = np.clip(m[a:b] - g * seg[a:b], 0.0, None)
+        res_e += float(np.dot(res, res))
+    return res_e

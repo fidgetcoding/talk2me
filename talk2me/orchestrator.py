@@ -207,6 +207,12 @@ class Orchestrator:
         # When the current user turn was handed to the backend; drives the
         # --debug latency lines (first-token / first-audio).
         self._t_sent = 0.0
+        # Sentences enqueued for speech THIS turn — the echo-transcript
+        # backstop compares a barge transcript against them: a "user
+        # message" that is a fragment of what the agent itself just said is
+        # its own echo that slipped the gate, and must never reach the
+        # backend (live 2026-07-19: it answered its own words three times).
+        self._spoken_texts: list[str] = []
         # Per-turn render/play pipeline: sentence n+1 renders WHILE sentence n
         # plays, so the voice never stalls between chunks waiting on `say`.
         self._render_q: asyncio.Queue[str | None] | None = None
@@ -344,6 +350,7 @@ class Orchestrator:
         saw_token = False
         self._interrupted = False
         self._spoke_any = False  # unlike `speaking`, never reset by the gate
+        self._spoken_texts = []
         # The monitor runs in BOTH duplex modes. In half-duplex the mic mutes
         # once the agent starts speaking, so the monitor naturally only hears
         # the "thinking" gap — where fresh speech is almost always the user
@@ -399,6 +406,7 @@ class Orchestrator:
                     # cut after this point means the user reacted to (or
                     # talked over) real agent speech, not a silent turn.
                     self._spoke_any = True
+                    self._spoken_texts.append(sentence)
                     assert self._render_q is not None
                     await self._render_q.put(sentence)
             elif isinstance(ev, ThinkingDelta):
@@ -449,6 +457,7 @@ class Orchestrator:
                 if pending.strip() and not self._interrupted:
                     speaking = self._begin_speaking(speaking)
                     self._spoke_any = True
+                    self._spoken_texts.append(pending)
                     assert self._render_q is not None
                     await self._render_q.put(pending)
                 # Feed proper nouns / identifiers from the agent's reply to the
@@ -602,6 +611,30 @@ class Orchestrator:
                         and control_resends < 1
                     ):
                         control_resends += 1
+                        to_send = self._last_text
+                        self.render.status_note("resuming the interrupted task")
+                    else:
+                        break
+                elif self._own_speech_echo(barge):
+                    # The gate let a false cut through, and the "user
+                    # message" transcribed to the agent's own words. Never
+                    # send it — the agent answering itself is the one
+                    # failure that makes the whole loop feel insane. The
+                    # cut already happened; resume killed WORK, otherwise
+                    # just go back to listening (the answer was already
+                    # mostly delivered).
+                    self.render.status_note(
+                        "(that was my own voice off the speakers — ignoring)"
+                    )
+                    if self.log:
+                        self.log.event(f"echo transcript swallowed: {barge!r}")
+                    interrupted_work = self._saw_tool or not self._spoke_any
+                    if (
+                        interrupted_work
+                        and self._last_text
+                        and noise_resends < 1
+                    ):
+                        noise_resends += 1
                         to_send = self._last_text
                         self.render.status_note("resuming the interrupted task")
                     else:
@@ -871,6 +904,11 @@ class Orchestrator:
             # of audio to be reliable (shorter clips pass the lock
             # unchecked, which here would mean cutting on its own echo).
             onset_ms = max(onset_ms, 900)
+        if self._echo_gate is not None:
+            # Echo-gated speakers: a longer onset gives the gate more
+            # envelope structure per verdict — live false cuts clustered on
+            # short windows over dynamic prose.
+            onset_ms = max(onset_ms, 650)
         onset_needed = max(1, int(onset_ms / frame_ms))
         silence_needed = max(1, int(self.cfg.silence_ms / frame_ms))
         cap_ms = (
@@ -1031,6 +1069,22 @@ class Orchestrator:
                             )
                             self._interrupted = True
                             self.speaker.stop()
+                            if self._echo_gate is not None:
+                                # Field record of every cut's foreign score —
+                                # threshold tuning runs on real numbers from
+                                # normal sessions, not on lab guesses.
+                                res = getattr(
+                                    self._echo_gate, "last_residual", None
+                                )
+                                if res is not None:
+                                    if self.log:
+                                        self.log.event(
+                                            f"barge cut (foreign {res:.2f})"
+                                        )
+                                    if self.cfg.debug:
+                                        self.render.debug(
+                                            f"(cut — foreign {res:.2f})"
+                                        )
                             await self.backend.interrupt()
                             self.render.barge_label(self._spoke_any)
                     else:
@@ -1068,6 +1122,36 @@ class Orchestrator:
             # None routes into the repeat-your-question recovery upstream.
             return None
         return collapse_stutter(raw) or None
+
+    def _own_speech_echo(self, text: str) -> bool:
+        """True when a barge transcript is a (fuzzy) fragment of what the
+        agent itself said this turn — the echo-transcript backstop. Only
+        meaningful in echo-gated speakers mode; STT mishears the echo
+        ('which are commonest' for 'which are common this…'), so the match
+        is similarity over a sliding window, not equality."""
+        if self._echo_gate is None or not self._spoken_texts:
+            return False
+        b = _norm_speech(text)
+        if len(b.split()) < 3:
+            # One- or two-word fragments are too ambiguous to swallow — a
+            # real "stop" must survive even if the agent just said "stop".
+            return False
+        s = _norm_speech(" ".join(self._spoken_texts))[-600:]
+        if not s:
+            return False
+        if b in s:
+            return True
+        from difflib import SequenceMatcher
+
+        # Window ≈ fragment length: a much longer window dilutes the ratio
+        # (missed 'which are commonest' vs 'which are common this…' live).
+        win = len(b) + 4
+        best = 0.0
+        for i in range(0, max(1, len(s) - len(b) + 1), 4):
+            best = max(best, SequenceMatcher(None, b, s[i : i + win]).ratio())
+            if best >= 0.72:
+                return True
+        return False
 
     async def _reopen_ears_for_gap(self) -> bool:
         """Half-duplex only: the agent went quiet (tools/thinking) — let the
@@ -1441,6 +1525,12 @@ async def _iter_blocks(blocks: list):
 # same word dozens of times ("Okay. Okay. Okay. ×26", live-observed). Three
 # consecutive repeats carry all the human meaning there is.
 _STUTTER = re.compile(r"\b(\S+)((?:[\s.,!?]+\1\b){3,})", re.IGNORECASE)
+
+
+def _norm_speech(text: str) -> str:
+    """Lowercase alpha-numeric words, single-spaced — the comparison space
+    for the echo-transcript backstop (punctuation and case are STT noise)."""
+    return " ".join(re.findall(r"[a-z0-9']+", text.lower()))
 
 
 def collapse_stutter(text: str) -> str:

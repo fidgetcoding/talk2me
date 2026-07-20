@@ -138,6 +138,36 @@ def verdict_cases() -> None:
         f"residual={cold_gate.last_residual}",
     )
 
+    # AGC / COMPRESSION — real mics run automatic gain control: loud
+    # syllables get squashed, so dynamic prose echo can't be explained by
+    # ONE gain (live 2026-07-19: three self-barges on prose answers while
+    # the monotone count passed). The piecewise-gain fit must absorb a
+    # slow gain warp…
+    agc_ref = EchoRef(SR)
+    agc_ref.add(played)
+    agc_gate = EchoGate(agc_ref)
+    echo = _as_echo(played)[-int(1.2 * SR):]
+    env = np.convolve(np.abs(echo), np.ones(1600) / 1600.0, mode="same")
+    agc_echo = (echo / np.sqrt(env / (env.mean() + 1e-9) + 0.3)).astype(
+        np.float32
+    )
+    is_foreign = agc_gate.foreign(agc_echo, SR)
+    check(
+        "gate: AGC-compressed dynamic echo is not foreign",
+        is_foreign is False,
+        f"residual={agc_gate.last_residual}",
+    )
+
+    # …while a real voice over that same AGC-warped echo still cuts (the
+    # gain clamp must not 'explain' foreign speech away).
+    agc_mixed = agc_echo + _voice(1.2, seed=9, mod_hz=5.3, phase=1.3, amp=0.15)
+    is_foreign = agc_gate.foreign(agc_mixed, SR)
+    check(
+        "gate: voice over AGC-warped echo is foreign",
+        is_foreign is True,
+        f"residual={agc_gate.last_residual}",
+    )
+
     # SENTENCE BOUNDARY — the live 2026-07-19 self-barge: the mic window
     # spans [end of sentence 1][render pause][start of sentence 2]. The ring
     # must record that pause as timeline zeros; a gapless sample-appender
@@ -272,6 +302,78 @@ async def echo_never_cuts_case() -> None:
     check("echo-no-cut: the gate was consulted for the barge", gate.calls >= 2)
 
 
+def own_speech_matcher_cases() -> None:
+    """The echo-transcript backstop: barge transcripts that are fragments of
+    what the agent just said (incl. STT mishears) must match; real user
+    speech must not. Exercises the live 2026-07-19 false messages."""
+    from talk2me.render import PlainRenderer
+
+    orch = object.__new__(Orchestrator)
+    orch._echo_gate = object()  # any non-None: AEC mode
+    orch._spoken_texts = [
+        "Quantum physics is the branch of physics that describes how nature "
+        "behaves at the smallest scales.",
+        "Keep an eye out for afternoon thunderstorms, which are common this "
+        "time of year.",
+        "Yeah, thunderstorms are the most common severe weather in NYC "
+        "during summer.",
+    ]
+    orch.render = PlainRenderer()
+
+    for text in (
+        "Physics is the branch of.",
+        "which are commonest.",
+        "thunderstorms are them.",
+    ):
+        check(
+            f"backstop: live false message matches: {text!r}",
+            orch._own_speech_echo(text) is True,
+        )
+    for text in (
+        "Okay, great job. Now talk to me about quantum physics.",
+        "I was asking about quantum physics.",
+        "Tell me about the weather tomorrow instead.",
+        "stop",  # short fragments never swallowed
+    ):
+        check(
+            f"backstop: real user speech passes: {text!r}",
+            orch._own_speech_echo(text) is False,
+        )
+    orch._spoken_texts = []
+    check(
+        "backstop: silent turn never matches",
+        orch._own_speech_echo("anything at all here") is False,
+    )
+
+
+async def echo_transcript_swallowed_case() -> None:
+    """A false cut whose transcript is the agent's own sentence must not
+    become a user message — the session returns to listening."""
+    cfg = Config(
+        silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False
+    )
+    frames = _speech(15) + _silence(80) + _speech(25) + _silence(35)
+    backend = _BargeBackend()
+    orch = Orchestrator(
+        cfg=cfg,
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        # The "barge" transcribes to a fragment of the agent's own reply.
+        stt=FakeSTT(["Question one.", "Let me explain at length."]),
+        tts=FakeTTS(),
+        mic=FakeMic(frames, sample_rate=SR),
+        speaker=_CountingSpeaker(SR),
+        echo_gate=_StubGate([True], default=True),
+    )
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check(
+        "swallow: the echo transcript never reached the agent",
+        backend.sent == ["Question one."],
+        str(backend.sent),
+    )
+    check("swallow: the turn was still cut once", backend.interrupts == 1)
+
+
 async def foreign_cuts_case() -> None:
     """The same frames judged 'foreign' must cut the turn like classic barge."""
     cfg = Config(
@@ -303,8 +405,10 @@ async def foreign_cuts_case() -> None:
 def main() -> int:
     ring_cases()
     verdict_cases()
+    own_speech_matcher_cases()
     asyncio.run(echo_never_cuts_case())
     asyncio.run(foreign_cuts_case())
+    asyncio.run(echo_transcript_swallowed_case())
     failed = [n for n, ok in RESULTS if not ok]
     print(
         f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed",
