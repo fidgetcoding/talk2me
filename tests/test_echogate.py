@@ -171,6 +171,37 @@ def verdict_cases() -> None:
         f"residual={agc_gate.last_residual}",
     )
 
+    # LOW-BAND HUMAN CHANNEL — the volume-proof path. A human voice carries
+    # fundamental energy at 85-155Hz that laptop speakers can't emit; a mic
+    # window with real bass contains a person even when the residual path
+    # is blinded by loud echo (field 2026-07-20: conversational talk-over
+    # peaked at residual 0.31, inside the echo range — inseparable there).
+    n = int(1.2 * SR)
+    t = np.arange(n) / SR
+    envelope = 0.5 * (1.0 + np.sin(2 * np.pi * 3.1 * t + 0.2))
+    bass_voice = (
+        np.sin(2 * np.pi * 120.0 * t) * envelope * 0.12
+    ).astype(np.float32)
+    lb_ref = EchoRef(SR)
+    lb_ref.add(played)
+    lb_gate = EchoGate(lb_ref)
+    lb_mixed = _as_echo(played)[-n:] + bass_voice
+    is_foreign = lb_gate.foreign(lb_mixed, SR)
+    check(
+        "gate: bass-carrying voice over loud echo is foreign (low-band)",
+        is_foreign is True,
+        f"lowband={lb_gate.last_lowband}",
+    )
+    # …and the (bass-free, noise-carrier) echo fixtures must not trip the
+    # low-band channel by accident.
+    lb_gate2 = EchoGate(lb_ref)
+    lb_gate2.foreign(_as_echo(played)[-n:], SR)
+    check(
+        "gate: pure echo stays under the low-band bar",
+        (lb_gate2.last_lowband or 0.0) < 0.25,
+        f"lowband={lb_gate2.last_lowband}",
+    )
+
     # SENTENCE BOUNDARY — the live 2026-07-19 self-barge: the mic window
     # spans [end of sentence 1][render pause][start of sentence 2]. The ring
     # must record that pause as timeline zeros; a gapless sample-appender

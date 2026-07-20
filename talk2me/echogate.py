@@ -73,6 +73,20 @@ _RESIDUAL_FRAC = 0.50
 # being 'explained' by wild gain jumps.
 _SEG_HOPS = 25  # 250ms at the 10ms hop
 _GAIN_SPREAD = 3.0
+
+# Low-band human detector — the volume-proof OR-path. Field data
+# (2026-07-20) showed the residual FRACTION saturating: a conversational
+# talk-over's share of the mic peaks ~0.31 while own-echo ranges to 0.47 —
+# inseparable at any threshold. What IS separable is spectrum: laptop
+# speakers roll off hard below ~200Hz and the TTS voice's pitch sits near
+# 200Hz, while a human (especially male) voice carries fundamental energy
+# at 85-155Hz the speakers physically cannot emit. A mic window whose
+# 70-170Hz share is large therefore contains a person, no matter how loud
+# the playback is. Verdict on the FRACTION (AGC-proof), with an absolute
+# floor so room rumble on a silent mic can't vote.
+_LOWBAND_HZ = (70.0, 170.0)
+_LOWBAND_FRAC = 0.25
+_LOWBAND_ABS = 1e-3
 _RESIDUAL_ABS = 3e-4
 
 
@@ -192,9 +206,13 @@ class EchoGate:
         self.ref = ref
         # Last computed residual fraction, surfaced for --debug lines.
         self.last_residual: float | None = None
+        # Last computed low-band fraction (70-170Hz share of mic energy) —
+        # the human-in-the-room channel, surfaced for --debug lines.
+        self.last_lowband: float | None = None
 
     def foreign(self, mic_audio: np.ndarray, sample_rate: int) -> bool:
         self.last_residual = None
+        self.last_lowband = None
         mic = np.asarray(mic_audio, dtype=np.float32).reshape(-1)
         max_n = int(_MAX_ANALYSIS_S * sample_rate)
         if mic.shape[0] > max_n:
@@ -209,6 +227,12 @@ class EchoGate:
         ref = self.ref.recent(mic_dur + _MAX_LEAD_S)
         if ref.shape[0] == 0 or float(np.sqrt(np.mean(ref * ref))) < _REF_SILENCE_RMS:
             return True  # nothing playing — all sound is foreign
+
+        # Volume-proof channel first: bass the speakers can't make = human.
+        lb_frac, lb_rms = _lowband(mic, sample_rate)
+        self.last_lowband = lb_frac
+        if lb_frac > _LOWBAND_FRAC and lb_rms > _LOWBAND_ABS:
+            return True
 
         m = _envelope(mic, sample_rate)
         r = _envelope(ref, self.ref.sample_rate)
@@ -236,6 +260,21 @@ class EchoGate:
         self.last_residual = frac
         res_rms = float(np.sqrt(best_res / m.shape[0]))
         return frac > _RESIDUAL_FRAC and res_rms > _RESIDUAL_ABS
+
+
+def _lowband(audio: np.ndarray, sample_rate: int) -> tuple[float, float]:
+    """(fraction, rms) of the mic energy inside the low voice band."""
+    spec = np.abs(np.fft.rfft(audio.astype(np.float64)))
+    power = spec * spec
+    total = float(power.sum())
+    if total <= 0.0:
+        return 0.0, 0.0
+    freqs = np.fft.rfftfreq(audio.shape[0], d=1.0 / sample_rate)
+    band = (freqs >= _LOWBAND_HZ[0]) & (freqs <= _LOWBAND_HZ[1])
+    band_power = float(power[band].sum())
+    frac = float(np.sqrt(band_power / total))
+    rms = float(np.sqrt(2.0 * band_power / (audio.shape[0] ** 2)))
+    return frac, rms
 
 
 def _piecewise_residual(m: np.ndarray, seg: np.ndarray) -> float:

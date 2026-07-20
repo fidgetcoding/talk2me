@@ -854,7 +854,14 @@ def main(argv: list[str] | None = None) -> int:
             run_wizard(load_saved_config())
     except KeyboardInterrupt:
         print("\nbye.", flush=True)
-        return 0
+        # Hard exit, deliberately: interpreter teardown after Ctrl-C kept
+        # crashing — non-daemon executor threads stuck in a CoreAudio write
+        # hung the exit, and daemon teardown threads inside Pa_StopStream
+        # raced sounddevice's atexit Pa_Terminate into a segfault (both
+        # live-observed 2026-07-19/20). Everything that matters is already
+        # on disk (the transcript flushes per write); the OS reclaims audio
+        # handles more reliably than a dying interpreter does.
+        os._exit(0)
 
 
 if __name__ == "__main__":

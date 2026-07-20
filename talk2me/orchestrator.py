@@ -1072,9 +1072,14 @@ class Orchestrator:
                                         res = getattr(
                                             self._echo_gate, "last_residual", None
                                         )
+                                        lb = getattr(
+                                            self._echo_gate, "last_lowband", None
+                                        )
                                         tag = (
                                             f" {res:.2f}" if res is not None else ""
                                         )
+                                        if lb is not None:
+                                            tag += f" · low {lb:.2f}"
                                         self.render.debug(
                                             "(barge onset rejected — my own "
                                             f"echo{tag})"
@@ -1104,15 +1109,20 @@ class Orchestrator:
                                 res = getattr(
                                     self._echo_gate, "last_residual", None
                                 )
-                                if res is not None:
-                                    if self.log:
-                                        self.log.event(
-                                            f"barge cut (foreign {res:.2f})"
-                                        )
-                                    if self.cfg.debug:
-                                        self.render.debug(
-                                            f"(cut — foreign {res:.2f})"
-                                        )
+                                lb = getattr(
+                                    self._echo_gate, "last_lowband", None
+                                )
+                                score = (
+                                    f"foreign {res:.2f}"
+                                    if res is not None
+                                    else "foreign n/a"
+                                )
+                                if lb is not None:
+                                    score += f" · low {lb:.2f}"
+                                if self.log:
+                                    self.log.event(f"barge cut ({score})")
+                                if self.cfg.debug:
+                                    self.render.debug(f"(cut — {score})")
                             await self.backend.interrupt()
                             self.render.barge_label(self._spoke_any)
                     else:
