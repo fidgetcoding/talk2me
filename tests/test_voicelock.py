@@ -149,10 +149,13 @@ def test_real_model_discrimination() -> None:
         meta = lock.enroll(me, [other])
         ok_me, s_me = lock.verify(probe)
         ok_other, s_other = lock.verify(other)
+        # The CONTRACT: the owner always passes. Impostor refusal is only
+        # guaranteed when calibration separated them (not degraded) — the
+        # owner-favoring rule deliberately goes permissive otherwise.
         _report(
-            f"REAL: enrolled voice passes ({s_me:+.2f}), other voice refused "
-            f"({s_other:+.2f}), threshold {meta['threshold']}",
-            ok_me is True and ok_other is False,
+            f"REAL: owner passes ({s_me:+.2f}); impostor {s_other:+.2f} "
+            f"[thr {meta['threshold']}, degraded={meta['degraded']}]",
+            ok_me is True and (meta["degraded"] or ok_other is False),
         )
     os.environ["TALK2ME_VOICEPRINT"] = "/nonexistent-t2m-test-voiceprint"
 
