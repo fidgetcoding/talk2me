@@ -74,16 +74,13 @@ _RESIDUAL_FRAC = 0.50
 _SEG_HOPS = 25  # 250ms at the 10ms hop
 _GAIN_SPREAD = 3.0
 
-# Low-band human detector — the volume-proof OR-path. Field data
-# (2026-07-20) showed the residual FRACTION saturating: a conversational
-# talk-over's share of the mic peaks ~0.31 while own-echo ranges to 0.47 —
-# inseparable at any threshold. What IS separable is spectrum: laptop
-# speakers roll off hard below ~200Hz and the TTS voice's pitch sits near
-# 200Hz, while a human (especially male) voice carries fundamental energy
-# at 85-155Hz the speakers physically cannot emit. A mic window whose
-# 70-170Hz share is large therefore contains a person, no matter how loud
-# the playback is. Verdict on the FRACTION (AGC-proof), with an absolute
-# floor so room rumble on a silent mic can't vote.
+# Low-band human detector — a voice's 70-170Hz fundamentals vs the TTS
+# pitch near 200Hz. OFF BY DEFAULT: the premise "laptop speakers can't
+# make bass" failed in the field — a MacBook Pro's woofers put real energy
+# down there, and measured echo low-band fractions (0.16-0.31) overlap a
+# real talk-over's (~0.26). The channel still COMPUTES on every verdict so
+# debug lines and cut logs keep collecting field numbers; it only votes on
+# hardware where it separates (EchoGate(lowband=True)).
 _LOWBAND_HZ = (70.0, 170.0)
 _LOWBAND_FRAC = 0.25
 _LOWBAND_ABS = 1e-3
@@ -202,8 +199,9 @@ class EchoGate:
     """foreign(mic_audio, sample_rate) -> True when the mic holds sound the
     playback reference can't explain. Pure numpy; safe on worker threads."""
 
-    def __init__(self, ref: EchoRef) -> None:
+    def __init__(self, ref: EchoRef, *, lowband: bool = False) -> None:
         self.ref = ref
+        self.lowband = lowband
         # Last computed residual fraction, surfaced for --debug lines.
         self.last_residual: float | None = None
         # Last computed low-band fraction (70-170Hz share of mic energy) —
@@ -228,10 +226,11 @@ class EchoGate:
         if ref.shape[0] == 0 or float(np.sqrt(np.mean(ref * ref))) < _REF_SILENCE_RMS:
             return True  # nothing playing — all sound is foreign
 
-        # Volume-proof channel first: bass the speakers can't make = human.
+        # Low-band channel: always measured (telemetry), votes only when
+        # enabled for the hardware.
         lb_frac, lb_rms = _lowband(mic, sample_rate)
         self.last_lowband = lb_frac
-        if lb_frac > _LOWBAND_FRAC and lb_rms > _LOWBAND_ABS:
+        if self.lowband and lb_frac > _LOWBAND_FRAC and lb_rms > _LOWBAND_ABS:
             return True
 
         m = _envelope(mic, sample_rate)

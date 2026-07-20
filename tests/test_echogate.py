@@ -184,7 +184,7 @@ def verdict_cases() -> None:
     ).astype(np.float32)
     lb_ref = EchoRef(SR)
     lb_ref.add(played)
-    lb_gate = EchoGate(lb_ref)
+    lb_gate = EchoGate(lb_ref, lowband=True)
     lb_mixed = _as_echo(played)[-n:] + bass_voice
     is_foreign = lb_gate.foreign(lb_mixed, SR)
     check(
@@ -194,12 +194,22 @@ def verdict_cases() -> None:
     )
     # …and the (bass-free, noise-carrier) echo fixtures must not trip the
     # low-band channel by accident.
-    lb_gate2 = EchoGate(lb_ref)
+    lb_gate2 = EchoGate(lb_ref, lowband=True)
     lb_gate2.foreign(_as_echo(played)[-n:], SR)
     check(
         "gate: pure echo stays under the low-band bar",
         (lb_gate2.last_lowband or 0.0) < 0.25,
         f"lowband={lb_gate2.last_lowband}",
+    )
+    # Default gates (lowband OFF — field 2026-07-20: MacBook woofers put
+    # echo low-band at 0.16-0.31, overlapping a real talk-over) still
+    # MEASURE the channel for telemetry without letting it vote.
+    lb_gate3 = EchoGate(lb_ref)
+    verdict = lb_gate3.foreign(lb_mixed, SR)
+    check(
+        "gate: lowband is telemetry-only by default",
+        lb_gate3.last_lowband is not None and verdict is False,
+        f"lowband={lb_gate3.last_lowband} verdict={verdict}",
     )
 
     # SENTENCE BOUNDARY — the live 2026-07-19 self-barge: the mic window
