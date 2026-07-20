@@ -229,9 +229,10 @@ class Speaker:
 
     The underlying PortAudio OutputStream is opened lazily on the first play() and
     reused across calls — opening one per sentence costs ~30-150 ms of startup
-    latency and produces an audible click/gap at every sentence boundary. close()
-    tears it down; stop() also tears it down (it ends a turn and also catches any
-    error mid-write), so the device handle never leaks across a session.
+    latency and produces an audible click/gap at every sentence boundary. An
+    IDLE stop() (turn end, shutdown) closes it so the device handle never
+    leaks; a stop() during playback deliberately touches nothing (see stop())
+    and the healthy stream is reused by the next sentence.
     """
 
     def __init__(
@@ -259,6 +260,12 @@ class Speaker:
                 channels=1,
                 dtype="float32",
                 device=self.device,
+                # Small driver buffer: a barge-in cut works by letting the
+                # in-flight write finish naturally (see stop()), so the only
+                # audio that keeps playing after a cut is what the driver
+                # already buffered. 100ms keeps that tail short while leaving
+                # underrun headroom when the CPU is busy (whisper mid-turn).
+                latency=0.1,
             )
             try:
                 stream.start()
@@ -286,29 +293,18 @@ class Speaker:
 
     def stop(self) -> None:
         self._cancel.set()
-        if self._playing and self._stream is not None:
+        if self._playing:
             # A play() is mid-write on a worker thread (barge-in cutting live
-            # playback). abort() drops the queued audio instantly, but the
-            # close is deferred to play()'s cleanup — closing here races the
-            # blocked write and crashes the loop (live-run bug: PortAudio
-            # -9986 when barge-in stopped the speaker mid-sentence).
-            #
-            # The abort itself runs on a THROWAWAY THREAD, never the caller:
-            # stop() is called from the event loop (the barge monitor), and
-            # PortAudio's abort can block against the in-flight write's host
-            # lock. Blocking the loop freezes EVERYTHING — mic frames stop
-            # enqueueing and the barge collection starves (live-run bug
-            # 2026-07-19: '[barge-in] listening…' wedged for over a minute,
-            # then a stuck writer thread segfaulted interpreter exit).
-            stream = self._stream
-
-            def _abort() -> None:
-                try:
-                    stream.abort()
-                except Exception:
-                    pass
-
-            threading.Thread(target=_abort, daemon=True, name="t2m-abort").start()
+            # playback). Deliberately NO PortAudio call here: the play loop
+            # checks _cancel before every ~128ms block and the in-flight
+            # write returns on its own within one block, so playback dies in
+            # ~130ms + the driver's (low-latency) buffer tail. Every attempt
+            # to make the cut instant with a cross-thread abort() deadlocked
+            # CoreAudio against the blocked write — first freezing the event
+            # loop, then (abort moved off-thread) leaving the writer thread
+            # permanently stuck, wedging the turn and segfaulting interpreter
+            # exit (live runs 2026-07-19). A ~150ms audio tail is the price
+            # of a cut that can never hang anything.
             return
         # Idle stop (turn end, shutdown) — release the device so the next turn
         # reopens cleanly and a long idle gap doesn't hold the handle.
@@ -331,34 +327,36 @@ class Speaker:
                     await asyncio.to_thread(stream.write, block.astype(np.float32))
                 except sd.PortAudioError:
                     if self._cancel.is_set():
-                        # stop() aborted the stream underneath this write — an
-                        # expected cancellation, not a device failure.
+                        # The stream died under a write that was already being
+                        # cancelled — treat as the cancellation, not a device
+                        # failure.
                         return False
                     raise
             return not self._cancel.is_set()
         except BaseException:
-            # On any error (or cancellation) tear the stream down so a half-broken
-            # handle isn't reused on the next play().
-            self.close()
+            # On any error (or task cancellation) retire the stream so a
+            # half-broken handle isn't reused — but NEVER close it on this
+            # thread: task cancellation returns here while the write may
+            # still be running on its worker thread, and a cross-thread
+            # PortAudio stop/close against an in-flight write is the exact
+            # CoreAudio deadlock that wedged live sessions. A daemon thread
+            # does the teardown at its leisure.
+            stream, self._stream = self._stream, None
+            if stream is not None:
+
+                def _retire() -> None:
+                    try:
+                        stream.stop()
+                        stream.close()
+                    except Exception:
+                        pass
+
+                threading.Thread(
+                    target=_retire, daemon=True, name="t2m-retire"
+                ).start()
             raise
         finally:
+            # No teardown on a cancelled play: without an abort the stream is
+            # healthy — the driver just plays out its small buffer — and the
+            # next sentence reuses it without a reopen click.
             self._playing = False
-            if self._cancel.is_set():
-                # Interrupted playback: the writer thread is out of the stream
-                # now, so finish the close that stop() deferred. Off-thread
-                # for the same reason stop()'s abort is: this finally runs on
-                # the event loop, and a PortAudio close that blocks (post-
-                # abort teardown) must never freeze the mic pipeline.
-                stream, self._stream = self._stream, None
-                if stream is not None:
-
-                    def _teardown() -> None:
-                        try:
-                            stream.stop()
-                            stream.close()
-                        except Exception:
-                            pass
-
-                    threading.Thread(
-                        target=_teardown, daemon=True, name="t2m-close"
-                    ).start()
