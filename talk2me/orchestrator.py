@@ -858,6 +858,15 @@ class Orchestrator:
         try:
             return await task
         except asyncio.CancelledError:
+            # Only swallow OUR OWN monitor-cancel. If the session itself is
+            # being cancelled (Ctrl-C / Ctrl-T), swallowing here eats the
+            # one-shot cancellation and the session RESURRECTS — live bug
+            # 2026-07-19: the first Ctrl-C printed '🎧 listening…' and kept
+            # running instead of quitting.
+            current = asyncio.current_task()
+            if current is not None and getattr(current, "cancelling", None):
+                if current.cancelling():
+                    raise
             return None
 
     async def _working_ticker(self) -> None:
@@ -945,6 +954,14 @@ class Orchestrator:
         # for minutes), this deadline flushes what was captured instead of
         # hanging the session.
         deadline = 0.0
+        # Echo-gated speakers need TWO consecutive foreign verdicts before a
+        # cut: field logs (2026-07-19) show own-echo scores flickering near
+        # the bar (0.30, 0.41 on prose), while a real talk-over sustains
+        # high. The second look, ~300ms later, sees a longer window — more
+        # envelope structure — and echo transients don't survive it.
+        confirm_frames = max(1, int(300 / frame_ms))
+        check_at = onset_needed
+        foreign_streak = 0
 
         frames = self.mic.frames()
         try:
@@ -1016,7 +1033,7 @@ class Orchestrator:
                             preroll.clear()
                         buf.append(frame)
                         consecutive += 1
-                        if consecutive >= onset_needed:
+                        if consecutive >= check_at:
                             # Last gate before the point of no return: cutting
                             # kills the agent's generation, so the onset audio
                             # must be CONFIRMED speech — typing and coughs fool
@@ -1035,6 +1052,8 @@ class Orchestrator:
                                         )
                                     buf.clear()
                                     consecutive = 0
+                                    check_at = onset_needed
+                                    foreign_streak = 0
                                     continue
                             if self._echo_gate is not None:
                                 # Speakers full duplex: its own voice off the
@@ -1062,6 +1081,15 @@ class Orchestrator:
                                         )
                                     buf.clear()
                                     consecutive = 0
+                                    check_at = onset_needed
+                                    foreign_streak = 0
+                                    continue
+                                foreign_streak += 1
+                                if foreign_streak < 2:
+                                    # First foreign verdict: hold fire and
+                                    # re-judge on a longer window — echo
+                                    # scores flicker, real talk-over holds.
+                                    check_at = consecutive + confirm_frames
                                     continue
                             cut = True
                             deadline = (
@@ -1094,6 +1122,8 @@ class Orchestrator:
                             preroll.append(frame)
                         buf.clear()
                         consecutive = 0
+                        check_at = onset_needed
+                        foreign_streak = 0
                     continue
                 buf.append(frame)
                 if speech:

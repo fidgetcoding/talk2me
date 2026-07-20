@@ -278,11 +278,26 @@ class Speaker:
         return self._stream
 
     def close(self) -> None:
-        """Tear down the shared OutputStream. Safe to call when none is open."""
+        """Retire the shared OutputStream. Safe to call when none is open.
+
+        The actual PortAudio stop/close runs on a throwaway daemon thread:
+        Pa_StopStream blocks while the buffer drains, and a Ctrl-C landing
+        inside that C call on the main thread produced the shutdown
+        traceback spew (live 2026-07-19). The handle is detached
+        synchronously, so a reopen on the same device never races it."""
         stream, self._stream = self._stream, None
         if stream is not None:
-            stream.stop()
-            stream.close()
+
+            def _teardown() -> None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
+
+            threading.Thread(
+                target=_teardown, daemon=True, name="t2m-close"
+            ).start()
 
     def switch_device(self, device: int | None) -> None:
         """Repoint playback at `device`. Closes the current stream; the next
@@ -335,25 +350,10 @@ class Speaker:
             return not self._cancel.is_set()
         except BaseException:
             # On any error (or task cancellation) retire the stream so a
-            # half-broken handle isn't reused — but NEVER close it on this
-            # thread: task cancellation returns here while the write may
-            # still be running on its worker thread, and a cross-thread
-            # PortAudio stop/close against an in-flight write is the exact
-            # CoreAudio deadlock that wedged live sessions. A daemon thread
-            # does the teardown at its leisure.
-            stream, self._stream = self._stream, None
-            if stream is not None:
-
-                def _retire() -> None:
-                    try:
-                        stream.stop()
-                        stream.close()
-                    except Exception:
-                        pass
-
-                threading.Thread(
-                    target=_retire, daemon=True, name="t2m-retire"
-                ).start()
+            # half-broken handle isn't reused. close() is daemon-threaded,
+            # so this never blocks the loop against a write that may still
+            # be running on its worker thread (the CoreAudio deadlock).
+            self.close()
             raise
         finally:
             # No teardown on a cancelled play: without an abort the stream is

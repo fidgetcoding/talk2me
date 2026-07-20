@@ -54,13 +54,14 @@ _REF_SILENCE_RMS = 1e-4
 _MIC_SILENCE_RMS = 1e-4
 
 # Foreign verdict: the residual (mic envelope minus best-fit echo) must be a
-# real fraction of the mic energy AND above an absolute floor. Set against
-# the synthetic fixtures in tests/test_echogate.py: pure echo through tanh
-# distortion + 120ms delay leaves ~0.05 residual; a QUIET second voice over
-# it leaves ~0.43. 0.30 splits that with headroom on both sides for real
-# rooms (reverb tails raise the echo residual; loud talk-overs raise the
-# foreign one).
-_RESIDUAL_FRAC = 0.30
+# real fraction of the mic energy AND above an absolute floor. FIELD-tuned:
+# Nate's MacBook (2026-07-19 session logs) put real own-echo residuals at
+# 0.30 and 0.41 — synthetic echo fixtures sit at 0.05-0.18, i.e. real rooms
+# roughly double the lab numbers. 0.50 clears the observed echo range;
+# talk-overs at comparable loudness measure 0.6+ (fixtures). The price is
+# that a WHISPERED talk-over under loud TTS may not cut — speak up, or the
+# echo-transcript backstop catches any false cut that still slips.
+_RESIDUAL_FRAC = 0.50
 
 # The gain fit is PIECEWISE — one gain per ~250ms segment, clamped to a
 # spread around the segments' median. One global gain false-triggered on

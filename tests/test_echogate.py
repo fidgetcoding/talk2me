@@ -92,8 +92,11 @@ def verdict_cases() -> None:
         f"residual={gate.last_residual}",
     )
 
-    # Echo PLUS an independent second voice IS foreign.
-    other = _voice(1.2, seed=9, mod_hz=5.3, phase=1.3, amp=0.15)
+    # Echo PLUS an independent second voice IS foreign. Amp 0.25 ≈ talking
+    # at comparable loudness to the TTS — the field-tuned 0.50 bar
+    # deliberately gives up whispered talk-overs (real own-echo measured
+    # 0.30-0.41 on Nate's hardware; a whisper bar can't clear that).
+    other = _voice(1.2, seed=9, mod_hz=5.3, phase=1.3, amp=0.25)
     mixed = _as_echo(played)[-int(1.2 * SR):] + other
     is_foreign = gate.foreign(mixed, SR)
     check(
@@ -160,7 +163,7 @@ def verdict_cases() -> None:
 
     # …while a real voice over that same AGC-warped echo still cuts (the
     # gain clamp must not 'explain' foreign speech away).
-    agc_mixed = agc_echo + _voice(1.2, seed=9, mod_hz=5.3, phase=1.3, amp=0.15)
+    agc_mixed = agc_echo + _voice(1.2, seed=9, mod_hz=5.3, phase=1.3, amp=0.25)
     is_foreign = agc_gate.foreign(agc_mixed, SR)
     check(
         "gate: voice over AGC-warped echo is foreign",
@@ -352,7 +355,7 @@ async def echo_transcript_swallowed_case() -> None:
     cfg = Config(
         silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False
     )
-    frames = _speech(15) + _silence(80) + _speech(25) + _silence(35)
+    frames = _speech(15) + _silence(80) + _speech(45) + _silence(35)
     backend = _BargeBackend()
     orch = Orchestrator(
         cfg=cfg,
@@ -374,12 +377,57 @@ async def echo_transcript_swallowed_case() -> None:
     check("swallow: the turn was still cut once", backend.interrupts == 1)
 
 
+async def flicker_never_cuts_case() -> None:
+    """One foreign verdict followed by an echo verdict must NOT cut — the
+    double-confirm exists because live echo scores flicker near the bar."""
+    cfg = Config(
+        silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False
+    )
+    frames = _speech(15) + _silence(60) + _speech(45) + _silence(40)
+
+    class _SlowBackend(FakeBackend):
+        """Turn 1 stays open ~1.5s (so the monitor owns the mic while the
+        flickering 'foreign' speech arrives), then completes on its own."""
+
+        async def send(self, user_text: str) -> None:
+            self.sent.append(user_text)
+            await self._q.put(AssistantTextDelta(text="Thinking it through. "))
+            asyncio.get_running_loop().call_later(
+                1.5,
+                lambda: self._q.put_nowait(
+                    TurnComplete(text="Thinking it through.")
+                ),
+            )
+
+    backend = _SlowBackend()
+    gate = _StubGate([True, True, False], default=False)
+    orch = Orchestrator(
+        cfg=cfg,
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Question one.", "SHOULD NEVER SEND"]),
+        tts=FakeTTS(),
+        mic=FakeMic(frames, sample_rate=SR),
+        speaker=_CountingSpeaker(SR),
+        echo_gate=gate,
+    )
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check(
+        "flicker: a one-off foreign verdict never cut",
+        backend.sent == ["Question one."] and backend.interrupts == 0,
+        f"sent={backend.sent} interrupts={backend.interrupts}",
+    )
+    check("flicker: the confirm window was actually used", gate.calls >= 3)
+
+
 async def foreign_cuts_case() -> None:
     """The same frames judged 'foreign' must cut the turn like classic barge."""
     cfg = Config(
         silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False
     )
-    frames = _speech(15) + _silence(80) + _speech(25) + _silence(35)
+    # 45 speech frames: the echo-gated cut needs onset (650ms) + the
+    # 300ms confirm window before the point of no return.
+    frames = _speech(15) + _silence(80) + _speech(45) + _silence(35)
     backend = _BargeBackend()
     speaker = _CountingSpeaker(SR)
     orch = Orchestrator(
@@ -407,6 +455,7 @@ def main() -> int:
     verdict_cases()
     own_speech_matcher_cases()
     asyncio.run(echo_never_cuts_case())
+    asyncio.run(flicker_never_cuts_case())
     asyncio.run(foreign_cuts_case())
     asyncio.run(echo_transcript_swallowed_case())
     failed = [n for n, ok in RESULTS if not ok]
