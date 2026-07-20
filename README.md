@@ -134,7 +134,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
 | `t2m --phone` | Your iPhone becomes the mic + speaker over your SSH tunnel. See [Phone mode](#phone-mode-ssh-from-your-iphone). |
-| `t2m --enroll-voice` | Voice-lock: read 3 sentences once (~20s); from then on the mic answers to YOUR voice only — other people, the TV, and its own speaker output get ignored. `--voice-lock` / `--no-voice-lock` toggles it. |
+| `t2m --enroll-voice` | Voice-lock: a guided minute of enrollment (varied volumes/speeds); from then on the mic answers to YOUR voice only — other people, the TV, and its own speaker output get ignored. `--voice-lock` / `--no-voice-lock` toggles it. |
 | `t2m --setup` | The guided setup menu — brain, ears, voice, barge-in, tools, folder. Saves as your defaults. |
 | `Ctrl-T` (macOS, mid-session) | Reopen that settings menu without losing your place; relaunches with the new picks. |
 | `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
@@ -308,7 +308,7 @@ Related: transcripts that look like machine noise (the same word looped five-plu
 
 ## Voice-lock (only you)
 
-Enroll once — `t2m --enroll-voice`, read three sentences, ~20 seconds — and the mic answers to **your voice only**. Roommates, meeting audio, the TV, even its own voice out of the speaker: heard, checked against your voiceprint, ignored. The check runs AFTER the speech classifier, so it costs nothing extra on noise, and utterances too short to fingerprint reliably (a fast "wake up") always pass — wake words are never eaten.
+Enroll once — `t2m --enroll-voice`, a guided minute of prompts at different volumes and speeds (loud, quiet, fast, slow, plus the actual command words) — and the mic answers to **your voice only**. Roommates, meeting audio, the TV, even its own voice out of the speaker: heard, checked against your voiceprint, ignored. The check runs AFTER the speech classifier, so it costs nothing extra on noise, and utterances too short to fingerprint reliably (a fast "wake up") always pass — wake words are never eaten.
 
 Working with people? Say **"team session"** and the lock opens — everyone talks, everything else stays the same. **"solo session"** locks it back. The setup wizard asks about voice-lock too, and the startup card shows the mode.
 

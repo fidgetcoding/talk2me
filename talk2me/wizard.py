@@ -300,7 +300,7 @@ def run_wizard(existing: dict | None = None) -> dict:
     p()
     p(f"[bold {CYAN}]7 · voice-lock[/]  Lock the ears to YOUR voice — other "
       "people, the TV, and its own speaker output get ignored. "
-      "[dim]You'll read 3 sentences (~20s) on your next launch to enroll; "
+      "[dim]You'll do a guided ~minute of enrollment on your next launch (different volumes and speeds — that's what makes it trust you); "
       "say \"team session\" any time to let everyone talk, \"solo session\" "
       "to lock back.[/]")
     voice_lock = Confirm.ask(

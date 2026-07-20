@@ -36,11 +36,29 @@ DEFAULT_THRESHOLD = 0.60
 # BELOW the measured impostor, defeating the calibration entirely).
 THRESHOLD_FLOOR, THRESHOLD_CEIL = 0.40, 0.90
 
-ENROLL_SENTENCES = (
-    "The quick brown fox jumps over the lazy dog while I test my voice.",
-    "Add the new feature, run the tests, and tell me when everything passes.",
-    "Every project starts with one sentence spoken out loud, like this one.",
+# (style direction, sentence) — the styles matter as much as the words: a
+# voiceprint built only from calm read-aloud clips doubts the same person
+# loud, quiet, or fast. The last step is the actual command vocabulary, so
+# wake/pause phrases are in-domain.
+ENROLL_STEPS = (
+    ("your normal voice",
+     "The quick brown fox jumps over the lazy dog while I test my voice."),
+    ("normal voice again",
+     "Add the new feature, run the tests, and tell me when everything passes."),
+    ("a bit LOUDER — like talking across the room",
+     "Hey, stop what you're doing and open the browser for me."),
+    ("QUIETER — like someone's sleeping nearby",
+     "Wake up quietly and continue the previous session please."),
+    ("fast — like you're excited about it",
+     "Build it, test it, ship it, and tell me the moment it's done."),
+    ("slow and relaxed",
+     "Every project starts with one sentence spoken out loud, like this one."),
+    ("your usual command voice",
+     "Pause listening. Wake up. Team session. Solo session. Resume the task."),
 )
+
+# Plain texts (impostor synthesis + tests).
+ENROLL_SENTENCES = tuple(s for _, s in ENROLL_STEPS)
 
 
 def model_path() -> str:
@@ -264,7 +282,9 @@ async def run_enrollment(cfg) -> bool:
     from .speechcheck import build_speech_check
 
     print()
-    print("🔒 voice-lock enrollment — read each sentence out loud, naturally.")
+    print("🔒 voice-lock enrollment — a guided minute. Each step tells you "
+          "HOW to say it; the variety is what makes the lock trust you at "
+          "any volume.")
     ensure_model()
     lock = VoiceLock()
     await asyncio.to_thread(lock.warmup)
@@ -281,8 +301,9 @@ async def run_enrollment(cfg) -> bool:
     clips: list[np.ndarray] = []
     try:
         seg = segment_utterances(mic.frames(), vad, cfg)
-        for i, sentence in enumerate(ENROLL_SENTENCES, 1):
-            print(f"\n  {i}/3 — read this:\n     “{sentence}”")
+        total = len(ENROLL_STEPS)
+        for i, (style, sentence) in enumerate(ENROLL_STEPS, 1):
+            print(f"\n  {i}/{total} — {style}:\n     “{sentence}”")
             while True:
                 utterance = await asyncio.wait_for(anext(seg), timeout=120)
                 if len(utterance) < 1.2 * cfg.sample_rate:

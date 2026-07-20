@@ -137,7 +137,7 @@ def test_real_model_discrimination() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["TALK2ME_VOICEPRINT"] = os.path.join(tmp, "vp.npz")
         me = [_say("Ava (Premium)", t, tmp, f"me{i}")
-              for i, t in enumerate(ENROLL_SENTENCES)]
+              for i, t in enumerate(ENROLL_SENTENCES[:3])]
         other = _say("Karen (Premium)",
                      "Wake up and continue the previous session now.", tmp, "o1")
         probe = _say("Ava (Premium)",
