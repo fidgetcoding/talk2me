@@ -900,131 +900,158 @@ class Orchestrator:
         w_voiced = 0
         w_trailing = 0
         w_started = False
+        # Absolute wall-clock ceiling on the post-cut collection, set at the
+        # cut. The frame-count cap bounds the same thing ONLY while frames
+        # flow; if the pipeline ever starves (live 2026-07-19: a blocked
+        # PortAudio abort froze the loop and '[barge-in] listening…' wedged
+        # for minutes), this deadline flushes what was captured instead of
+        # hanging the session.
+        deadline = 0.0
 
-        async for frame in self.mic.frames():
-            if self._paused and not cut:
-                speech = self.vad.is_speech(frame)
-                if not w_started:
-                    if speech:
-                        w_buf.append(frame)
-                        w_voiced += 1
-                        if w_voiced >= wake_onset:
-                            w_started = True
-                    else:
-                        w_buf.clear()
-                        w_voiced = 0
-                    continue
-                w_buf.append(frame)
-                if speech:
-                    w_trailing = 0
+        frames = self.mic.frames()
+        try:
+            while True:
+                if cut:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break  # starved or over-long: flush what we have
+                    try:
+                        frame = await asyncio.wait_for(anext(frames), remaining)
+                    except (StopAsyncIteration, asyncio.TimeoutError):
+                        break
                 else:
-                    w_trailing += 1
-                if w_trailing >= silence_needed or len(w_buf) >= max_frames:
-                    utterance = np.concatenate(w_buf).astype(np.float32)
-                    w_buf, w_voiced, w_trailing, w_started = [], 0, 0, False
-                    if self._speech_check is not None and not await asyncio.to_thread(
-                        self._speech_check, utterance, self.mic.sample_rate
-                    ):
+                    try:
+                        frame = await anext(frames)
+                    except StopAsyncIteration:
+                        break
+                if self._paused and not cut:
+                    speech = self.vad.is_speech(frame)
+                    if not w_started:
+                        if speech:
+                            w_buf.append(frame)
+                            w_voiced += 1
+                            if w_voiced >= wake_onset:
+                                w_started = True
+                        else:
+                            w_buf.clear()
+                            w_voiced = 0
                         continue
-                    raw = await self.stt.transcribe(
-                        utterance, self.mic.sample_rate
-                    )
-                    if control_intent(collapse_stutter(raw)) == "resume":
-                        # Wake WITHOUT touching the running turn: screen
-                        # confirm only — a spoken one would talk over the
-                        # agent. Barge re-arms naturally (paused is False).
-                        self._paused = False
-                        self._listening_fresh = False
-                        self.render.awake()
-                        self.render.status_note(
-                            "still working — I'm listening again"
+                    w_buf.append(frame)
+                    if speech:
+                        w_trailing = 0
+                    else:
+                        w_trailing += 1
+                    if w_trailing >= silence_needed or len(w_buf) >= max_frames:
+                        utterance = np.concatenate(w_buf).astype(np.float32)
+                        w_buf, w_voiced, w_trailing, w_started = [], 0, 0, False
+                        if self._speech_check is not None and not await asyncio.to_thread(
+                            self._speech_check, utterance, self.mic.sample_rate
+                        ):
+                            continue
+                        raw = await self.stt.transcribe(
+                            utterance, self.mic.sample_rate
                         )
-                        if self.log:
-                            self.log.event(
-                                "listening resumed by voice (mid-task)"
+                        if control_intent(collapse_stutter(raw)) == "resume":
+                            # Wake WITHOUT touching the running turn: screen
+                            # confirm only — a spoken one would talk over the
+                            # agent. Barge re-arms naturally (paused is False).
+                            self._paused = False
+                            self._listening_fresh = False
+                            self.render.awake()
+                            self.render.status_note(
+                                "still working — I'm listening again"
                             )
-                    elif self.cfg.debug and raw:
-                        self.render.debug(f"(paused — ignored: {raw})")
-                continue
-            speech = self.vad.is_speech(frame)
-            if not cut:
+                            if self.log:
+                                self.log.event(
+                                    "listening resumed by voice (mid-task)"
+                                )
+                        elif self.cfg.debug and raw:
+                            self.render.debug(f"(paused — ignored: {raw})")
+                    continue
+                speech = self.vad.is_speech(frame)
+                if not cut:
+                    if speech:
+                        if consecutive == 0 and pre_roll_frames and preroll:
+                            # Prepend the just-before-onset audio so the first
+                            # word of the interruption isn't clipped.
+                            buf.extend(preroll)
+                            preroll.clear()
+                        buf.append(frame)
+                        consecutive += 1
+                        if consecutive >= onset_needed:
+                            # Last gate before the point of no return: cutting
+                            # kills the agent's generation, so the onset audio
+                            # must be CONFIRMED speech — typing and coughs fool
+                            # the frame VAD but not the classifier. (Model is
+                            # pre-warmed at startup; this costs ~a millisecond.)
+                            if self._speech_check is not None:
+                                onset_audio = np.concatenate(buf).astype(np.float32)
+                                if not await asyncio.to_thread(
+                                    self._speech_check,
+                                    onset_audio,
+                                    self.mic.sample_rate,
+                                ):
+                                    if self.cfg.debug:
+                                        self.render.debug(
+                                            "(barge onset rejected — not speech)"
+                                        )
+                                    buf.clear()
+                                    consecutive = 0
+                                    continue
+                            if self._echo_gate is not None:
+                                # Speakers full duplex: its own voice off the
+                                # speaker IS speech and passes the classifier —
+                                # the echo gate is what tells "me talking back"
+                                # from "someone talking over me". Not foreign =
+                                # keep playing; the window re-arms so a real
+                                # talk-over still cuts within ~an onset.
+                                onset_audio = np.concatenate(buf).astype(np.float32)
+                                if not await asyncio.to_thread(
+                                    self._echo_gate.foreign,
+                                    onset_audio,
+                                    self.mic.sample_rate,
+                                ):
+                                    if self.cfg.debug:
+                                        res = getattr(
+                                            self._echo_gate, "last_residual", None
+                                        )
+                                        tag = (
+                                            f" {res:.2f}" if res is not None else ""
+                                        )
+                                        self.render.debug(
+                                            "(barge onset rejected — my own "
+                                            f"echo{tag})"
+                                        )
+                                    buf.clear()
+                                    consecutive = 0
+                                    continue
+                            cut = True
+                            deadline = (
+                                time.monotonic() + cap_ms / 1000.0 + 2.0
+                            )
+                            self._interrupted = True
+                            self.speaker.stop()
+                            await self.backend.interrupt()
+                            self.render.barge_label(self._spoke_any)
+                    else:
+                        if pre_roll_frames:
+                            # A near-miss blip: keep its audio in the window too.
+                            preroll.extend(buf)
+                            preroll.append(frame)
+                        buf.clear()
+                        consecutive = 0
+                    continue
+                buf.append(frame)
                 if speech:
-                    if consecutive == 0 and pre_roll_frames and preroll:
-                        # Prepend the just-before-onset audio so the first
-                        # word of the interruption isn't clipped.
-                        buf.extend(preroll)
-                        preroll.clear()
-                    buf.append(frame)
-                    consecutive += 1
-                    if consecutive >= onset_needed:
-                        # Last gate before the point of no return: cutting
-                        # kills the agent's generation, so the onset audio
-                        # must be CONFIRMED speech — typing and coughs fool
-                        # the frame VAD but not the classifier. (Model is
-                        # pre-warmed at startup; this costs ~a millisecond.)
-                        if self._speech_check is not None:
-                            onset_audio = np.concatenate(buf).astype(np.float32)
-                            if not await asyncio.to_thread(
-                                self._speech_check,
-                                onset_audio,
-                                self.mic.sample_rate,
-                            ):
-                                if self.cfg.debug:
-                                    self.render.debug(
-                                        "(barge onset rejected — not speech)"
-                                    )
-                                buf.clear()
-                                consecutive = 0
-                                continue
-                        if self._echo_gate is not None:
-                            # Speakers full duplex: its own voice off the
-                            # speaker IS speech and passes the classifier —
-                            # the echo gate is what tells "me talking back"
-                            # from "someone talking over me". Not foreign =
-                            # keep playing; the window re-arms so a real
-                            # talk-over still cuts within ~an onset.
-                            onset_audio = np.concatenate(buf).astype(np.float32)
-                            if not await asyncio.to_thread(
-                                self._echo_gate.foreign,
-                                onset_audio,
-                                self.mic.sample_rate,
-                            ):
-                                if self.cfg.debug:
-                                    res = getattr(
-                                        self._echo_gate, "last_residual", None
-                                    )
-                                    tag = (
-                                        f" {res:.2f}" if res is not None else ""
-                                    )
-                                    self.render.debug(
-                                        "(barge onset rejected — my own "
-                                        f"echo{tag})"
-                                    )
-                                buf.clear()
-                                consecutive = 0
-                                continue
-                        cut = True
-                        self._interrupted = True
-                        self.speaker.stop()
-                        await self.backend.interrupt()
-                        self.render.barge_label(self._spoke_any)
+                    trailing = 0
                 else:
-                    if pre_roll_frames:
-                        # A near-miss blip: keep its audio in the window too.
-                        preroll.extend(buf)
-                        preroll.append(frame)
-                    buf.clear()
-                    consecutive = 0
-                continue
-            buf.append(frame)
-            if speech:
-                trailing = 0
-            else:
-                trailing += 1
-                if trailing >= silence_needed:
+                    trailing += 1
+                    if trailing >= silence_needed:
+                        break
+                if max_frames and len(buf) >= max_frames:
                     break
-            if max_frames and len(buf) >= max_frames:
-                break
+        finally:
+            await frames.aclose()
 
         if not cut or not buf:
             return None

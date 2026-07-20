@@ -7,6 +7,7 @@ and the current synthesize→play pipeline is abandoned within one block (~tens 
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import numpy as np
 
@@ -291,10 +292,23 @@ class Speaker:
             # close is deferred to play()'s cleanup — closing here races the
             # blocked write and crashes the loop (live-run bug: PortAudio
             # -9986 when barge-in stopped the speaker mid-sentence).
-            try:
-                self._stream.abort()
-            except Exception:
-                pass
+            #
+            # The abort itself runs on a THROWAWAY THREAD, never the caller:
+            # stop() is called from the event loop (the barge monitor), and
+            # PortAudio's abort can block against the in-flight write's host
+            # lock. Blocking the loop freezes EVERYTHING — mic frames stop
+            # enqueueing and the barge collection starves (live-run bug
+            # 2026-07-19: '[barge-in] listening…' wedged for over a minute,
+            # then a stuck writer thread segfaulted interpreter exit).
+            stream = self._stream
+
+            def _abort() -> None:
+                try:
+                    stream.abort()
+                except Exception:
+                    pass
+
+            threading.Thread(target=_abort, daemon=True, name="t2m-abort").start()
             return
         # Idle stop (turn end, shutdown) — release the device so the next turn
         # reopens cleanly and a long idle gap doesn't hold the handle.
@@ -331,5 +345,20 @@ class Speaker:
             self._playing = False
             if self._cancel.is_set():
                 # Interrupted playback: the writer thread is out of the stream
-                # now, so finish the close that stop() deferred.
-                self.close()
+                # now, so finish the close that stop() deferred. Off-thread
+                # for the same reason stop()'s abort is: this finally runs on
+                # the event loop, and a PortAudio close that blocks (post-
+                # abort teardown) must never freeze the mic pipeline.
+                stream, self._stream = self._stream, None
+                if stream is not None:
+
+                    def _teardown() -> None:
+                        try:
+                            stream.stop()
+                            stream.close()
+                        except Exception:
+                            pass
+
+                    threading.Thread(
+                        target=_teardown, daemon=True, name="t2m-close"
+                    ).start()
