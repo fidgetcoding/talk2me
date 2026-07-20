@@ -200,7 +200,9 @@ class RetroRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
-        if cfg.barge_in:
+        if getattr(cfg, "echo_guard", False):
+            barge = "ON — voice-locked talk-over (speakers; talk ~1s to cut)"
+        elif cfg.barge_in:
             barge = "ON — talk over it anytime"
         elif getattr(cfg, "barge_downgraded", False):
             barge = "gaps only (speakers — it mutes its ears ONLY while speaking)"

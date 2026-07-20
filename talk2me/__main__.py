@@ -517,6 +517,25 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
             )
             cfg.voice_lock = False
 
+    # The speech gate is built EARLY so the speaker-downgrade decision can
+    # see whether a healthy voice-lock enables echo-guarded talk-over.
+    from .speechcheck import build_speech_check
+
+    speech_check = build_speech_check(cfg.speech_check, voice_lock=cfg.voice_lock)
+    if cfg.voice_lock and (
+        speech_check is None or getattr(speech_check, "voicelock", None) is None
+    ):
+        renderer.status_note(
+            "voice-lock couldn't load its model — running unlocked"
+        )
+        cfg.voice_lock = False
+    lock_healthy = (
+        cfg.voice_lock
+        and speech_check is not None
+        and getattr(speech_check, "voicelock", None) is not None
+        and not getattr(speech_check.voicelock, "meta", {}).get("degraded", True)
+    )
+
     tts = factory.build_tts(cfg)
     bridge = None
 
@@ -556,10 +575,22 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         # the mic would hear the TTS and cut every answer on its own echo.
         # Downgrade to the safe half-duplex loop instead of misbehaving.
         if cfg.barge_in and output_is_speakers(output_idx):
-            renderer.speaker_downgrade()
-            cfg.barge_in = False
-            cfg.half_duplex = True
-            cfg.barge_downgraded = True
+            if lock_healthy:
+                # Speakers + a healthy voice-lock = echo-guarded talk-over:
+                # the mic stays hot through its own speech; the lock rejects
+                # its own voice off the speaker, and only the enrolled voice
+                # can cut. Cuts need ~1s of sustained talking.
+                cfg.echo_guard = True
+                renderer.status_note(
+                    "speakers + voice-lock: full talk-over armed — its own "
+                    "voice can't cut it, yours can (talk ~a second to "
+                    "interrupt)"
+                )
+            else:
+                renderer.speaker_downgrade()
+                cfg.barge_in = False
+                cfg.half_duplex = True
+                cfg.barge_downgraded = True
 
         mic = Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx)
         speaker = Speaker(tts.sample_rate, device=output_idx)
@@ -581,17 +612,6 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
             )
         else:
             renderer.transcript_path(session_log.path)
-
-    from .speechcheck import build_speech_check
-
-    speech_check = build_speech_check(cfg.speech_check, voice_lock=cfg.voice_lock)
-    if cfg.voice_lock and (
-        speech_check is None or getattr(speech_check, "voicelock", None) is None
-    ):
-        renderer.status_note(
-            "voice-lock couldn't load its model — running unlocked"
-        )
-        cfg.voice_lock = False
 
     orch = Orchestrator(
         cfg=cfg,

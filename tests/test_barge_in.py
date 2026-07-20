@@ -214,6 +214,62 @@ async def pause_mid_chat_case() -> None:
     check("pause mid-chat: ended paused", orch._paused is True)
 
 
+async def echo_guard_case() -> None:
+    """Echo-guarded speakers: cuts need ~1s sustained speech (identity check
+    wants >=0.8s), and a gate rejection (its own echo) must never cut."""
+    for label, frames_n, gate_ok, expect_cuts in (
+        ("600ms speech -> no cut (below echo-guard onset)", 20, True, 0),
+        ("1050ms speech -> cut", 35, True, 1),
+        ("1050ms but gate says not-you -> no cut", 35, False, 0),
+    ):
+        class GuardBackend(FakeBackend):
+            def __init__(self) -> None:
+                super().__init__()
+                self._turn = 0
+
+            async def send(self, user_text: str) -> None:
+                self.sent.append(user_text)
+                self._turn += 1
+                await self._q.put(AssistantTextDelta(text="Counting: one two "))
+                if self._turn > 1:  # only the FIRST turn is held open
+                    await self._q.put(TurnComplete(text="ok"))
+
+            async def interrupt(self) -> None:
+                await super().interrupt()
+                await self._q.put(TurnComplete(text="Counting"))
+
+        calls = {"n": 0}
+
+        def gate(audio, sr, _ok=gate_ok):
+            calls["n"] += 1
+            return True if calls["n"] == 1 else _ok  # 1st = the question
+
+        backend = GuardBackend()
+        orch = Orchestrator(
+            cfg=Config(silence_ms=900, min_speech_ms=250, barge_in=True,
+                       half_duplex=False, echo_guard=True),
+            backend=backend,
+            vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+            stt=FakeSTT(["Count to fifty.", "stop counting please now"]),
+            tts=FakeTTS(),
+            mic=FakeMic(_speech(15) + _silence(80) + _speech(frames_n)
+                        + _silence(40), sample_rate=SR),
+            speaker=StoppableSpeaker(SR),
+            speech_check=gate,
+        )
+
+        async def _release() -> None:
+            await asyncio.sleep(1.2)
+            if backend.interrupts == 0:
+                await backend._q.put(TurnComplete(text="Counting"))
+
+        rel = asyncio.create_task(_release())
+        await asyncio.wait_for(orch.run(), timeout=15)
+        await asyncio.wait_for(rel, timeout=5)
+        check(f"echo-guard: {label}", backend.interrupts == expect_cuts,
+              f"interrupts={backend.interrupts}")
+
+
 async def main() -> int:
     cfg = Config(silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False)
     # Utterance 1 = the question. Then, while the agent "speaks", utterance 2 =
@@ -257,6 +313,7 @@ async def main() -> int:
     await pause_mid_work_case()
     await pause_mid_thinking_case()
     await pause_mid_chat_case()
+    await echo_guard_case()
 
     passed = sum(1 for _, ok in RESULTS if ok)
     ok = passed == len(RESULTS)

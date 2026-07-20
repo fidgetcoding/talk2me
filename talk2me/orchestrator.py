@@ -843,9 +843,13 @@ class Orchestrator:
         (or None if the stream ended before speech).
         """
         frame_ms = (self.vad.frame_samples / self.vad.sample_rate) * 1000.0
-        onset_needed = max(
-            1, int(max(self.cfg.min_speech_ms, BARGE_ONSET_MIN_MS) / frame_ms)
-        )
+        onset_ms = max(self.cfg.min_speech_ms, BARGE_ONSET_MIN_MS)
+        if getattr(self.cfg, "echo_guard", False):
+            # Echo-guarded speakers: the pre-cut identity check needs >=0.8s
+            # of audio to be reliable (shorter clips pass the lock
+            # unchecked, which here would mean cutting on its own echo).
+            onset_ms = max(onset_ms, 900)
+        onset_needed = max(1, int(onset_ms / frame_ms))
         silence_needed = max(1, int(self.cfg.silence_ms / frame_ms))
         cap_ms = (
             min(self.cfg.max_utterance_ms, BARGE_MAX_UTTERANCE_MS)

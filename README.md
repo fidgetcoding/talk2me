@@ -312,6 +312,8 @@ Enroll once — `t2m --enroll-voice`, a guided minute of prompts at different vo
 
 Working with people? Say **"team session"** and the lock opens — everyone talks, everything else stays the same. **"solo session"** locks it back. The setup wizard asks about voice-lock too, and the startup card shows the mode.
 
+Bonus unlocked: with a healthy (non-degraded) voiceprint, **speakers get full talk-over** — the mic stays hot through its own speech, its own voice fails the is-it-you check and can't cut, yours can (talk about a second to interrupt). No headphones needed anymore.
+
 Honesty corner: the enrollment calibrates its accept-bar against the agent's own TTS voice (the impostor that matters most) and warns you if the margin comes out thin. Speaker verification is probabilistic — a very similar voice may occasionally slip through or a bad mic day may make it doubt you. Re-enroll any time with `t2m --enroll-voice`; kill it any time with `--no-voice-lock` or "team session".
 
 ## Hear Claude Code itself (hook mode)

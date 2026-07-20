@@ -193,6 +193,11 @@ class Config:
     # to open-air speakers (auto-downgrade) — the card explains itself
     # instead of a bare "off" (live confusion 2026-07-19).
     barge_downgraded: bool = False
+    # Echo-guarded talk-over: speakers + a HEALTHY (non-degraded) voice-lock
+    # keep full duplex — its own TTS voice fails the is-it-you check and can
+    # never cut; the enrolled voice can. Cut needs ~1s sustained speech (the
+    # identity check wants >=0.8s of audio).
+    echo_guard: bool = False
     # Force the launch build's plain output (no colors, no panels). The plain
     # renderer is also selected automatically on non-TTY stdout, NO_COLOR, or
     # a missing rich — a broken paint job must never mute the product.
