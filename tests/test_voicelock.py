@@ -86,6 +86,24 @@ def test_logic_with_stub_embedder() -> None:
             meta3["degraded"] is True
             and meta3["threshold"] < min(meta3["self_sims"]),
         )
+
+        # One broken capture (live-hit: six clips 0.70-0.90, one at 0.28)
+        # must be dropped, leaving a healthy non-degraded calibration.
+        lock4 = VoiceLock(path="/nonexistent-model")
+        good = [np.array([1.0, 0.05 * i, 0.0]) for i in range(4)]
+        outlier = np.array([0.0, 0.0, 1.0])       # nothing like the others
+        impostor4 = np.array([0.75, 0.1, 0.55])   # closer than the outlier
+        embs4 = iter([*good, outlier, impostor4])
+        lock4.embed = lambda a: (n := next(embs4)) / np.linalg.norm(n)  # type: ignore[method-assign]
+        meta4 = lock4.enroll(
+            [np.ones(16000, dtype=np.float32)] * 5,
+            [np.ones(16000, dtype=np.float32)],
+        )
+        _report(
+            "one broken clip is dropped, calibration stays healthy",
+            meta4["dropped_clips"] == 1 and meta4["degraded"] is False
+            and len(meta4["self_sims"]) == 4,
+        )
     os.environ["TALK2ME_VOICEPRINT"] = "/nonexistent-t2m-test-voiceprint"
 
 

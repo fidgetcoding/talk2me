@@ -155,18 +155,28 @@ class VoiceLock:
         TTS voice, synthesized at enrollment) calibrate the threshold: the
         bar lands between your self-similarity and the closest impostor."""
         embs = [self.embed(c) for c in clips]
+        # Outlier rejection: ONE broken capture (clipped mic, a cough, a
+        # rushed take) must not poison the whole print — live-hit: six clips
+        # at 0.70-0.90 and one at 0.28 dragged calibration into degraded
+        # mode. A clip whose leave-one-out sim is far below the others gets
+        # dropped (never below 3 clips kept).
+        dropped = 0
+        while len(embs) > 3:
+            sims = _loo_sims(embs)
+            worst = int(np.argmin(sims))
+            others = [s for i, s in enumerate(sims) if i != worst]
+            if sims[worst] < 0.5 and (np.mean(others) - sims[worst]) > 0.25:
+                embs.pop(worst)
+                dropped += 1
+            else:
+                break
         vp = np.mean(embs, axis=0)
         vp /= np.linalg.norm(vp) + 1e-9
         # LEAVE-ONE-OUT self-similarity: each clip scored against the mean of
         # the OTHERS. Scoring against a mean it belongs to inflated self-sims
         # to ~0.97 and calibrated the threshold above real future probes
         # (live-hit: the enrolled voice got refused).
-        self_sims = []
-        for i, e in enumerate(embs):
-            others = [x for j, x in enumerate(embs) if j != i]
-            loo = np.mean(others, axis=0) if others else vp
-            loo = loo / (np.linalg.norm(loo) + 1e-9)
-            self_sims.append(float(np.dot(loo, e)))
+        self_sims = _loo_sims(embs)
         impostor_sims = [
             float(np.dot(vp, self.embed(c))) for c in (impostor_clips or [])
         ]
@@ -196,6 +206,7 @@ class VoiceLock:
             "impostor_sims": [round(s, 3) for s in impostor_sims],
             "threshold": round(threshold, 3),
             "degraded": degraded,
+            "dropped_clips": dropped,
             "margin": round(
                 min(self_sims) - max(impostor_sims), 3
             ) if impostor_sims else None,
@@ -232,6 +243,20 @@ class VoiceLock:
             return True, 1.0
         score = float(np.dot(self.voiceprint, self.embed(audio)))
         return score >= self.threshold, score
+
+
+def _loo_sims(embs: list[np.ndarray]) -> list[float]:
+    """Leave-one-out similarity of each embedding vs the mean of the rest."""
+    sims = []
+    for i, e in enumerate(embs):
+        others = [x for j, x in enumerate(embs) if j != i]
+        if not others:
+            sims.append(1.0)
+            continue
+        loo = np.mean(others, axis=0)
+        loo = loo / (np.linalg.norm(loo) + 1e-9)
+        sims.append(float(np.dot(loo, e)))
+    return sims
 
 
 def enrolled() -> bool:
