@@ -106,18 +106,36 @@ class EchoRef:
             self._written += b.shape[0]
 
     def recent(self, seconds: float) -> np.ndarray:
-        """The last `seconds` of played audio, oldest-first (zero-padded when
-        less has ever been written)."""
+        """The last `seconds` of played audio, oldest-first.
+
+        When less has ever been written, the front is ZERO-padded to the full
+        requested length — silence is literally what preceded the first
+        block, and the pad is what keeps the gate's alignment search
+        full-range at the START of a sentence. (Live bug 2026-07-19: a
+        truncated return collapsed the search to one misaligned lag on the
+        first sentence of a turn, the fit failed, and the agent cut itself
+        off at "1" of "count to 30".) A never-written ring still returns
+        empty so callers can tell 'nothing has ever played'."""
         n = min(int(seconds * self.sample_rate), self._cap)
+        if n <= 0:
+            return np.zeros(0, dtype=np.float32)
         with self._lock:
-            n = min(n, max(self._written, 0)) if self._written < self._cap else n
-            if n <= 0:
+            if self._written <= 0:
                 return np.zeros(0, dtype=np.float32)
-            start = (self._pos - n) % self._cap
-            if start + n <= self._cap:
-                return self._buf[start : start + n].copy()
-            first = self._cap - start
-            return np.concatenate((self._buf[start:], self._buf[: n - first]))
+            have = min(n, self._written) if self._written < self._cap else n
+            start = (self._pos - have) % self._cap
+            if start + have <= self._cap:
+                tail = self._buf[start : start + have].copy()
+            else:
+                first = self._cap - start
+                tail = np.concatenate(
+                    (self._buf[start:], self._buf[: have - first])
+                )
+        if have < n:
+            tail = np.concatenate(
+                (np.zeros(n - have, dtype=np.float32), tail)
+            )
+        return tail
 
 
 class EchoGate:

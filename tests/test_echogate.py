@@ -108,6 +108,36 @@ def verdict_cases() -> None:
         gate.foreign(np.zeros(SR, dtype=np.float32), SR) is False,
     )
 
+    # COLD START — the live 2026-07-19 false cut: first sentence of a turn,
+    # the ring holds only ~0.45s of played audio, and the mic window is the
+    # barge onset (300ms pre-roll silence + the first ~0.42s of echo). A
+    # short reference must not collapse the alignment search and read the
+    # agent's own opening words as foreign.
+    cold_ref = EchoRef(SR)
+    cold_ref.add(played[: int(0.45 * SR)])
+    cold_gate = EchoGate(cold_ref)
+    preroll = np.zeros(int(0.3 * SR), dtype=np.float32)
+    cold_echo = np.concatenate(
+        (preroll, _as_echo(played[: int(0.42 * SR)], delay_s=0.05))
+    )
+    is_foreign = cold_gate.foreign(cold_echo, SR)
+    check(
+        "gate: cold-start echo (short ring) is not foreign",
+        is_foreign is False,
+        f"residual={cold_gate.last_residual}",
+    )
+
+    # …and a real voice in that same cold-start window still barges.
+    cold_voice = np.concatenate(
+        (preroll, _voice(0.42, seed=17, mod_hz=5.1, phase=0.7))
+    )
+    is_foreign = cold_gate.foreign(cold_voice, SR)
+    check(
+        "gate: cold-start foreign voice still cuts",
+        is_foreign is True,
+        f"residual={cold_gate.last_residual}",
+    )
+
 
 def _speech(n):
     return [(np.random.randn(FRAME) * 0.2).astype(np.float32) for _ in range(n)]
