@@ -257,8 +257,8 @@ def run_wizard(existing: dict | None = None) -> dict:
     p()
     p(f"[bold {CYAN}]4 · interrupting[/]  Barge-in keeps the mic live while "
       "it talks — start speaking and it shuts up and listens, like a person. "
-      "[dim]Wants headphones; on open-air speakers it auto-downgrades so it "
-      "doesn't argue with its own echo.[/]")
+      "[dim]Headphones or speakers both work: on speakers it filters its own "
+      "voice out of the mic, so only YOU can cut it off.[/]")
     barge_in = Confirm.ask(
         "  barge-in on? (recommended)", default=prev.get("barge_in", True)
     )

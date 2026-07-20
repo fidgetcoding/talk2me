@@ -150,6 +150,7 @@ class Orchestrator:
         session_log=None,
         renderer: Renderer | None = None,
         speech_check=None,
+        echo_gate=None,
     ) -> None:
         self.cfg = cfg
         self.backend = backend
@@ -168,6 +169,11 @@ class Orchestrator:
         # tests, whose synthetic "speech" is random noise a real classifier
         # would reject. Guards the barge cut and the pre-transcribe path.
         self._speech_check = speech_check
+        # Optional echo gate (speakers full duplex): foreign(audio, rate) is
+        # False when the sound is just our own TTS coming back off the
+        # speakers. Guards the barge cut AND the main listen loop, so the
+        # agent can neither be interrupted by nor talk to its own echo.
+        self._echo_gate = echo_gate
         # True right after "🎧 listening…" printed with nothing after it —
         # suppresses the repeat-spam that noise utterances used to cause.
         self._listening_fresh = False
@@ -272,6 +278,16 @@ class Orchestrator:
                         self.render.debug("(speech check: not speech — dropped)")
                     continue
                 self._lock_rejects = 0
+                if self._echo_gate is not None and not await asyncio.to_thread(
+                    self._echo_gate.foreign, utterance, self.mic.sample_rate
+                ):
+                    # Speakers full duplex: the segmenter captured our own
+                    # spoken confirmation ("Paused. Say wake up…") coming
+                    # back off the speakers. Drop it silently — transcribing
+                    # it would have the agent answering itself.
+                    if self.cfg.debug:
+                        self.render.debug("(my own echo — dropped)")
+                    continue
                 if self.cfg.debug and getattr(
                     self._speech_check, "last_score", None
                 ) is not None:
@@ -960,6 +976,33 @@ class Orchestrator:
                                 buf.clear()
                                 consecutive = 0
                                 continue
+                        if self._echo_gate is not None:
+                            # Speakers full duplex: its own voice off the
+                            # speaker IS speech and passes the classifier —
+                            # the echo gate is what tells "me talking back"
+                            # from "someone talking over me". Not foreign =
+                            # keep playing; the window re-arms so a real
+                            # talk-over still cuts within ~an onset.
+                            onset_audio = np.concatenate(buf).astype(np.float32)
+                            if not await asyncio.to_thread(
+                                self._echo_gate.foreign,
+                                onset_audio,
+                                self.mic.sample_rate,
+                            ):
+                                if self.cfg.debug:
+                                    res = getattr(
+                                        self._echo_gate, "last_residual", None
+                                    )
+                                    tag = (
+                                        f" {res:.2f}" if res is not None else ""
+                                    )
+                                    self.render.debug(
+                                        "(barge onset rejected — my own "
+                                        f"echo{tag})"
+                                    )
+                                buf.clear()
+                                consecutive = 0
+                                continue
                         cut = True
                         self._interrupted = True
                         self.speaker.stop()
@@ -1244,6 +1287,12 @@ class Orchestrator:
         ):
             # Typing during a continuation window or a permission prompt must
             # never be stitched into a sentence or read as a verdict.
+            return ""
+        if self._echo_gate is not None and not await asyncio.to_thread(
+            self._echo_gate.foreign, utterance, self.mic.sample_rate
+        ):
+            # A late echo tail of the prompt itself must never read as an
+            # approve/deny verdict or a session pick.
             return ""
         return collapse_stutter(
             await self.stt.transcribe(utterance, self.mic.sample_rate)

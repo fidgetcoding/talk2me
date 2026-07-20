@@ -91,6 +91,9 @@ jobs:
       - name: test_voicelock
         run: python -m tests.test_voicelock
 
+      - name: test_echogate
+        run: python -m tests.test_echogate
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

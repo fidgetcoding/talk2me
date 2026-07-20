@@ -217,9 +217,20 @@ def _parse_args(argv: list[str]) -> Config:
         help=(
             "full-duplex (ON by default): the mic stays live while the agent "
             "speaks; start talking and playback stops, the agent's turn is "
-            "interrupted. Wants headphones — if the output resolves to "
-            "open-air speakers, this auto-downgrades to half-duplex for the "
-            "session (no echo cancellation). --no-barge-in forces half-duplex."
+            "interrupted. Works on headphones AND open-air speakers — on "
+            "speakers the echo gate filters its own voice out of the mic, so "
+            "only sound it isn't making can cut it. --no-barge-in forces "
+            "half-duplex."
+        ),
+    )
+    p.add_argument(
+        "--aec", action=argparse.BooleanOptionalAction, default=True,
+        help=(
+            "echo-gated speakers barge-in (ON by default): on open-air "
+            "speakers, filter the agent's own playback out of the barge "
+            "decision so you can talk over it without headphones. --no-aec "
+            "restores the old behavior (speakers mute the ears while it "
+            "speaks)."
         ),
     )
     p.add_argument(
@@ -370,6 +381,7 @@ def _parse_args(argv: list[str]) -> Config:
         ),
         barge_in=a.barge_in,
         half_duplex=not a.barge_in,
+        aec=a.aec,
         input_mode=input_mode,
         stt=a.stt,
         whisper_model=a.whisper_model,
@@ -560,6 +572,9 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
 
     tts = factory.build_tts(cfg)
     bridge = None
+    # Playback reference for the echo gate; stays None off-speakers, in
+    # phone mode (the phone's own AEC covers it), and under --no-aec.
+    echo_ref = None
 
     if cfg.phone:
         # Phone mode: the mic and speaker live on the phone, reached through
@@ -592,21 +607,24 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
             renderer.device_error(str(exc))
             return 2, False
 
-        # Adaptive duplex: --barge-in is the user's intent, but if the audio
-        # is about to come out of open-air speakers (system default included),
-        # the mic would hear the TTS and cut every answer on its own echo.
-        # Downgrade to the safe half-duplex loop instead of misbehaving.
+        # Adaptive duplex: --barge-in on open-air speakers (system default
+        # included) used to downgrade to half-duplex — the mic would hear the
+        # TTS and cut every answer on its own echo. The echo gate makes full
+        # duplex safe instead: the Speaker records exactly what it plays, and
+        # any mic sound the playback can't explain is by definition not its
+        # own voice. (This superseded the voice-lock echo-guard, which needed
+        # a speaker-ID separation real laptop mics don't deliver.)
         if cfg.barge_in and output_is_speakers(output_idx):
-            if lock_healthy:
-                # Speakers + a healthy voice-lock = echo-guarded talk-over:
-                # the mic stays hot through its own speech; the lock rejects
-                # its own voice off the speaker, and only the enrolled voice
-                # can cut. Cuts need ~1s of sustained talking.
-                cfg.echo_guard = True
+            if cfg.aec:
+                from .echogate import EchoRef
+
+                echo_ref = EchoRef(tts.sample_rate)
+                cfg.aec_active = True
+                cfg.half_duplex = False
                 renderer.status_note(
-                    "speakers + voice-lock: full talk-over armed — its own "
-                    "voice can't cut it, yours can (talk ~a second to "
-                    "interrupt)"
+                    "speakers + barge-in: its own voice off the speakers is "
+                    "filtered out — talk over it any time (--no-aec restores "
+                    "the old mute-while-speaking behavior)"
                 )
             else:
                 renderer.speaker_downgrade()
@@ -615,7 +633,7 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
                 cfg.barge_downgraded = True
 
         mic = Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx)
-        speaker = Speaker(tts.sample_rate, device=output_idx)
+        speaker = Speaker(tts.sample_rate, device=output_idx, echo_ref=echo_ref)
 
     session_log = None
     if cfg.save_dir:
@@ -635,6 +653,12 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         else:
             renderer.transcript_path(session_log.path)
 
+    echo_gate = None
+    if echo_ref is not None:
+        from .echogate import EchoGate
+
+        echo_gate = EchoGate(echo_ref)
+
     orch = Orchestrator(
         cfg=cfg,
         backend=factory.build_backend(cfg),
@@ -646,6 +670,7 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         session_log=session_log,
         renderer=renderer,
         speech_check=speech_check,
+        echo_gate=echo_gate,
     )
 
     # Ctrl-T mid-session (macOS sends SIGINFO) = "open the settings menu":

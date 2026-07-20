@@ -1,0 +1,248 @@
+"""Echo gate: speakers full-duplex must cut on a real talk-over and must
+NEVER cut (or self-converse) on its own playback echo. Headless — synthetic
+audio, no devices, no LLM cost.
+
+Run:  ./.venv/bin/python -m tests.test_echogate
+"""
+
+import asyncio
+
+import numpy as np
+
+from talk2me.config import Config
+from talk2me.echogate import EchoGate, EchoRef
+from talk2me.events import AssistantTextDelta, TurnComplete
+from talk2me.orchestrator import Orchestrator
+from talk2me.vad import EnergyVAD
+
+from .fakes import FakeBackend, FakeMic, FakeSpeaker, FakeSTT, FakeTTS
+
+SR = 16000
+FRAME = 480
+
+RESULTS: list[tuple[str, bool]] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    RESULTS.append((name, ok))
+    print(f"[{'PASS' if ok else 'FAIL'}] {name}  {detail}", flush=True)
+
+
+def _voice(seconds: float, *, seed: int, mod_hz: float, phase: float = 0.0,
+           amp: float = 0.2) -> np.ndarray:
+    """Speech-shaped test signal: noise carrier under a syllabic envelope."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * SR)
+    t = np.arange(n) / SR
+    envelope = 0.5 * (1.0 + np.sin(2 * np.pi * mod_hz * t + phase))
+    return (rng.standard_normal(n) * envelope * amp).astype(np.float32)
+
+
+def _as_echo(played: np.ndarray, *, delay_s: float = 0.12) -> np.ndarray:
+    """What the mic hears of our own playback: delayed, attenuated, and run
+    through the nonlinear compression of small laptop speakers."""
+    delay = np.zeros(int(delay_s * SR), dtype=np.float32)
+    distorted = np.tanh(3.0 * played).astype(np.float32) * 0.3
+    return np.concatenate((delay, distorted))[: played.shape[0]]
+
+
+def ring_cases() -> None:
+    ref = EchoRef(SR)
+    ref.add(np.ones(SR, dtype=np.float32))
+    ref.add(np.full(SR, 2.0, dtype=np.float32))
+    tail = ref.recent(1.5)
+    check(
+        "ring: recent() returns the newest tail, oldest-first",
+        tail.shape[0] == int(1.5 * SR)
+        and float(tail[-1]) == 2.0
+        and float(tail[0]) == 1.0,
+        f"len={tail.shape[0]} first={tail[0] if tail.size else '-'} last={tail[-1] if tail.size else '-'}",
+    )
+    big = EchoRef(SR)
+    for v in (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0):  # 7s through a 6s ring
+        big.add(np.full(SR, v, dtype=np.float32))
+    tail = big.recent(2.0)
+    check(
+        "ring: wraparound keeps only the newest audio",
+        float(tail[0]) == 6.0 and float(tail[-1]) == 7.0,
+        f"first={tail[0]} last={tail[-1]}",
+    )
+    check("ring: empty ring yields empty tail", EchoRef(SR).recent(1.0).size == 0)
+
+
+def verdict_cases() -> None:
+    played = _voice(2.0, seed=1, mod_hz=3.7)
+
+    # Nothing playing: any speech is foreign.
+    gate = EchoGate(EchoRef(SR))
+    check(
+        "gate: speech with a silent reference is foreign",
+        gate.foreign(_voice(1.0, seed=3, mod_hz=4.4), SR) is True,
+    )
+
+    # Pure echo — delayed + distorted copy of what we played — is NOT foreign.
+    ref = EchoRef(SR)
+    ref.add(played)
+    gate = EchoGate(ref)
+    echo = _as_echo(played)[-int(1.2 * SR):]
+    is_foreign = gate.foreign(echo, SR)
+    check(
+        "gate: our own distorted echo is not foreign",
+        is_foreign is False,
+        f"residual={gate.last_residual}",
+    )
+
+    # Echo PLUS an independent second voice IS foreign.
+    other = _voice(1.2, seed=9, mod_hz=5.3, phase=1.3, amp=0.15)
+    mixed = _as_echo(played)[-int(1.2 * SR):] + other
+    is_foreign = gate.foreign(mixed, SR)
+    check(
+        "gate: a voice talking over the echo is foreign",
+        is_foreign is True,
+        f"residual={gate.last_residual}",
+    )
+
+    # A silent mic never barges, playing or not.
+    check(
+        "gate: silence is not foreign",
+        gate.foreign(np.zeros(SR, dtype=np.float32), SR) is False,
+    )
+
+
+def _speech(n):
+    return [(np.random.randn(FRAME) * 0.2).astype(np.float32) for _ in range(n)]
+
+
+def _silence(n):
+    return [np.zeros(FRAME, dtype=np.float32) for _ in range(n)]
+
+
+class _StubGate:
+    """Scripted-verdict gate for wiring tests. The first calls come from the
+    main listen loop (between turns nothing is playing, so the real gate says
+    foreign there) — script those, then fall back to `default` for the
+    barge-onset checks during the turn."""
+
+    def __init__(self, verdicts: list[bool], default: bool) -> None:
+        self.verdicts = list(verdicts)
+        self.default = default
+        self.calls = 0
+
+    def foreign(self, audio, sample_rate) -> bool:
+        self.calls += 1
+        return self.verdicts.pop(0) if self.verdicts else self.default
+
+
+class _BargeBackend(FakeBackend):
+    """Turn 1 completes only when interrupted; turn 2 replies normally."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._turn = 0
+
+    async def send(self, user_text: str) -> None:
+        self.sent.append(user_text)
+        self._turn += 1
+        if self._turn == 1:
+            await self._q.put(AssistantTextDelta(text="Let me explain at length. "))
+            await self._q.put(AssistantTextDelta(text="There are many details. "))
+        else:
+            await self._q.put(AssistantTextDelta(text="Okay, stopping."))
+            await self._q.put(TurnComplete(text="Okay, stopping."))
+
+    async def interrupt(self) -> None:
+        await super().interrupt()
+        await self._q.put(TurnComplete(text="Let me explain at length."))
+
+
+class _PlainBackend(FakeBackend):
+    """Every turn completes normally (no interrupt needed)."""
+
+    async def send(self, user_text: str) -> None:
+        self.sent.append(user_text)
+        await self._q.put(AssistantTextDelta(text="Answering now. "))
+        await self._q.put(TurnComplete(text="Answering now."))
+
+
+class _CountingSpeaker(FakeSpeaker):
+    def __init__(self, sample_rate: int = 16000) -> None:
+        super().__init__(sample_rate)
+        self.stops = 0
+
+    def stop(self) -> None:
+        self.stops += 1
+
+
+async def echo_never_cuts_case() -> None:
+    """Speech-shaped frames during the agent's turn that the gate calls
+    'my own echo' must not cut the turn OR become a user message."""
+    cfg = Config(
+        silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False
+    )
+    frames = _speech(15) + _silence(60) + _speech(25) + _silence(40)
+    backend = _PlainBackend()
+    speaker = _CountingSpeaker(SR)
+    gate = _StubGate([True], default=False)
+    orch = Orchestrator(
+        cfg=cfg,
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Question one.", "SHOULD NEVER SEND"]),
+        tts=FakeTTS(),
+        mic=FakeMic(frames, sample_rate=SR),
+        speaker=speaker,
+        echo_gate=gate,
+    )
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check(
+        "echo-no-cut: only the real question reached the agent",
+        backend.sent == ["Question one."],
+        str(backend.sent),
+    )
+    check("echo-no-cut: never interrupted", backend.interrupts == 0)
+    check("echo-no-cut: the gate was consulted for the barge", gate.calls >= 2)
+
+
+async def foreign_cuts_case() -> None:
+    """The same frames judged 'foreign' must cut the turn like classic barge."""
+    cfg = Config(
+        silence_ms=900, min_speech_ms=250, barge_in=True, half_duplex=False
+    )
+    frames = _speech(15) + _silence(80) + _speech(25) + _silence(35)
+    backend = _BargeBackend()
+    speaker = _CountingSpeaker(SR)
+    orch = Orchestrator(
+        cfg=cfg,
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Question one.", "Actually stop."]),
+        tts=FakeTTS(),
+        mic=FakeMic(frames, sample_rate=SR),
+        speaker=speaker,
+        echo_gate=_StubGate([True], default=True),
+    )
+    await asyncio.wait_for(orch.run(), timeout=10)
+    check(
+        "foreign-cut: the talk-over became the next turn",
+        backend.sent == ["Question one.", "Actually stop."],
+        str(backend.sent),
+    )
+    check("foreign-cut: exactly one interrupt", backend.interrupts == 1)
+    check("foreign-cut: playback was stopped", speaker.stops >= 1)
+
+
+def main() -> int:
+    ring_cases()
+    verdict_cases()
+    asyncio.run(echo_never_cuts_case())
+    asyncio.run(foreign_cuts_case())
+    failed = [n for n, ok in RESULTS if not ok]
+    print(
+        f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed",
+        flush=True,
+    )
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

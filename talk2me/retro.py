@@ -200,7 +200,9 @@ class RetroRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
-        if getattr(cfg, "echo_guard", False):
+        if getattr(cfg, "aec_active", False):
+            barge = "ON — speakers (its own voice is filtered out; just talk)"
+        elif getattr(cfg, "echo_guard", False):
             barge = "ON — voice-locked talk-over (speakers; talk ~1s to cut)"
         elif cfg.barge_in:
             barge = "ON — talk over it anytime"
@@ -261,7 +263,7 @@ class RetroRenderer:
                 "talk-over-its-voice; nothing else changes)"
                 if getattr(cfg, "barge_downgraded", False)
                 else "(half-duplex: talking over the agent mid-speech is "
-                "ignored — run with --barge-in and headphones to interrupt it)"
+                "ignored — run with --barge-in to interrupt it)"
             )
             self.console.print(hint, style="quiet", markup=False)
 
@@ -273,8 +275,9 @@ class RetroRenderer:
     def speaker_downgrade(self) -> None:
         self._collapse()
         self.console.print(
-            "🔈 speakers on the output — barge-in off for this session so I "
-            "don't argue with my own echo. Plug in headphones to interrupt me.",
+            "🔈 speakers + --no-aec — barge-in off for this session so I "
+            "don't argue with my own echo. Drop --no-aec (or plug in "
+            "headphones) to interrupt me.",
             style="warn",
             markup=False,
         )

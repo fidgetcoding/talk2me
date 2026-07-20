@@ -201,6 +201,15 @@ class Config:
     # never cut; the enrolled voice can. Cut needs ~1s sustained speech (the
     # identity check wants >=0.8s of audio).
     echo_guard: bool = False
+    # Echo-gated speakers barge-in: on open-air speakers, keep full duplex
+    # and filter the agent's own playback out of every barge/listen decision
+    # (echogate.py — the Speaker records what it plays; mic sound the
+    # playback can't explain is foreign and may cut). Superseded echo_guard
+    # as the speakers mechanism: it works for anyone, no enrollment.
+    aec: bool = True
+    # Set by the launcher when the echo gate actually armed this session
+    # (speakers + barge-in + aec) — drives the card's barge-in row.
+    aec_active: bool = False
     # Force the launch build's plain output (no colors, no panels). The plain
     # renderer is also selected automatically on non-TTY stdout, NO_COLOR, or
     # a missing rich — a broken paint job must never mute the product.

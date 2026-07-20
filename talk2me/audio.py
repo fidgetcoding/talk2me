@@ -233,11 +233,17 @@ class Speaker:
     error mid-write), so the device handle never leaks across a session.
     """
 
-    def __init__(self, sample_rate: int, device: int | None = None) -> None:
+    def __init__(
+        self, sample_rate: int, device: int | None = None, echo_ref=None
+    ) -> None:
         if sd is None:
             raise RuntimeError("sounddevice/portaudio unavailable")
         self.sample_rate = sample_rate
         self.device = device  # PortAudio index, or None for the system default
+        # Optional EchoRef: every block written to the output stream is also
+        # recorded here, giving the echo gate its playback reference (what
+        # the mic is about to hear coming off open-air speakers).
+        self.echo_ref = echo_ref
         self._cancel = asyncio.Event()
         self._stream: sd.OutputStream | None = None
         # True while play() has a write in flight on a worker thread. stop()
@@ -305,6 +311,8 @@ class Speaker:
                     return False
                 # write() blocks; hand it to a thread so the event loop (and the
                 # mic VAD that drives barge-in) keeps running.
+                if self.echo_ref is not None:
+                    self.echo_ref.add(block)
                 try:
                     await asyncio.to_thread(stream.write, block.astype(np.float32))
                 except sd.PortAudioError:
