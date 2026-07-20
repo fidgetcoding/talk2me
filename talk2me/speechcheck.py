@@ -46,6 +46,11 @@ class SileroSpeechCheck:
     def __call__(self, audio: np.ndarray, sample_rate: int) -> bool:
         from faster_whisper.vad import VadOptions, get_speech_timestamps
 
+        # Reset per call: last_score is non-None ONLY when this rejection
+        # (or acceptance) came from the voice-lock stage — the orchestrator
+        # keys its "is the lock doubting its owner?" hint on that.
+        self.last_score = None
+
         if sample_rate != 16000:
             audio = _resample_to_16k(audio, sample_rate)
         audio = np.ascontiguousarray(audio, dtype=np.float32)

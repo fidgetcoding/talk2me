@@ -108,8 +108,21 @@ class VoiceLock:
         # NO CMN — spike-verified: normalization inverts this model's metric.
         return np.stack([fb.get_frame(i) for i in range(n)]).astype(np.float32)
 
+    @staticmethod
+    def _trim(audio: np.ndarray, thresh: float = 0.008) -> np.ndarray:
+        """Cut leading/trailing quiet. The segmenter pads utterances with up
+        to silence_ms of dead air (whisper likes it; the embedder does NOT):
+        untrimmed human clips scored BELOW clean TTS impostor clips at
+        enrollment and the lock rejected its own owner (live-hit)."""
+        energy = np.abs(audio)
+        idx = np.where(energy > thresh)[0]
+        if len(idx) == 0:
+            return audio
+        return audio[idx[0]: idx[-1] + 1]
+
     def embed(self, audio: np.ndarray) -> np.ndarray:
-        feats = self._fbank(np.asarray(audio, dtype=np.float32))[None, ...]
+        audio = self._trim(np.asarray(audio, dtype=np.float32))
+        feats = self._fbank(audio)[None, ...]
         emb = self._session().run(None, {"feats": feats})[0][0]
         return emb / (np.linalg.norm(emb) + 1e-9)
 
@@ -140,19 +153,31 @@ class VoiceLock:
             float(np.dot(vp, self.embed(c))) for c in (impostor_clips or [])
         ]
         threshold = DEFAULT_THRESHOLD
+        degraded = False
         if impostor_sims:
-            # 35% up from the worst impostor, NOT the midpoint: future
-            # accepts say NEW sentences (content variance pulls same-voice
-            # scores well below enrollment self-similarity), so the accept
-            # side needs most of the headroom. Never below impostor+0.03.
             lo, hi = max(impostor_sims), min(self_sims)
-            threshold = max(lo + 0.35 * (hi - lo), lo + 0.03)
+            if hi <= lo:
+                # Measurement failed to separate owner from impostor. The
+                # ONE forbidden outcome is locking the owner out (live-hit:
+                # threshold landed above every self-sim and the session went
+                # deaf). Favor the owner: bar just under their weakest clip;
+                # the lock stays useful against clearly different voices.
+                threshold = hi - 0.02
+                degraded = True
+            else:
+                # 35% up from the worst impostor, NOT the midpoint: future
+                # accepts say NEW sentences (content variance pulls same-
+                # voice scores well below enrollment self-similarity), so
+                # the accept side needs most of the headroom.
+                threshold = max(lo + 0.35 * (hi - lo), lo + 0.03)
+                threshold = min(threshold, hi - 0.02)  # owner always passes
         threshold = float(np.clip(threshold, THRESHOLD_FLOOR, THRESHOLD_CEIL))
         self.voiceprint, self.threshold = vp, threshold
         self.meta = {
             "self_sims": [round(s, 3) for s in self_sims],
             "impostor_sims": [round(s, 3) for s in impostor_sims],
             "threshold": round(threshold, 3),
+            "degraded": degraded,
             "margin": round(
                 min(self_sims) - max(impostor_sims), 3
             ) if impostor_sims else None,
@@ -284,7 +309,12 @@ async def run_enrollment(cfg) -> bool:
     print(f"  self-similarity {meta['self_sims']} · "
           f"TTS-voice {meta['impostor_sims'] or 'n/a'} · "
           f"threshold {meta['threshold']}")
-    if meta.get("margin") is not None and meta["margin"] < 0.08:
+    if meta.get("degraded"):
+        print("  ⚠ couldn't cleanly separate your voice from the agent's — "
+              "the lock is set PERMISSIVE (you always pass; very different "
+              "voices are still refused). Re-enroll with headphones or a "
+              "quieter room for a stronger lock.")
+    elif meta.get("margin") is not None and meta["margin"] < 0.08:
         print("  ⚠ thin margin — voice-lock may misfire; re-enroll in a "
               "quieter room, or run team sessions until v-next tuning")
     print("  say 'team session' any time to let everyone talk; "

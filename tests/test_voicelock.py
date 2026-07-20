@@ -63,6 +63,26 @@ def test_logic_with_stub_embedder() -> None:
         lock2 = VoiceLock(path="/nonexistent-model")
         _report("voiceprint load round-trip", lock2.load() is True
                 and abs(lock2.threshold - meta["threshold"]) < 1e-6)
+
+        # THE forbidden outcome: an impostor scoring above the owner must
+        # never produce a threshold that locks the owner out (live-hit:
+        # Nate's real voice scored below the TTS impostor and the session
+        # went deaf).
+        lock3 = VoiceLock(path="/nonexistent-model")
+        embs = iter([
+            np.array([0.8, 0.6]), np.array([0.75, 0.66]),   # owner clips
+            np.array([0.95, 0.31]),                          # impostor > owner
+        ])
+        lock3.embed = lambda a: (n := next(embs)) / np.linalg.norm(n)  # type: ignore[method-assign]
+        meta3 = lock3.enroll(
+            [np.ones(16000, dtype=np.float32)] * 2,
+            [np.ones(16000, dtype=np.float32)],
+        )
+        _report(
+            "inverted calibration never locks the owner out",
+            meta3["degraded"] is True
+            and meta3["threshold"] < min(meta3["self_sims"]),
+        )
     os.environ["TALK2ME_VOICEPRINT"] = "/nonexistent-t2m-test-voiceprint"
 
 

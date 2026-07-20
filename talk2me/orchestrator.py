@@ -179,6 +179,7 @@ class Orchestrator:
         self._turn_lock = asyncio.Lock()
         self._events = None  # the backend event iterator, shared across paths
         self._titled = False  # first user message becomes the session title
+        self._lock_rejects = 0  # consecutive voice-lock rejections (hint gate)
         # The last instruction that reached the agent — continuation stitching
         # and the noise/pause recovery resends read it; typed turns update it
         # too so an interrupted typed task can auto-resume.
@@ -253,10 +254,24 @@ class Orchestrator:
                 ):
                     # Typing, taps, a cough — the capture VAD was fooled but
                     # the classifier wasn't. Drop SILENTLY (typing must not
-                    # spam ignored-lines onto the screen).
+                    # spam ignored-lines onto the screen). Exception: when
+                    # the VOICE-LOCK is doing the rejecting, repeated drops
+                    # mean the lock may be doubting its own owner — say so
+                    # with the escape hatch (typed input bypasses the gate).
+                    if getattr(self._speech_check, "locked", False) and getattr(
+                        self._speech_check, "last_score", None
+                    ) is not None:
+                        self._lock_rejects += 1
+                        if self._lock_rejects in (3, 10):
+                            self.render.status_note(
+                                "voice-lock keeps rejecting — if that's YOU, "
+                                'type "team session" + Enter, or re-enroll '
+                                "with t2m --enroll-voice"
+                            )
                     if self.cfg.debug:
                         self.render.debug("(speech check: not speech — dropped)")
                     continue
+                self._lock_rejects = 0
                 raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
                 if self.cfg.debug:
                     self.render.debug(
