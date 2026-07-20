@@ -21,7 +21,7 @@ You say something. It hears you, types it to your coding agent, reads the answer
 | [Quickstart](#quickstart) | [Saying yes out loud](#saying-yes-out-loud) | [Picking the brain](#picking-the-brain) |
 | [Why I built this](#why-i-built-this) | [How long things take](#how-long-things-take) | [Saving your conversations](#saving-your-conversations) |
 | [What it actually does](#what-it-actually-does) | [Interrupting it](#interrupting-it) | [Tuning the ears](#tuning-the-ears) |
-| [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) · [Pausing the ears](#pausing-the-ears) | [The debugging playbook](#the-debugging-playbook) |
+| [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) · [Pausing the ears](#pausing-the-ears) · [🔒 Voice-lock](#voice-lock-only-you) | [The debugging playbook](#the-debugging-playbook) |
 | [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) · [📱 Phone mode](#phone-mode-ssh-from-your-iphone) | [Under the hood](#under-the-hood) |
 | [Tests](#tests) · [FAQ](#faq) · [Versions](#versions) | [Ways to run it](#ways-to-run-it) | [Not done yet](#not-done-yet) |
 
@@ -95,6 +95,7 @@ What changed from v1 to v2, in one glance:
 - **It hears you while it codes** — long tool runs reopen the ears in every gap instead of going deaf until the turn ends.
 - **First-run setup wizard** — brain/ears/voice/barge/tools/folder, saved as defaults; `t2m --setup` or Ctrl-T to change.
 - **📱 Phone mode** — `t2m --phone` over an SSH port-forward makes your iPhone the mic and speaker.
+- **🔒 Voice-lock** — enroll once and the mic answers only to you; "team session" opens it up when you're not alone.
 
 ## The cheat sheet
 
@@ -111,6 +112,7 @@ Everything on one screen. This is the whole manual for day one.
 | **"wake up"** · "resume listening" · "I'm back" · "unpause" | while paused | Back to normal listening. |
 | **"resume previous session"** · "continue previous session" · "list sessions" | while it's listening | Speaks a numbered list of this folder's earlier sessions (named by their first instruction) — say a number to switch the live conversation onto it, or "cancel". |
 | **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (`--gated` mode only) | Runs or declines the tool call. Mumble twice = it declines for you. |
+| **"team session"** · "everyone can talk" / **"solo session"** · "lock to my voice" | any time (voice-lock enrolled) | Opens the ears to everyone, or locks them back to your enrolled voice. |
 
 **Things you TYPE:**
 
@@ -132,6 +134,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
 | `t2m --phone` | Your iPhone becomes the mic + speaker over your SSH tunnel. See [Phone mode](#phone-mode-ssh-from-your-iphone). |
+| `t2m --enroll-voice` | Voice-lock: read 3 sentences once (~20s); from then on the mic answers to YOUR voice only — other people, the TV, and its own speaker output get ignored. `--voice-lock` / `--no-voice-lock` toggles it. |
 | `t2m --setup` | The guided setup menu — brain, ears, voice, barge-in, tools, folder. Saves as your defaults. |
 | `Ctrl-T` (macOS, mid-session) | Reopen that settings menu without losing your place; relaunches with the new picks. |
 | `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
@@ -302,6 +305,14 @@ It confirms out loud, prints `⏸ paused`, and from then on it hears everything 
 The commands only trigger as a complete utterance — saying "pause listening to him" mid-sentence won't trip it — and saying one **while the agent is mid-task** never cancels the work: the ears pause, the control word never reaches the agent, and if the interruption clipped a working turn, talk2me re-sends the task on its own (you'll see `(resuming the interrupted task)`). And a note for the observant: the mic hardware stays open while paused (that's how it hears "wake up"); "paused" means nothing leaves the loop, not that the microphone is off. Ctrl-C is the off switch.
 
 Related: transcripts that look like machine noise (the same word looped five-plus times — a known transcription artifact on fan hum and silence) get discarded automatically with an `(ignored — transcription noise)` note, so phantom "Okay. Okay. Okay." turns never reach the agent.
+
+## Voice-lock (only you)
+
+Enroll once — `t2m --enroll-voice`, read three sentences, ~20 seconds — and the mic answers to **your voice only**. Roommates, meeting audio, the TV, even its own voice out of the speaker: heard, checked against your voiceprint, ignored. The check runs AFTER the speech classifier, so it costs nothing extra on noise, and utterances too short to fingerprint reliably (a fast "wake up") always pass — wake words are never eaten.
+
+Working with people? Say **"team session"** and the lock opens — everyone talks, everything else stays the same. **"solo session"** locks it back. The setup wizard asks about voice-lock too, and the startup card shows the mode.
+
+Honesty corner: the enrollment calibrates its accept-bar against the agent's own TTS voice (the impostor that matters most) and warns you if the margin comes out thin. Speaker verification is probabilistic — a very similar voice may occasionally slip through or a bad mic day may make it doubt you. Re-enroll any time with `t2m --enroll-voice`; kill it any time with `--no-voice-lock` or "team session".
 
 ## Hear Claude Code itself (hook mode)
 
@@ -511,7 +522,7 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 - **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
 - **Voice commands are English-only.** `--language es` transcribes your Spanish fine, but "pause"/"wake up"/"approve" still only land in English.
-- **Only YOUR voice.** Speaker verification (enroll once, strangers and TVs stop existing to the mic) is designed and queued — it's the v3 headline.
+- **Voice-lock is young.** It ships (see [Voice-lock](#voice-lock-only-you)) but speaker verification is probabilistic and freshly calibrated — expect to re-enroll once or twice while it learns your room. Full talk-over-its-voice on open-air speakers still needs the lock to prove itself live first.
 
 ## Requirements
 

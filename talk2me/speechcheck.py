@@ -28,7 +28,20 @@ MIN_SPEECH_MS = 200
 
 
 class SileroSpeechCheck:
-    """Callable gate: (audio, sample_rate) -> bool. Thread-safe after warmup."""
+    """Callable gate: (audio, sample_rate) -> bool. Thread-safe after warmup.
+
+    Optional third stage: voice-lock. When a VoiceLock with a loaded
+    voiceprint is attached AND `locked` is True (solo session), audio must
+    also BE the enrolled speaker. "team session" flips `locked` off live —
+    everyone talks — without touching the noise gates."""
+
+    def __init__(self, voicelock=None) -> None:
+        self.voicelock = voicelock
+        self.locked = voicelock is not None
+        self.last_score: float | None = None
+
+    def set_locked(self, locked: bool) -> None:
+        self.locked = locked and self.voicelock is not None
 
     def __call__(self, audio: np.ndarray, sample_rate: int) -> bool:
         from faster_whisper.vad import VadOptions, get_speech_timestamps
@@ -45,23 +58,47 @@ class SileroSpeechCheck:
         )
         regions = get_speech_timestamps(audio, opts, sampling_rate=16000)
         speech_ms = sum(r["end"] - r["start"] for r in regions) / 16.0
-        return speech_ms >= MIN_SPEECH_MS
+        if speech_ms < MIN_SPEECH_MS:
+            return False
+        if self.locked and self.voicelock is not None:
+            ok, score = self.voicelock.verify(audio, sample_rate)
+            self.last_score = score
+            return ok
+        return True
 
     def warmup(self) -> None:
-        """Load the ONNX model off the hot path (first call pays ~100ms)."""
+        """Load the ONNX models off the hot path (first call pays ~100ms)."""
         self(np.zeros(3200, dtype=np.float32), 16000)
+        if self.voicelock is not None:
+            self.voicelock.warmup()
 
 
-def build_speech_check(enabled: bool = True) -> SileroSpeechCheck | None:
+def build_speech_check(
+    enabled: bool = True, voice_lock: bool = False
+) -> SileroSpeechCheck | None:
     """The production gate, or None when disabled/unavailable — a missing
-    classifier must degrade to v2.0.x behavior, never block the loop."""
+    classifier must degrade to v2.0.x behavior, never block the loop. The
+    voice-lock stage attaches only when requested AND an enrolled voiceprint
+    exists AND its model loads — any failure degrades to the plain gate."""
     if not enabled:
         return None
     try:
         from faster_whisper import vad  # noqa: F401 — availability probe
     except ImportError:
         return None
-    return SileroSpeechCheck()
+    lock = None
+    if voice_lock:
+        try:
+            from .voicelock import VoiceLock, enrolled, ensure_model
+
+            if enrolled():
+                ensure_model()
+                lock = VoiceLock()
+                if not lock.load():
+                    lock = None
+        except Exception:
+            lock = None
+    return SileroSpeechCheck(voicelock=lock)
 
 
 def _resample_to_16k(audio: np.ndarray, sample_rate: int) -> np.ndarray:

@@ -488,6 +488,9 @@ class Orchestrator:
         if intent == "sessions":
             await self._session_picker()
             return
+        if intent in ("team", "solo"):
+            await self._set_voice_lock(intent == "solo")
+            return
         if not typed:
             # An unfinished-sounding transcript is NOT sent yet: keep the
             # mic open and stitch the rest on BEFORE the agent ever sees a
@@ -541,7 +544,14 @@ class Orchestrator:
                     )
                     break
                 if intent is not None:
-                    await self._set_paused(intent == "pause")
+                    if intent in ("team", "solo"):
+                        # Lock switch mid-work: flip silently and resume the
+                        # interrupted task via the same never-cancel logic.
+                        await self._set_voice_lock(
+                            intent == "solo", spoken=False
+                        )
+                    else:
+                        await self._set_paused(intent == "pause")
                     # Pause must never cancel work. "Work" = the turn ran
                     # tools OR hadn't spoken yet (cut mid-thinking — the
                     # answer never reached the user; live bug killed a build
@@ -726,6 +736,31 @@ class Orchestrator:
             return
         self.render.listening(nl=nl)
         self._listening_fresh = True
+
+    async def _set_voice_lock(self, locked: bool, *, spoken: bool = True) -> None:
+        """Flip solo/team mode on the speech gate (duck-typed)."""
+        gate = self._speech_check
+        if gate is None or not hasattr(gate, "set_locked") or getattr(
+            gate, "voicelock", None
+        ) is None:
+            self.render.status_note(
+                "voice-lock isn't enrolled — run t2m --enroll-voice"
+            )
+            return
+        gate.set_locked(locked)
+        self._listening_fresh = False
+        if locked:
+            self.render.status_note("solo session — locked to your voice")
+            if self.log:
+                self.log.event("voice-lock: solo session")
+            if spoken:
+                await self._speak_confirm("Locked to your voice.")
+        else:
+            self.render.status_note("team session — everyone can talk")
+            if self.log:
+                self.log.event("voice-lock: team session")
+            if spoken:
+                await self._speak_confirm("Team session. Everyone can talk.")
 
     async def _set_paused(self, paused: bool) -> None:
         """Flip the ears, with the matching chip + spoken confirmation."""
@@ -1342,6 +1377,29 @@ _PAUSE_COMMANDS = frozenset(
 _RESUME_COMMANDS = frozenset(
     ("unpause", "wake up", "resume listening", "start listening", "im back")
 )
+# Voice-lock mode switches: "team session" opens the ears to everyone;
+# "solo session" locks them back to the enrolled voice.
+_TEAM_COMMANDS = frozenset(
+    (
+        "team session",
+        "team mode",
+        "everyone can talk",
+        "listen to everyone",
+        "unlock my voice",
+        "voice lock off",
+    )
+)
+_SOLO_COMMANDS = frozenset(
+    (
+        "solo session",
+        "solo mode",
+        "only me",
+        "just me",
+        "lock to my voice",
+        "voice lock on",
+    )
+)
+
 # Whole-utterance triggers for the spoken session picker.
 _SESSION_COMMANDS = frozenset(
     (
@@ -1397,6 +1455,10 @@ def _single_control_intent(text: str) -> str | None:
         return "resume"
     if normalized in _SESSION_COMMANDS:
         return "sessions"
+    if normalized in _TEAM_COMMANDS:
+        return "team"
+    if normalized in _SOLO_COMMANDS:
+        return "solo"
     return None
 
 

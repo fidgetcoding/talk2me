@@ -26,7 +26,7 @@ CONFIG_DIR = os.path.expanduser("~/.talk2me")
 ALLOWED_KEYS = (
     "model", "stt", "voice", "barge_in", "gated", "cwd", "save_dir",
     "language", "whisper_model", "backend_base_url", "backend_auth_env",
-    "agent",
+    "agent", "voice_lock",
 )
 
 # Alternate brains that publish Anthropic-compatible endpoints, officially
@@ -124,7 +124,7 @@ def run_wizard(existing: dict | None = None) -> dict:
     p = console.print
 
     p()
-    p(f"[bold {GREEN}]talk2me setup[/] — six questions, saved forever. "
+    p(f"[bold {GREEN}]talk2me setup[/] — a few questions, saved forever. "
       f"Re-run any time with [bold {CYAN}]t2m --setup[/] (or Ctrl-T mid-session).",
       )
     p()
@@ -296,7 +296,27 @@ def run_wizard(existing: dict | None = None) -> dict:
     else:
         cwd = None
 
-    # 7 — transcripts
+    # 7 — voice-lock
+    p()
+    p(f"[bold {CYAN}]7 · voice-lock[/]  Lock the ears to YOUR voice — other "
+      "people, the TV, and its own speaker output get ignored. "
+      "[dim]You'll read 3 sentences (~20s) on your next launch to enroll; "
+      "say \"team session\" any time to let everyone talk, \"solo session\" "
+      "to lock back.[/]")
+    voice_lock = Confirm.ask(
+        "  voice-lock on?", default=prev.get("voice_lock", False)
+    )
+    if voice_lock:
+        from .voicelock import enrolled as _vl_enrolled
+
+        if _vl_enrolled():
+            p("  [dim](voiceprint found — you're already enrolled; "
+              "re-calibrate any time with t2m --enroll-voice)[/]")
+        else:
+            p("  [dim](enrollment runs automatically at your next voice "
+              "launch)[/]")
+
+    # 8 — transcripts
     p()
     save_dir: str | None = prev.get("save_dir")
     if Confirm.ask(
@@ -326,6 +346,7 @@ def run_wizard(existing: dict | None = None) -> dict:
 
     cfg = {
         "agent": agent,
+        "voice_lock": voice_lock,
         "model": model,
         "stt": stt,
         "voice": voice,

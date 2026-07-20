@@ -256,6 +256,24 @@ def _parse_args(argv: list[str]) -> Config:
         help="port for the --phone bridge (default 8765)",
     )
     p.add_argument(
+        "--voice-lock", action=argparse.BooleanOptionalAction, default=False,
+        dest="voice_lock",
+        help=(
+            "solo mode: the mic answers ONLY to your enrolled voice (other "
+            "people, the TV, its own speaker output are ignored). Needs a "
+            "one-time --enroll-voice. Flip live by saying 'team session' / "
+            "'solo session'."
+        ),
+    )
+    p.add_argument(
+        "--enroll-voice", action="store_true", dest="enroll_voice",
+        help=(
+            "record your voiceprint (read 3 sentences, ~20s), calibrate the "
+            "lock against the agent's own voice, then launch with voice-lock "
+            "on. Re-run any time to re-calibrate."
+        ),
+    )
+    p.add_argument(
         "--speech-check", action=argparse.BooleanOptionalAction, default=True,
         help=(
             "confirm audio is actually speech (Silero classifier) before "
@@ -333,6 +351,8 @@ def _parse_args(argv: list[str]) -> Config:
         working_ticks=a.ticks,
         plain=a.plain,
         speech_check=a.speech_check,
+        voice_lock=a.voice_lock or a.enroll_voice,
+        enroll_voice=a.enroll_voice,
         phone=a.phone,
         phone_port=a.phone_port,
         agent=a.agent,
@@ -475,6 +495,28 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
     from .render import build_renderer
 
     renderer = build_renderer(cfg)
+
+    # Voice-lock enrollment: explicit (--enroll-voice) or automatic when the
+    # lock is wanted but no voiceprint exists yet. Runs BEFORE the voice
+    # stack so the calibration mic has the room to itself.
+    if cfg.voice_lock and sys.stdin.isatty():
+        from .voicelock import enrolled, run_enrollment
+
+        if cfg.enroll_voice or not enrolled():
+            if not await run_enrollment(cfg):
+                renderer.status_note(
+                    "enrollment didn't finish — voice-lock OFF this session"
+                )
+                cfg.voice_lock = False
+    elif cfg.voice_lock:
+        from .voicelock import enrolled
+
+        if not enrolled():
+            renderer.status_note(
+                "voice-lock needs enrollment (t2m --enroll-voice) — OFF"
+            )
+            cfg.voice_lock = False
+
     tts = factory.build_tts(cfg)
     bridge = None
 
@@ -542,6 +584,15 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
 
     from .speechcheck import build_speech_check
 
+    speech_check = build_speech_check(cfg.speech_check, voice_lock=cfg.voice_lock)
+    if cfg.voice_lock and (
+        speech_check is None or getattr(speech_check, "voicelock", None) is None
+    ):
+        renderer.status_note(
+            "voice-lock couldn't load its model — running unlocked"
+        )
+        cfg.voice_lock = False
+
     orch = Orchestrator(
         cfg=cfg,
         backend=factory.build_backend(cfg),
@@ -552,7 +603,7 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         speaker=speaker,
         session_log=session_log,
         renderer=renderer,
-        speech_check=build_speech_check(cfg.speech_check),
+        speech_check=speech_check,
     )
 
     # Ctrl-T mid-session (macOS sends SIGINFO) = "open the settings menu":

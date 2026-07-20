@@ -88,6 +88,9 @@ jobs:
       - name: test_phone
         run: python -m tests.test_phone
 
+      - name: test_voicelock
+        run: python -m tests.test_voicelock
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

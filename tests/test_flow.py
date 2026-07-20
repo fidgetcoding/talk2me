@@ -150,6 +150,11 @@ def test_hallucination_and_controls() -> None:
         ("Well, um, go to sleep.", "pause"),
         ("hey hey okay", None),  # fillers alone are not a command
         ("actually keep going", None),  # filler + real content stays content
+        # Voice-lock switches:
+        ("Team session.", "team"),
+        ("Okay, solo session.", "solo"),
+        ("Everyone can talk.", "team"),
+        ("Lock to my voice.", "solo"),
     ]
     for text, want in cases:
         got = control_intent(text)
@@ -307,6 +312,48 @@ async def test_typed_intervention() -> None:
     )
 
 
+async def test_team_solo_switch() -> None:
+    """'Team session.' flips the gate open without sending anything; 'solo
+    session' locks it back."""
+    class FakeGate:
+        def __init__(self) -> None:
+            self.voicelock = object()  # "enrolled"
+            self.locked = True
+            self.calls: list[bool] = []
+
+        def set_locked(self, v: bool) -> None:
+            self.calls.append(v)
+            self.locked = v
+
+        def __call__(self, audio, sr) -> bool:
+            return True
+
+    gate = FakeGate()
+    backend = FakeBackend(replies=[])
+    tts = FakeTTS()
+    orch = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250),
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT(["Team session.", "Solo session."]),
+        tts=tts,
+        mic=FakeMic(_speech(15) + _silence(60) + _speech(15) + _silence(60),
+                    sample_rate=SR),
+        speaker=FakeSpeaker(SR),
+        speech_check=gate,
+    )
+    await asyncio.wait_for(orch.run(), timeout=15)
+    check("team then solo flipped the gate", gate.calls == [False, True],
+          str(gate.calls))
+    check("switches never reach the agent", backend.sent == [], str(backend.sent))
+    check(
+        "spoken confirms happened",
+        any("Everyone can talk" in s for s in tts.spoken)
+        and any("Locked to your voice" in s for s in tts.spoken),
+        str(tts.spoken),
+    )
+
+
 async def test_wake_word_mid_task() -> None:
     """'Sleep.' mid-work pauses + auto-resumes the task; a later 'Wake up.'
     mid-work UNPAUSES without cutting the still-running turn."""
@@ -459,6 +506,7 @@ async def main() -> int:
     await test_presend_timeout_sends_fragment()
     await test_half_duplex_tool_gap_unmute()
     await test_typed_intervention()
+    await test_team_solo_switch()
     await test_wake_word_mid_task()
     await test_session_picker()
     await test_speech_check_gate()

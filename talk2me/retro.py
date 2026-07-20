@@ -214,6 +214,10 @@ class RetroRenderer:
             ("tools", tools_mode),
             ("working on", tilde(cfg.cwd or os.getcwd())),
         ]
+        if getattr(cfg, "voice_lock", False):
+            rows.insert(
+                4, ("voice-lock", 'ON — solo (say "team session" to open up)')
+            )
         if cfg.save_dir:
             rows.append(
                 ("saves to", tilde(os.path.expanduser(cfg.save_dir)))

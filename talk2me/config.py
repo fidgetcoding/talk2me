@@ -184,6 +184,11 @@ class Config:
     # Directory for plain-markdown session transcripts (None = don't save).
     # CLI --save-dir; persistent via the TALK2ME_SAVE_DIR env var.
     save_dir: str | None = None
+    # Voice-lock: the mic answers only to the enrolled voice ("solo").
+    # Toggleable live: "team session" / "solo session". Requires enrollment
+    # (t2m --enroll-voice, or automatic on first locked launch).
+    voice_lock: bool = False
+    enroll_voice: bool = False
     # Set by the launcher when --barge-in was WANTED but the output resolved
     # to open-air speakers (auto-downgrade) — the card explains itself
     # instead of a bare "off" (live confusion 2026-07-19).
