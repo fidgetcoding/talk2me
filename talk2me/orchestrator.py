@@ -181,6 +181,13 @@ class Orchestrator:
         # user turns. The lock serializes typed turns with voice turns so
         # only one owns the backend (and the mic) at a time.
         self._typed_queue: asyncio.Queue[str] = asyncio.Queue()
+        # Set when a typed line interrupts a running turn (the barge's
+        # keyboard twin): the dying turn must break out without resending,
+        # and the typed text becomes the next instruction.
+        self._typed_takeover: str | None = None
+        # In-flight typed turns spawned by _typed_worker (pruned as they
+        # finish; cancelled at teardown).
+        self._typed_tasks: list[asyncio.Task] = []
         self._stdin_lines: asyncio.Queue[str] = asyncio.Queue()
         self._turn_lock = asyncio.Lock()
         self._events = None  # the backend event iterator, shared across paths
@@ -328,6 +335,8 @@ class Orchestrator:
                     break
         finally:
             typed_task.cancel()
+            for t in self._typed_tasks:
+                t.cancel()
             if assembler_task is not None:
                 assembler_task.cancel()
             self.mic.stop()
@@ -503,7 +512,24 @@ class Orchestrator:
         drive the backend at the same time. Typed turns mute the mic for
         their duration — the frame invariant (one consumer of mic audio per
         turn) survives, at the cost of voice barge-in during typed turns."""
+        if typed and self._turn_lock.locked():
+            # Typing at a busy agent = wanting its attention NOW. Voice gets
+            # that through the barge monitor; this is its keyboard twin
+            # (live 2026-07-20: typed lines silently queued behind minutes
+            # of work). Ear flips first — typing doesn't share the audio
+            # channel, so pause/wake need not touch the running turn at all.
+            intent = control_intent(text)
+            if intent in ("pause", "resume"):
+                await self._set_paused(intent == "pause", spoken=False)
+                return
+            self._typed_takeover = text
+            self.render.status_note("(cutting in — one sec)")
+            self._interrupted = True
+            self.speaker.stop()
+            await self.backend.interrupt()
         async with self._turn_lock:
+            if self._typed_takeover is text:
+                self._typed_takeover = None
             if self._fatal:
                 return
             if typed:
@@ -572,6 +598,13 @@ class Orchestrator:
         noise_resends = 0
         control_resends = 0
         while not self._fatal:
+            if self._typed_takeover is not None:
+                # A typed line cut this turn (the barge's keyboard twin) and
+                # takes over as the next instruction: drop any monitor
+                # transcript and never resend the old task against it — the
+                # typed worker sends it the moment this turn releases the
+                # lock.
+                break
             if barge:
                 # Control words arriving through the barge path ("Sleep."
                 # spoken while the agent worked) must NEVER reach the agent
@@ -758,7 +791,19 @@ class Orchestrator:
             while True:
                 text = (await self._typed_queue.get()).strip()
                 if text:
-                    await self._handle_user_text(text, typed=True)
+                    # Spawn, don't await: awaiting serialized the worker on
+                    # the running turn, so a line typed DURING a typed turn
+                    # queued silently instead of cutting in. _turn_lock is
+                    # what serializes execution; the takeover path in
+                    # _handle_user_text needs to run while the lock is held.
+                    self._typed_tasks = [
+                        t for t in self._typed_tasks if not t.done()
+                    ]
+                    self._typed_tasks.append(
+                        asyncio.create_task(
+                            self._handle_user_text(text, typed=True)
+                        )
+                    )
         except asyncio.CancelledError:
             raise
 
@@ -837,20 +882,26 @@ class Orchestrator:
             if spoken:
                 await self._speak_confirm("Team session. Everyone can talk.")
 
-    async def _set_paused(self, paused: bool) -> None:
-        """Flip the ears, with the matching chip + spoken confirmation."""
+    async def _set_paused(self, paused: bool, *, spoken: bool = True) -> None:
+        """Flip the ears, with the matching chip + spoken confirmation.
+        spoken=False (typed mid-turn controls) keeps the confirm on screen
+        only — the agent may be mid-sentence on the shared speaker."""
         self._paused = paused
         self._listening_fresh = False
         if paused:
             self.render.paused()
             if self.log:
                 self.log.event("listening paused by voice")
-            await self._speak_confirm("Paused. Say wake up when you need me.")
+            if spoken:
+                await self._speak_confirm(
+                    "Paused. Say wake up when you need me."
+                )
         else:
             self.render.awake()
             if self.log:
                 self.log.event("listening resumed by voice")
-            await self._speak_confirm("I'm back.")
+            if spoken:
+                await self._speak_confirm("I'm back.")
 
     async def _reap_barge_monitor(self) -> str | None:
         """Collect the barge-in transcript (waiting out the utterance if the
@@ -858,7 +909,10 @@ class Orchestrator:
         task, self._barge_task = self._barge_task, None
         if task is None:
             return None
-        if not self._interrupted:
+        if not self._interrupted or self._typed_takeover is not None:
+            # Clean turn — or a TYPED takeover: the interrupt wasn't voice,
+            # so waiting for a spoken utterance would hang the unwind until
+            # someone happened to talk (live-shape 2026-07-20).
             task.cancel()
         try:
             return await task
@@ -1120,6 +1174,15 @@ class Orchestrator:
                             )
                             self._interrupted = True
                             self.speaker.stop()
+                            if not self._spoke_any:
+                                # Cut deep in thinking/working with nothing
+                                # spoken yet: without this line the only
+                                # sign the ears heard is a dim label under a
+                                # wall of 🧠 text — reads as deafness (live
+                                # 2026-07-20).
+                                self.render.status_note(
+                                    "(heard you — go ahead, I'm listening)"
+                                )
                             if self._echo_gate is not None:
                                 # Field record of every cut's foreign score —
                                 # threshold tuning runs on real numbers from

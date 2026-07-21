@@ -320,6 +320,150 @@ async def test_typed_intervention() -> None:
     )
 
 
+class _HeldBackend(FakeBackend):
+    """Turn 1 streams a delta and completes ONLY on interrupt (the real CLI
+    ends an interrupted turn with error_during_execution -> TurnComplete);
+    later turns reply normally."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._turn = 0
+
+    async def send(self, user_text: str) -> None:
+        from talk2me.events import AssistantTextDelta, TurnComplete
+
+        self.sent.append(user_text)
+        self._turn += 1
+        if self._turn == 1:
+            await self._q.put(AssistantTextDelta(text="Working on the game. "))
+        else:
+            await self._q.put(AssistantTextDelta(text="Switched."))
+            await self._q.put(TurnComplete(text="Switched."))
+
+    async def interrupt(self) -> None:
+        from talk2me.events import TurnComplete
+
+        await super().interrupt()
+        await self._q.put(TurnComplete(text="Working on the game."))
+
+
+class _EndlessMic(FakeMic):
+    """Silence forever until the scenario flips `ended` — run() must outlive
+    the typed turns under test (the real mic never ends mid-session; the
+    stock FakeMic drains in milliseconds and run()'s teardown would cancel
+    the in-flight typed turn)."""
+
+    def __init__(self, sample_rate: int = 16000) -> None:
+        super().__init__([], sample_rate)
+        self.ended = False
+
+    async def frames(self):
+        frame = np.zeros(FRAME, dtype=np.float32)
+        while not self.ended:
+            await asyncio.sleep(0.005)
+            if self.muted:
+                continue
+            yield frame
+
+
+async def test_typed_takeover() -> None:
+    """A typed line during a running turn is the barge's keyboard twin: it
+    interrupts the work and becomes the next instruction — the old task is
+    NOT resent against it (live 2026-07-20: typed lines silently queued
+    behind minutes of work). Driven through run(), the production path."""
+    backend = _HeldBackend()
+    mic = _EndlessMic(sample_rate=SR)
+    orch = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250),
+        backend=backend,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT([]),
+        tts=FakeTTS(),
+        mic=mic,
+        speaker=FakeSpeaker(SR),
+    )
+
+    async def type_lines() -> None:
+        await orch._typed_queue.put("build me a kart racer")
+        # Wait until turn 1 is genuinely mid-flight before cutting in.
+        for _ in range(200):
+            if orch._turn_lock.locked():
+                break
+            await asyncio.sleep(0.05)
+        await orch._typed_queue.put("actually stop, make pong instead")
+        for _ in range(200):
+            if len(backend.sent) >= 2 and not orch._turn_lock.locked():
+                break
+            await asyncio.sleep(0.05)
+        mic.ended = True
+
+    typer = asyncio.create_task(type_lines())
+    await asyncio.wait_for(orch.run(), timeout=30)
+    await typer
+    check("typed takeover interrupted the work", backend.interrupts == 1)
+    check(
+        "typed text became the next turn, no resend of the old task",
+        backend.sent
+        == ["build me a kart racer", "actually stop, make pong instead"],
+        str(backend.sent),
+    )
+    check("takeover flag cleared", orch._typed_takeover is None)
+
+    # Typed pause/wake mid-turn flip the ears WITHOUT touching the work —
+    # typing doesn't share the audio channel, so the running turn survives.
+    backend2 = _HeldBackend()
+    mic2 = _EndlessMic(sample_rate=SR)
+    orch2 = Orchestrator(
+        cfg=Config(silence_ms=900, min_speech_ms=250),
+        backend=backend2,
+        vad=EnergyVAD(sample_rate=SR, frame_samples=FRAME, threshold=0.012),
+        stt=FakeSTT([]),
+        tts=FakeTTS(),
+        mic=mic2,
+        speaker=FakeSpeaker(SR),
+    )
+    paused_seen = {"paused": False, "interrupts_at_pause": -1}
+
+    async def type_controls() -> None:
+        await orch2._typed_queue.put("build it again")
+        for _ in range(200):
+            if orch2._turn_lock.locked():
+                break
+            await asyncio.sleep(0.05)
+        await orch2._typed_queue.put("pause")
+        for _ in range(200):
+            if orch2._paused:
+                break
+            await asyncio.sleep(0.05)
+        paused_seen["paused"] = orch2._paused
+        paused_seen["interrupts_at_pause"] = backend2.interrupts
+        await orch2._typed_queue.put("wake up")
+        for _ in range(200):
+            if not orch2._paused:
+                break
+            await asyncio.sleep(0.05)
+        # End the held turn, then the session, so run() drains and exits.
+        await orch2.backend.interrupt()
+        for _ in range(200):
+            if not orch2._turn_lock.locked():
+                break
+            await asyncio.sleep(0.05)
+        mic2.ended = True
+
+    typer2 = asyncio.create_task(type_controls())
+    await asyncio.wait_for(orch2.run(), timeout=30)
+    await typer2
+    check(
+        "typed 'pause' mid-turn flips ears without interrupting",
+        paused_seen["paused"] and paused_seen["interrupts_at_pause"] == 0,
+        str(paused_seen),
+    )
+    check(
+        "typed 'wake up' mid-turn resumes without interrupting",
+        orch2._paused is False,
+    )
+
+
 async def test_team_solo_switch() -> None:
     """'Team session.' flips the gate open without sending anything; 'solo
     session' locks it back."""
@@ -514,6 +658,7 @@ async def main() -> int:
     await test_presend_timeout_sends_fragment()
     await test_half_duplex_tool_gap_unmute()
     await test_typed_intervention()
+    await test_typed_takeover()
     await test_team_solo_switch()
     await test_wake_word_mid_task()
     await test_session_picker()
