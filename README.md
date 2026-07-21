@@ -114,13 +114,17 @@ Everything on one screen. This is the whole manual for day one.
 | **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (`--gated` mode only) | Runs or declines the tool call. Mumble twice = it declines for you. |
 | **"team session"** · "everyone can talk" / **"solo session"** · "lock to my voice" | any time (voice-lock enrolled) | Opens the ears to everyone, or locks them back to your enrolled voice. |
 
+*Every command in this table also works typed — same words, Enter instead of silence.*
+
 **Things you TYPE:**
 
 | Type | What you get |
 |---|---|
 | `t2m` (or `talk2me`) | The whole thing, defaults on. Talk. |
 | `Ctrl-C` | Done. (Transcript, if enabled, is already saved — it writes live.) |
-| *type anything + Enter* | Works mid-session, any time — paste an error log, type an exact path, or intervene precisely. Multi-line pastes arrive as one message; "pause" and friends work typed too. |
+| *type anything + Enter* | Works mid-session, any time — your keystrokes get their own ⌨ line (inside the working panel too). Typed mid-work, Enter cuts in like a barge and your line becomes the next instruction. Multi-line pastes arrive as one message. |
+| `pause` / `sleep` + Enter | **Every spoken command works typed too.** The whole "Things you SAY" vocabulary — pause, sleep, go to bed, take a break — same words, same result. Typed mid-build it flips the ears WITHOUT interrupting the work. |
+| `wake up` / `unpause` + Enter | Wakes it from a typed or spoken pause. Also the universal unstick: typed input bypasses the audio gate entirely (voice-lock, noise, whatever — the keyboard always gets through). |
 | `t2m --continue` (or `-c`) | Pick up where you left off — resumes this folder's last session, memory intact. No more "what game?". |
 | `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default, speakers included). |
 | `t2m --gated` | Spoken approvals before any non-read tool runs (default is auto-approve, with the nasty stuff hard-blocked either way). |
@@ -512,7 +516,7 @@ Every swappable part hides behind a contract: voice detection, transcription, th
 
 Out of the box:
 
-- **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room. Two sharper options ship too: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file). Separately from the pick, every utterance must also convince a bundled Silero speech CLASSIFIER before it can interrupt or be transcribed — that's the layer that makes typing, taps, and coughs invisible (`--no-speech-check` to disable).
+- **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room, and the RIGHT pick under native AEC (the voice processor's noise floor reads as speech to webrtc, so native mode auto-swaps webrtc back to energy with a note). Off native mode, two sharper options ship: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file). Separately from the pick, every utterance must also convince a bundled Silero speech CLASSIFIER before it can interrupt or be transcribed — that's the layer that makes typing, taps, and coughs invisible (`--no-speech-check` to disable).
 - **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter. Or `--stt parakeet` (install with `pip install -e ".[parakeet]"`): NVIDIA's Parakeet on the Apple-Silicon GPU — better accuracy than any local Whisper at a tenth of the wait, for ~2 GB of RAM while it runs. English-only, and `--vocab` biasing stays a Whisper-only trick. The full research behind the tradeoff lives in `docs/stt-upgrade-research.md`.
 - **The mouth:** macOS `say`, rendered a chunk ahead of playback so the voice doesn't stall between sentences. `--tts kitten` (install with `pip install -e ".[kitten]"`) is a local neural voice that works on any OS. `--tts null` keeps it text-only.
 - **The agent:** Claude Code by default, over its structured streaming interface — including the tool-permission wire behind the spoken approval gate (pinned byte-for-byte in `docs/permission-spike-results.md`). `--agent codex` swaps in OpenAI's Codex CLI (one `codex exec` per turn, resumed between turns — schema pinned live in `tests/test_codex_translate.py`). Kimi, GLM, and DeepSeek ride the Claude pipe via their official Anthropic-compatible endpoints (the wizard sets it up). Anything else hides behind the same one-file contract (`AgentBackend`) — fork away; that's what the MIT license is for.
