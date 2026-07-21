@@ -97,6 +97,9 @@ jobs:
       - name: test_vpio
         run: python -m tests.test_vpio
 
+      - name: test_typeline
+        run: python -m tests.test_typeline
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

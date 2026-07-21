@@ -93,6 +93,9 @@ class _WorkPanel:
         self.count = 0
         self.t0 = time.monotonic()
         self._spinner = Spinner("dots", style="chip")
+        # In-progress typed line — rendered as a ⌨ row so typing stays
+        # visible while the Live panel owns the screen.
+        self.typeahead = ""
 
     def add(self, name: str, detail: str) -> None:
         self.entries.append((name, detail))
@@ -128,6 +131,10 @@ class _WorkPanel:
                 line.append("  ")
                 line.append(detail, style="detail")
             lines.append(line)
+        if self.typeahead:
+            lines.append(
+                Text.assemble(("⌨ ", "chip"), (self.typeahead[-70:], "detail"))
+            )
         return Panel(
             Group(*lines),
             box=DOTTED,
@@ -163,6 +170,46 @@ class RetroRenderer:
         # Which stream currently owns the line: "" / "prose" / "think" —
         # drives the newline + 🧠 prefix when thinking and prose interleave.
         self._stream = ""
+        # In-progress typed line: shown as a ⌨ row inside the work panel
+        # while Live is active, a manual bottom line while idle, and held
+        # silently while streamed prose owns the cursor.
+        self._ta_visible = False
+        self._ta_buffer = ""
+        from .render import _wrap_for_typeahead
+
+        _wrap_for_typeahead(self)
+
+    def _ta_clear(self) -> None:
+        if self._ta_visible:
+            try:
+                self.console.file.write("\r\x1b[2K")
+                self.console.file.flush()
+            except Exception:
+                pass
+            self._ta_visible = False
+
+    def typeahead(self, buffer: str) -> None:
+        """Show the in-progress typed line wherever the screen allows: work
+        panel row during Live, bottom line while idle, nothing mid-prose
+        (the buffer isn't lost — it appears at the next safe boundary)."""
+        self._ta_buffer = buffer
+        if self._panel is not None:
+            self._panel.typeahead = buffer
+            return
+        try:
+            is_tty = self.console.file.isatty()
+        except Exception:
+            is_tty = False
+        if not is_tty or self._inline:
+            return
+        try:
+            self.console.file.write("\r\x1b[2K")
+            if buffer:
+                self.console.file.write(f"⌨ {buffer[-160:]}")
+            self.console.file.flush()
+        except Exception:
+            return
+        self._ta_visible = bool(buffer)
 
     def _collapse(self) -> None:
         """Fold an active work panel into its permanent one-line summary.

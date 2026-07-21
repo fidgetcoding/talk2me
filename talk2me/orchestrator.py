@@ -188,6 +188,9 @@ class Orchestrator:
         # In-flight typed turns spawned by _typed_worker (pruned as they
         # finish; cancelled at teardown).
         self._typed_tasks: list[asyncio.Task] = []
+        # The cbreak input line (typeline.py) when stdin is a real TTY;
+        # closed at teardown to restore the terminal.
+        self._typeline = None
         self._stdin_lines: asyncio.Queue[str] = asyncio.Queue()
         self._turn_lock = asyncio.Lock()
         self._events = None  # the backend event iterator, shared across paths
@@ -339,6 +342,8 @@ class Orchestrator:
                 t.cancel()
             if assembler_task is not None:
                 assembler_task.cancel()
+            if self._typeline is not None:
+                self._typeline.close()  # cbreak off — never strand the shell
             self.mic.stop()
             # Release the audio output device at session end. stop() is a no-op-safe
             # method on the real Speaker (and the fake), so this can't strand a handle.
@@ -832,10 +837,31 @@ class Orchestrator:
             raise
 
     def _start_stdin_thread(self) -> None:
-        """Pump terminal lines onto the loop — a dedicated daemon thread,
-        like the Mic's PortAudio callback (to_thread would orphan a blocked
-        readline on every timeout and eat the next typed line)."""
+        """Own the typed input. On a real TTY: the TypeLine — cbreak mode,
+        our own echo (a ⌨ line the renderer draws), so keystrokes never
+        interleave into streamed output (the live 'not sure keep 🤖 Gotyou'
+        mess). Anywhere else: the legacy readline pump on a daemon thread
+        (to_thread would orphan a blocked readline on every timeout and eat
+        the next typed line)."""
         loop = asyncio.get_running_loop()
+
+        from .typeline import TypeLine
+
+        if TypeLine.available():
+            show = getattr(self.render, "typeahead", lambda buffer: None)
+            self._typeline = TypeLine(
+                loop,
+                # \n keeps the assembler's contract identical to readline's.
+                on_submit=lambda text: self._stdin_lines.put_nowait(
+                    text + "\n"
+                ),
+                on_change=show,
+            )
+            try:
+                self._typeline.start()
+                return
+            except Exception:
+                self._typeline = None  # broken termios — legacy pump below
 
         def pump() -> None:
             while True:

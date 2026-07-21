@@ -919,7 +919,12 @@ def main(argv: list[str] | None = None) -> int:
         # raced sounddevice's atexit Pa_Terminate into a segfault (both
         # live-observed 2026-07-19/20). Everything that matters is already
         # on disk (the transcript flushes per write); the OS reclaims audio
-        # handles more reliably than a dying interpreter does.
+        # handles more reliably than a dying interpreter does. os._exit
+        # skips atexit, so the terminal's cbreak state is restored HERE —
+        # a dead session must never leave the shell echo-less.
+        from .typeline import restore_all
+
+        restore_all()
         os._exit(0)
 
 
