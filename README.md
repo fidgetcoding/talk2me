@@ -524,11 +524,25 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 
 - **A streaming voice.** `say` renders each chunk fully before playing it, so there's a hard prosody reset at chunk boundaries — audible on long lists. A neural streaming TTS (Kokoro is the candidate) removes it. That's the next build.
 - **Wispr hands-free.** I want to drive the dictation app I actually like instead of the basics. It's a real maybe — the keypress trick it needs isn't proven yet.
-- **The echo gate is young.** Speakers talk-over ships (envelope-matched against the exact playback), but the residual threshold was tuned on synthetic fixtures plus one laptop — a very reverberant room or a very quiet talk-over may need the bar moved. `--debug` prints the residual on every rejected onset so tuning is evidence, not vibes.
+- **The echo-gate fallback is young.** On macOS the native canceller carries speakers talk-over now, but wherever the fallback gate runs (Linux, `--aec gate`), its residual threshold was tuned on synthetic fixtures plus one laptop — a very reverberant room may need the bar moved. `--debug` prints the residual on every rejected onset so tuning is evidence, not vibes.
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 - **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
 - **Voice commands are English-only.** `--language es` transcribes your Spanish fine, but "pause"/"wake up"/"approve" still only land in English.
 - **Voice-lock is young.** It ships (see [Voice-lock](#voice-lock-only-you)) but speaker verification is probabilistic, and on some mic/room combos the calibration comes out too weak to enforce — the lock then runs in observe mode (scores logged, nothing blocked) rather than risk going deaf on its own owner.
+
+## The road here
+
+The short version of a long fight with physics:
+
+- **v1.0.0** — the proof. Half-duplex voice loop around a terminal coding agent: talk, it answers, the mic reopens. No push-to-talk.
+- **v2.0.0** — the face. Work panels, code cards, the retro skin.
+- **v2.1.0** — the polish wave. Setup wizard, phone mode, noise gates, pause/wake.
+- **v2.2.0** — the keeper. Session continuity with a spoken picker, the Codex brain, typed input. This stayed the public release while the echo war raged below.
+- **v2.3.0** — voice-lock. Only-you speaker verification, fully local. Shipped, then field-tested into observe-only: on a laptop mic, your own voice scatters wider than the gap to a stranger's. An honest loss — the scores still log, the idea still stands.
+- **v2.4.0** — the echo gate. Speakers talk-over without headphones, by matching the mic against the exact playback. Zero false cuts in the field — but a couch-voice talk-over lost the volume war near max. Kept as the fallback layer.
+- **v2.5.0** — the one we were chasing. macOS's own echo canceller (the FaceTime one) cleans the mic at the driver: its own voice comes out unintelligible to the transcriber at any volume, so you just talk. Plus the ⌨ input line — type at it while it works and it cuts in like a barge — and snappier pause/wake.
+
+That's the destination we set out for: a voice loop you can talk over, type over, and trust on open speakers. It got there. What's in [Not done yet](#not-done-yet) is real, mapped, and none of it is a mystery — the seams were built for this (swap a VAD, an STT, a TTS, a whole agent backend, or the renderer without touching the loop). **The rest is for the community to keep evolving.** Fork it, gut it, teach it new tricks — PRs and weird ideas welcome.
 
 ## Requirements
 

@@ -132,8 +132,10 @@ class _WorkPanel:
                 line.append(detail, style="detail")
             lines.append(line)
         if self.typeahead:
+            # Default (white) text, matching the idle bottom line — your own
+            # words never render dim (Nate's call, launch day).
             lines.append(
-                Text.assemble(("⌨ ", "chip"), (self.typeahead[-70:], "detail"))
+                Text.assemble(("⌨ ", "chip"), (self.typeahead[-70:], ""))
             )
         return Panel(
             Group(*lines),
