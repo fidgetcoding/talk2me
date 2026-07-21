@@ -217,10 +217,25 @@ def _parse_args(argv: list[str]) -> Config:
         help=(
             "full-duplex (ON by default): the mic stays live while the agent "
             "speaks; start talking and playback stops, the agent's turn is "
-            "interrupted. Wants headphones — if the output resolves to "
-            "open-air speakers, this auto-downgrades to half-duplex for the "
-            "session (no echo cancellation). --no-barge-in forces half-duplex."
+            "interrupted. Works on headphones AND open-air speakers — on "
+            "speakers the echo gate filters its own voice out of the mic, so "
+            "only sound it isn't making can cut it. --no-barge-in forces "
+            "half-duplex."
         ),
+    )
+    p.add_argument(
+        "--aec", choices=["auto", "native", "gate", "off"], default="auto",
+        help=(
+            "how speakers barge-in filters the agent's own voice. auto "
+            "(default): macOS driver-level echo cancellation when it probes "
+            "healthy, else the userspace echo gate. native/gate force a "
+            "layer; off restores the old behavior (speakers mute the ears "
+            "while it speaks)."
+        ),
+    )
+    p.add_argument(
+        "--no-aec", dest="aec", action="store_const", const="off",
+        help="alias for --aec off (kept from v2.4)",
     )
     p.add_argument(
         "--save-dir", default=os.environ.get("TALK2ME_SAVE_DIR") or None,
@@ -254,6 +269,24 @@ def _parse_args(argv: list[str]) -> Config:
     p.add_argument(
         "--phone-port", type=int, default=8765,
         help="port for the --phone bridge (default 8765)",
+    )
+    p.add_argument(
+        "--voice-lock", action=argparse.BooleanOptionalAction, default=False,
+        dest="voice_lock",
+        help=(
+            "solo mode: the mic answers ONLY to your enrolled voice (other "
+            "people, the TV, its own speaker output are ignored). Needs a "
+            "one-time --enroll-voice. Flip live by saying 'team session' / "
+            "'solo session'."
+        ),
+    )
+    p.add_argument(
+        "--enroll-voice", action="store_true", dest="enroll_voice",
+        help=(
+            "record your voiceprint (read 3 sentences, ~20s), calibrate the "
+            "lock against the agent's own voice, then launch with voice-lock "
+            "on. Re-run any time to re-calibrate."
+        ),
     )
     p.add_argument(
         "--speech-check", action=argparse.BooleanOptionalAction, default=True,
@@ -333,6 +366,8 @@ def _parse_args(argv: list[str]) -> Config:
         working_ticks=a.ticks,
         plain=a.plain,
         speech_check=a.speech_check,
+        voice_lock=a.voice_lock or a.enroll_voice,
+        enroll_voice=a.enroll_voice,
         phone=a.phone,
         phone_port=a.phone_port,
         agent=a.agent,
@@ -350,6 +385,7 @@ def _parse_args(argv: list[str]) -> Config:
         ),
         barge_in=a.barge_in,
         half_duplex=not a.barge_in,
+        aec=a.aec,
         input_mode=input_mode,
         stt=a.stt,
         whisper_model=a.whisper_model,
@@ -475,8 +511,74 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
     from .render import build_renderer
 
     renderer = build_renderer(cfg)
+
+    # Voice-lock enrollment: explicit (--enroll-voice) or automatic when the
+    # lock is wanted but no voiceprint exists yet. Runs BEFORE the voice
+    # stack so the calibration mic has the room to itself.
+    if cfg.voice_lock and sys.stdin.isatty():
+        from .voicelock import enrolled, run_enrollment
+
+        if cfg.enroll_voice or not enrolled():
+            if await run_enrollment(cfg):
+                # Persist the lock as the default — enrolling and then
+                # launching unlocked surprised in the field (a video's voice
+                # walked straight in because plain t2m never armed the lock).
+                from .wizard import load_saved_config, save_config
+
+                saved = load_saved_config()
+                saved["voice_lock"] = True
+                save_config(saved)
+                renderer.status_note(
+                    "voice-lock is now your DEFAULT for every launch "
+                    "(--no-voice-lock or the wizard turns it off)"
+                )
+            else:
+                renderer.status_note(
+                    "enrollment didn't finish — voice-lock OFF this session"
+                )
+                cfg.voice_lock = False
+    elif cfg.voice_lock:
+        from .voicelock import enrolled
+
+        if not enrolled():
+            renderer.status_note(
+                "voice-lock needs enrollment (t2m --enroll-voice) — OFF"
+            )
+            cfg.voice_lock = False
+
+    # The speech gate is built EARLY so the speaker-downgrade decision can
+    # see whether a healthy voice-lock enables echo-guarded talk-over.
+    from .speechcheck import build_speech_check
+
+    speech_check = build_speech_check(cfg.speech_check, voice_lock=cfg.voice_lock)
+    if cfg.voice_lock and (
+        speech_check is None or getattr(speech_check, "voicelock", None) is None
+    ):
+        renderer.status_note(
+            "voice-lock couldn't load its model — running unlocked"
+        )
+        cfg.voice_lock = False
+    lock_healthy = (
+        cfg.voice_lock
+        and speech_check is not None
+        and getattr(speech_check, "voicelock", None) is not None
+        and not getattr(speech_check.voicelock, "meta", {}).get("degraded", True)
+    )
+    if cfg.voice_lock and not lock_healthy and getattr(
+        speech_check, "voicelock", None
+    ) is not None:
+        renderer.status_note(
+            "voice-lock: calibration is weak on this mic/room — OBSERVING "
+            "only (nothing gets blocked; --debug shows the scores). A "
+            "quiet-room re-enroll can upgrade it to enforcing."
+        )
+        cfg.voice_lock_observing = True
+
     tts = factory.build_tts(cfg)
     bridge = None
+    # Playback reference for the echo gate; stays None off-speakers, in
+    # phone mode (the phone's own AEC covers it), and under --no-aec.
+    echo_ref = None
 
     if cfg.phone:
         # Phone mode: the mic and speaker live on the phone, reached through
@@ -509,17 +611,88 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
             renderer.device_error(str(exc))
             return 2, False
 
-        # Adaptive duplex: --barge-in is the user's intent, but if the audio
-        # is about to come out of open-air speakers (system default included),
-        # the mic would hear the TTS and cut every answer on its own echo.
-        # Downgrade to the safe half-duplex loop instead of misbehaving.
+        # Adaptive duplex: --barge-in on open-air speakers (system default
+        # included) used to downgrade to half-duplex — the mic would hear the
+        # TTS and cut every answer on its own echo. The echo gate makes full
+        # duplex safe instead: the Speaker records exactly what it plays, and
+        # any mic sound the playback can't explain is by definition not its
+        # own voice. (This superseded the voice-lock echo-guard, which needed
+        # a speaker-ID separation real laptop mics don't deliver.)
+        native_aec = False
         if cfg.barge_in and output_is_speakers(output_idx):
-            renderer.speaker_downgrade()
-            cfg.barge_in = False
-            cfg.half_duplex = True
+            try_native = cfg.aec in ("auto", "native")
+            if try_native and cfg.input_device is not None:
+                # The OS voice processor follows the system default mic — an
+                # explicit --input-device must stay honored, so the gate
+                # covers this topology.
+                if cfg.aec == "native":
+                    renderer.status_note(
+                        "--aec native can't honor --input-device (the OS "
+                        "voice processor follows the system default mic) — "
+                        "using the echo gate instead"
+                    )
+                try_native = False
+            if try_native:
+                from . import vpio
 
-        mic = Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx)
-        speaker = Speaker(tts.sample_rate, device=output_idx)
+                # probe() also warms the engine the session will reuse; a
+                # wedged/unavailable voice processor fails here, BEFORE the
+                # session starts with a silent mic.
+                native_aec = vpio.probe()
+                if not native_aec and cfg.aec == "native":
+                    renderer.status_note(
+                        "--aec native didn't probe healthy on this machine — "
+                        "using the echo gate instead"
+                    )
+            if native_aec:
+                cfg.aec_active = True
+                cfg.aec_layer = "native"
+                cfg.half_duplex = False
+                renderer.status_note(
+                    "speakers + barge-in: macOS voice processing subtracts "
+                    "its own audio from the mic at the driver — talk over it "
+                    "any time, any volume (--aec gate|off for the old layers)"
+                )
+                if cfg.vad == "webrtc":
+                    # Measured 2026-07-20: webrtc calls the voice processor's
+                    # noise-suppression hiss "voiced" on 60-76% of silent
+                    # frames (any aggressiveness), so turns close seconds
+                    # late or hold for minutes. The NS-flattened floor is
+                    # exactly what the energy threshold wants: 0% idle,
+                    # 2-3% during/after playback.
+                    cfg.vad = "energy"
+                    renderer.status_note(
+                        "native AEC: webrtc VAD misreads the processed "
+                        "signal (holds turns open) — using the energy VAD "
+                        "here"
+                    )
+            elif cfg.aec != "off":
+                from .echogate import EchoRef
+
+                echo_ref = EchoRef(tts.sample_rate)
+                cfg.aec_active = True
+                cfg.aec_layer = "gate"
+                cfg.half_duplex = False
+                renderer.status_note(
+                    "speakers + barge-in: its own voice off the speakers is "
+                    "filtered out — talk over it any time (--no-aec restores "
+                    "the old mute-while-speaking behavior)"
+                )
+            else:
+                renderer.speaker_downgrade()
+                cfg.barge_in = False
+                cfg.half_duplex = True
+                cfg.barge_downgraded = True
+
+        if native_aec:
+            from .vpio import VoiceProcessingMic
+
+            mic = VoiceProcessingMic(cfg.sample_rate, factory.frame_samples(cfg))
+        else:
+            mic = Mic(
+                cfg.sample_rate, factory.frame_samples(cfg), device=input_idx
+            )
+        speaker = Speaker(tts.sample_rate, device=output_idx, echo_ref=echo_ref)
 
     session_log = None
     if cfg.save_dir:
@@ -539,7 +712,11 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         else:
             renderer.transcript_path(session_log.path)
 
-    from .speechcheck import build_speech_check
+    echo_gate = None
+    if echo_ref is not None:
+        from .echogate import EchoGate
+
+        echo_gate = EchoGate(echo_ref)
 
     orch = Orchestrator(
         cfg=cfg,
@@ -551,7 +728,8 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         speaker=speaker,
         session_log=session_log,
         renderer=renderer,
-        speech_check=build_speech_check(cfg.speech_check),
+        speech_check=speech_check,
+        echo_gate=echo_gate,
     )
 
     # Ctrl-T mid-session (macOS sends SIGINFO) = "open the settings menu":
@@ -735,7 +913,19 @@ def main(argv: list[str] | None = None) -> int:
             run_wizard(load_saved_config())
     except KeyboardInterrupt:
         print("\nbye.", flush=True)
-        return 0
+        # Hard exit, deliberately: interpreter teardown after Ctrl-C kept
+        # crashing — non-daemon executor threads stuck in a CoreAudio write
+        # hung the exit, and daemon teardown threads inside Pa_StopStream
+        # raced sounddevice's atexit Pa_Terminate into a segfault (both
+        # live-observed 2026-07-19/20). Everything that matters is already
+        # on disk (the transcript flushes per write); the OS reclaims audio
+        # handles more reliably than a dying interpreter does. os._exit
+        # skips atexit, so the terminal's cbreak state is restored HERE —
+        # a dead session must never leave the shell echo-less.
+        from .typeline import restore_all
+
+        restore_all()
+        os._exit(0)
 
 
 if __name__ == "__main__":

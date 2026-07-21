@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "talk2me"
-version = "2.2.0"
+version = "2.5.0"
 description = "Hands-free voice loop for terminal coding agents (Claude Code by default)."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,10 @@ dependencies = [
     "faster-whisper>=1.0",
     "rich>=13,<15",
     "websockets>=15,<16",
+    "kaldi-native-fbank>=1.20",
+    # Native AEC (vpio.py): macOS voice-processing capture. Darwin-only; every
+    # other platform rides the userspace echo-gate fallback.
+    "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

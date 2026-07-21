@@ -26,7 +26,7 @@ CONFIG_DIR = os.path.expanduser("~/.talk2me")
 ALLOWED_KEYS = (
     "model", "stt", "voice", "barge_in", "gated", "cwd", "save_dir",
     "language", "whisper_model", "backend_base_url", "backend_auth_env",
-    "agent",
+    "agent", "voice_lock",
 )
 
 # Alternate brains that publish Anthropic-compatible endpoints, officially
@@ -124,7 +124,7 @@ def run_wizard(existing: dict | None = None) -> dict:
     p = console.print
 
     p()
-    p(f"[bold {GREEN}]talk2me setup[/] — six questions, saved forever. "
+    p(f"[bold {GREEN}]talk2me setup[/] — a few questions, saved forever. "
       f"Re-run any time with [bold {CYAN}]t2m --setup[/] (or Ctrl-T mid-session).",
       )
     p()
@@ -257,8 +257,9 @@ def run_wizard(existing: dict | None = None) -> dict:
     p()
     p(f"[bold {CYAN}]4 · interrupting[/]  Barge-in keeps the mic live while "
       "it talks — start speaking and it shuts up and listens, like a person. "
-      "[dim]Wants headphones; on open-air speakers it auto-downgrades so it "
-      "doesn't argue with its own echo.[/]")
+      "[dim]Headphones or speakers both work: on speakers, macOS cancels its "
+      "own audio out of the mic at the driver (the FaceTime echo canceller), "
+      "so only YOU can cut it off — at any volume.[/]")
     barge_in = Confirm.ask(
         "  barge-in on? (recommended)", default=prev.get("barge_in", True)
     )
@@ -296,7 +297,27 @@ def run_wizard(existing: dict | None = None) -> dict:
     else:
         cwd = None
 
-    # 7 — transcripts
+    # 7 — voice-lock
+    p()
+    p(f"[bold {CYAN}]7 · voice-lock[/]  Lock the ears to YOUR voice — other "
+      "people, the TV, and its own speaker output get ignored. "
+      "[dim]You'll do a guided ~minute of enrollment on your next launch (different volumes and speeds — that's what makes it trust you); "
+      "say \"team session\" any time to let everyone talk, \"solo session\" "
+      "to lock back.[/]")
+    voice_lock = Confirm.ask(
+        "  voice-lock on?", default=prev.get("voice_lock", False)
+    )
+    if voice_lock:
+        from .voicelock import enrolled as _vl_enrolled
+
+        if _vl_enrolled():
+            p("  [dim](voiceprint found — you're already enrolled; "
+              "re-calibrate any time with t2m --enroll-voice)[/]")
+        else:
+            p("  [dim](enrollment runs automatically at your next voice "
+              "launch)[/]")
+
+    # 8 — transcripts
     p()
     save_dir: str | None = prev.get("save_dir")
     if Confirm.ask(
@@ -326,6 +347,7 @@ def run_wizard(existing: dict | None = None) -> dict:
 
     cfg = {
         "agent": agent,
+        "voice_lock": voice_lock,
         "model": model,
         "stt": stt,
         "voice": voice,

@@ -151,6 +151,22 @@ def test_markup_injection_is_literal() -> bool:
     )
 
 
+def test_downgrade_card_explains_itself() -> bool:
+    """A speaker-downgraded session says WHY barge-in is off (live confusion:
+    a bare 'off' next to [barge-in] gap-cut labels read as a contradiction)."""
+    r, buf = _fresh()
+    r.startup(Config(
+        barge_in=False, half_duplex=True, barge_downgraded=True, cwd="/tmp"
+    ))
+    plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", buf.getvalue())
+    ok = (
+        "gaps only" in plain
+        and "Headphones add" in plain
+        and "run with --barge-in" not in plain  # wrong hint for this case
+    )
+    return _report("downgraded card explains itself", ok)
+
+
 def test_live_work_panel() -> bool:
     """The Phase-4 interleave discipline: tools open ONE Live region; any
     prose/status/permission output collapses it to a summary line FIRST."""
@@ -232,6 +248,7 @@ def main() -> int:
     results = [
         test_smoke_all_methods(),
         test_markup_injection_is_literal(),
+        test_downgrade_card_explains_itself(),
         test_live_work_panel(),
         test_renderer_selection(),
     ]

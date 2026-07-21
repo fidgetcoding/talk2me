@@ -57,7 +57,13 @@ class FakeMic:
                 # replay pauses instead (the "user" politely waits their turn),
                 # so scripted utterances land when the mic can actually hear.
                 continue
-            yield self._frames.popleft()
+            try:
+                yield self._frames.popleft()
+            except IndexError:
+                # A concurrent iterator (barge monitor + main loop share the
+                # deque) drained the last frame between the check and the
+                # pop — end this stream like the real queue just going quiet.
+                return
 
 
 class FakeSpeaker:

@@ -184,6 +184,37 @@ class Config:
     # Directory for plain-markdown session transcripts (None = don't save).
     # CLI --save-dir; persistent via the TALK2ME_SAVE_DIR env var.
     save_dir: str | None = None
+    # Voice-lock: the mic answers only to the enrolled voice ("solo").
+    # Toggleable live: "team session" / "solo session". Requires enrollment
+    # (t2m --enroll-voice, or automatic on first locked launch).
+    voice_lock: bool = False
+    enroll_voice: bool = False
+    # Set by the launcher when the loaded voiceprint is degraded: the lock
+    # scores every utterance but blocks nothing (observe mode).
+    voice_lock_observing: bool = False
+    # Set by the launcher when --barge-in was WANTED but the output resolved
+    # to open-air speakers (auto-downgrade) — the card explains itself
+    # instead of a bare "off" (live confusion 2026-07-19).
+    barge_downgraded: bool = False
+    # Echo-guarded talk-over: speakers + a HEALTHY (non-degraded) voice-lock
+    # keep full duplex — its own TTS voice fails the is-it-you check and can
+    # never cut; the enrolled voice can. Cut needs ~1s sustained speech (the
+    # identity check wants >=0.8s of audio).
+    echo_guard: bool = False
+    # Speakers echo handling for barge-in. The ladder (resolved at launch):
+    #   "auto"   -> native if macOS voice processing probes healthy, else gate
+    #   "native" -> macOS AUVoiceIO capture (vpio.py) — the driver subtracts
+    #               ALL system playback from the mic; the v2.3/v2.4 self-cut
+    #               class dies before feature extraction
+    #   "gate"   -> userspace echo gate (echogate.py, v2.4 — proven
+    #               zero-false-cut; the fallback wherever native isn't)
+    #   "off"    -> old speakers behavior: mute the ears while speaking
+    aec: str = "auto"
+    # Set by the launcher when an echo layer actually armed this session
+    # (speakers + barge-in) — drives the card's barge-in row.
+    aec_active: bool = False
+    # Which layer armed: "native" | "gate" | "" (resolved by the launcher).
+    aec_layer: str = ""
     # Force the launch build's plain output (no colors, no panels). The plain
     # renderer is also selected automatically on non-TTY stdout, NO_COLOR, or
     # a missing rich — a broken paint job must never mute the product.

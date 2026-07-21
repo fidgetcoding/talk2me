@@ -60,13 +60,74 @@ class Renderer(Protocol):
     def status_note(self, text: str) -> None: ...
     def error(self, msg: str) -> None: ...
     def debug(self, msg: str, *, nl: bool = False) -> None: ...
+    def typeahead(self, buffer: str) -> None: ...
     def close(self) -> None: ...
+
+
+# Renderer methods that print. Wrapped at construction so the in-progress
+# typeahead line is erased before ANY output lands — otherwise every print
+# would append after the ⌨ line and litter the scrollback with stale
+# fragments (the v2.4 garbled-typing mess, from the other direction).
+_PRINTING_METHODS = (
+    "loading_ears", "startup", "transcript_path", "speaker_downgrade",
+    "device_error", "listening", "noise_ignored", "paused", "still_paused",
+    "paused_ignored", "awake", "waiting_for_rest", "noise_resend", "you",
+    "agent_begin", "agent_delta", "agent_end", "thinking", "tool", "working",
+    "barge_label", "permission_ask", "permission_heard", "permission_verdict",
+    "status_note", "error", "debug",
+)
+
+
+def _wrap_for_typeahead(renderer) -> None:
+    """Instance-rebind every printing method to erase the typeahead line
+    first. A no-op unless a line is actually visible, so snapshot-locked
+    output is untouched when nobody is typing."""
+
+    def make(orig):
+        def wrapped(*args, **kwargs):
+            renderer._ta_clear()
+            return orig(*args, **kwargs)
+
+        return wrapped
+
+    for name in _PRINTING_METHODS:
+        orig = getattr(renderer, name, None)
+        if orig is not None:
+            setattr(renderer, name, make(orig))
 
 
 class PlainRenderer:
     """The launch build's output, verbatim. Also the automatic fallback for
     pipes, CI, NO_COLOR, and a missing rich — a broken paint job must never
     mute the product."""
+
+    def __init__(self) -> None:
+        self._ta_visible = False
+        self._ta_buffer = ""
+        # Mid-line prose streaming (agent_delta) — never redraw over it.
+        self._ta_inline = False
+        _wrap_for_typeahead(self)
+
+    def _ta_clear(self) -> None:
+        if self._ta_visible:
+            sys.stdout.write("\r\x1b[2K")
+            sys.stdout.flush()
+            self._ta_visible = False
+
+    def typeahead(self, buffer: str) -> None:
+        """Draw (or erase) the in-progress typed line at the cursor row."""
+        self._ta_buffer = buffer
+        if not sys.stdout.isatty():
+            return
+        if self._ta_inline:
+            return  # prose owns the line; the buffer shows at next boundary
+        sys.stdout.write("\r\x1b[2K")
+        if buffer:
+            sys.stdout.write(f"⌨ {buffer[-160:]}")
+            self._ta_visible = True
+        else:
+            self._ta_visible = False
+        sys.stdout.flush()
 
     def loading_ears(self) -> None:
         print("(loading the ears…)", flush=True)
@@ -94,7 +155,7 @@ class PlainRenderer:
         if cfg.half_duplex:
             print(
                 "   (half-duplex: talking over the agent mid-speech is ignored "
-                "— run with --barge-in and headphones to interrupt it)",
+                "— run with --barge-in to interrupt it)",
                 flush=True,
             )
 
@@ -103,8 +164,9 @@ class PlainRenderer:
 
     def speaker_downgrade(self) -> None:
         print(
-            "🔈 speakers on the output — barge-in off for this session so I "
-            "don't argue with my own echo. Plug in headphones to interrupt me.",
+            "🔈 speakers + --no-aec — I'll mute my ears only while I'm "
+            "actually speaking (so I never hear myself). Interrupt me in any "
+            "gap; drop --no-aec for full talk-over.",
             flush=True,
         )
 
@@ -143,6 +205,7 @@ class PlainRenderer:
         print(f"\n🗣  {label}: {text}", flush=True)
 
     def agent_begin(self) -> None:
+        self._ta_inline = True
         sys.stdout.write("🤖 ")
         sys.stdout.flush()
 
@@ -151,6 +214,7 @@ class PlainRenderer:
         sys.stdout.flush()
 
     def agent_end(self) -> None:
+        self._ta_inline = False
         print(flush=True)
 
     def thinking(self, text: str) -> None:

@@ -45,12 +45,13 @@ async def main() -> int:
     got = await _segment(stream, cfg)
 
     one_utterance = len(got) == 1
-    # buffer = 15 speech + 30 silence frames (fires at threshold) = 45 * 480
-    right_len = one_utterance and got[0].shape[0] == 45 * FRAME
+    # 15 speech frames = 450ms ≤ the 1500ms short-utterance bar, so the turn
+    # closes on the tighter 800ms window: 15 speech + 26 silence = 41 * 480.
+    right_len = one_utterance and got[0].shape[0] == 41 * FRAME
     blip_ignored = one_utterance  # the 3-frame blip never crossed min_speech
     case1 = one_utterance and right_len and blip_ignored
     print(f"[case1 silence-terminated] utterances={len(got)} "
-          f"len={(got[0].shape[0] if got else 0)} expected={45*FRAME} "
+          f"len={(got[0].shape[0] if got else 0)} expected={41*FRAME} "
           f"-> {'PASS' if case1 else 'FAIL'}")
 
     # --- Case 2: stream ends mid-speech, no trailing silence (I5 fix) ---
@@ -91,18 +92,19 @@ async def main() -> int:
     pre_stream = _silence(5) + _speech(15) + _silence(35)
     pre_got = await _segment(pre_stream, cfg)
     pre_one = len(pre_got) == 1
-    pre_len = pre_one and pre_got[0].shape[0] == (5 + 15 + 30) * FRAME
+    # Short utterance -> 800ms close: 5 pre-roll + 15 speech + 26 silence.
+    pre_len = pre_one and pre_got[0].shape[0] == (5 + 15 + 26) * FRAME
     case5 = pre_one and pre_len
     print(f"[case5 pre-roll prepended] utterances={len(pre_got)} "
-          f"len={(pre_got[0].shape[0] if pre_got else 0)} expected={50*FRAME} "
+          f"len={(pre_got[0].shape[0] if pre_got else 0)} expected={46*FRAME} "
           f"-> {'PASS' if case5 else 'FAIL'}")
 
     # --- Case 6: pre-roll disabled -> old exact behavior ---
     no_pre_cfg = Config(silence_ms=900, min_speech_ms=250, pre_roll_ms=0)
     np_got = await _segment(_silence(5) + _speech(15) + _silence(35), no_pre_cfg)
-    case6 = len(np_got) == 1 and np_got[0].shape[0] == 45 * FRAME
+    case6 = len(np_got) == 1 and np_got[0].shape[0] == 41 * FRAME
     print(f"[case6 pre-roll disabled] len="
-          f"{(np_got[0].shape[0] if np_got else 0)} expected={45*FRAME} "
+          f"{(np_got[0].shape[0] if np_got else 0)} expected={41*FRAME} "
           f"-> {'PASS' if case6 else 'FAIL'}")
 
     # --- Case 7: tap burst — cumulative bar passed, run bar NOT (must drop) ---
@@ -123,7 +125,27 @@ async def main() -> int:
     print(f"[case8 short word emits] utterances={len(word_got)} "
           f"expected=1 -> {'PASS' if case8 else 'FAIL'}")
 
-    ok = case1 and case2 and case3 and case4 and case5 and case6 and case7 and case8
+    # --- Case 9: adaptive close — commands snap shut, long speech doesn't ---
+    # Live complaint 2026-07-20: "pause"/"wake up" paid the full 1200ms wait.
+    # Short (≤1.5s speech) closes at 800ms; longer speech keeps silence_ms so
+    # mid-thought pauses survive.
+    adapt_cfg = Config(silence_ms=1200, min_speech_ms=250)
+    # Two short commands split by 840ms of silence -> TWO utterances (the old
+    # fixed 1200ms window would have merged them into one).
+    short_got = await _segment(
+        _speech(30) + _silence(28) + _speech(30) + _silence(45), adapt_cfg
+    )
+    # Long utterance (1.8s) with a 1050ms mid-thought pause -> still ONE (the
+    # short window must NOT apply past the 1.5s bar).
+    long_got = await _segment(
+        _speech(60) + _silence(35) + _speech(20) + _silence(45), adapt_cfg
+    )
+    case9 = len(short_got) == 2 and len(long_got) == 1
+    print(f"[case9 adaptive close] short={len(short_got)} expected=2 · "
+          f"long={len(long_got)} expected=1 -> {'PASS' if case9 else 'FAIL'}")
+
+    ok = (case1 and case2 and case3 and case4 and case5 and case6 and case7
+          and case8 and case9)
     print(f"-> {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

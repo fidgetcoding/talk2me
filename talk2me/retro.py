@@ -93,6 +93,9 @@ class _WorkPanel:
         self.count = 0
         self.t0 = time.monotonic()
         self._spinner = Spinner("dots", style="chip")
+        # In-progress typed line — rendered as a ⌨ row so typing stays
+        # visible while the Live panel owns the screen.
+        self.typeahead = ""
 
     def add(self, name: str, detail: str) -> None:
         self.entries.append((name, detail))
@@ -128,6 +131,12 @@ class _WorkPanel:
                 line.append("  ")
                 line.append(detail, style="detail")
             lines.append(line)
+        if self.typeahead:
+            # Default (white) text, matching the idle bottom line — your own
+            # words never render dim (Nate's call, launch day).
+            lines.append(
+                Text.assemble(("⌨ ", "chip"), (self.typeahead[-70:], ""))
+            )
         return Panel(
             Group(*lines),
             box=DOTTED,
@@ -163,6 +172,46 @@ class RetroRenderer:
         # Which stream currently owns the line: "" / "prose" / "think" —
         # drives the newline + 🧠 prefix when thinking and prose interleave.
         self._stream = ""
+        # In-progress typed line: shown as a ⌨ row inside the work panel
+        # while Live is active, a manual bottom line while idle, and held
+        # silently while streamed prose owns the cursor.
+        self._ta_visible = False
+        self._ta_buffer = ""
+        from .render import _wrap_for_typeahead
+
+        _wrap_for_typeahead(self)
+
+    def _ta_clear(self) -> None:
+        if self._ta_visible:
+            try:
+                self.console.file.write("\r\x1b[2K")
+                self.console.file.flush()
+            except Exception:
+                pass
+            self._ta_visible = False
+
+    def typeahead(self, buffer: str) -> None:
+        """Show the in-progress typed line wherever the screen allows: work
+        panel row during Live, bottom line while idle, nothing mid-prose
+        (the buffer isn't lost — it appears at the next safe boundary)."""
+        self._ta_buffer = buffer
+        if self._panel is not None:
+            self._panel.typeahead = buffer
+            return
+        try:
+            is_tty = self.console.file.isatty()
+        except Exception:
+            is_tty = False
+        if not is_tty or self._inline:
+            return
+        try:
+            self.console.file.write("\r\x1b[2K")
+            if buffer:
+                self.console.file.write(f"⌨ {buffer[-160:]}")
+            self.console.file.flush()
+        except Exception:
+            return
+        self._ta_visible = bool(buffer)
 
     def _collapse(self) -> None:
         """Fold an active work panel into its permanent one-line summary.
@@ -200,14 +249,37 @@ class RetroRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
+        if getattr(cfg, "aec_layer", "") == "native":
+            barge = (
+                "ON — speakers, native AEC (macOS cancels its own audio at "
+                "the driver; just talk — any volume)"
+            )
+        elif getattr(cfg, "aec_active", False):
+            barge = "ON — speakers (its own voice is filtered out; just talk)"
+        elif getattr(cfg, "echo_guard", False):
+            barge = "ON — voice-locked talk-over (speakers; talk ~1s to cut)"
+        elif cfg.barge_in:
+            barge = "ON — talk over it anytime"
+        elif getattr(cfg, "barge_downgraded", False):
+            barge = "gaps only (speakers — it mutes its ears ONLY while speaking)"
+        else:
+            barge = "off"
         rows = [
             ("brain", cfg.model or "claude default"),
             ("ears", cfg.stt),
             ("voice", f"{cfg.voice or 'system'} @{cfg.rate_wpm or 'default'}wpm"),
-            ("barge-in", "ON" if cfg.barge_in else "off"),
+            ("barge-in", barge),
             ("tools", tools_mode),
             ("working on", tilde(cfg.cwd or os.getcwd())),
         ]
+        if getattr(cfg, "voice_lock", False):
+            lock_row = (
+                "observing (weak calibration — nothing blocked; re-enroll "
+                "to enforce)"
+                if getattr(cfg, "voice_lock_observing", False)
+                else 'ON — solo (say "team session" to open up)'
+            )
+            rows.insert(4, ("voice-lock", lock_row))
         if cfg.save_dir:
             rows.append(
                 ("saves to", tilde(os.path.expanduser(cfg.save_dir)))
@@ -239,12 +311,15 @@ class RetroRenderer:
         )
         self.console.print(hint, style="agent", markup=False)
         if cfg.half_duplex:
-            self.console.print(
-                "(half-duplex: talking over the agent mid-speech is ignored "
-                "— run with --barge-in and headphones to interrupt it)",
-                style="quiet",
-                markup=False,
+            hint = (
+                "(speakers: you're heard any time it isn't mid-sentence — "
+                "thinking, tool runs, between turns. Headphones add "
+                "talk-over-its-voice; nothing else changes)"
+                if getattr(cfg, "barge_downgraded", False)
+                else "(half-duplex: talking over the agent mid-speech is "
+                "ignored — run with --barge-in to interrupt it)"
             )
+            self.console.print(hint, style="quiet", markup=False)
 
     def transcript_path(self, path: str) -> None:
         self.console.print(
@@ -254,8 +329,9 @@ class RetroRenderer:
     def speaker_downgrade(self) -> None:
         self._collapse()
         self.console.print(
-            "🔈 speakers on the output — barge-in off for this session so I "
-            "don't argue with my own echo. Plug in headphones to interrupt me.",
+            "🔈 speakers + --no-aec — barge-in off for this session so I "
+            "don't argue with my own echo. Drop --no-aec (or plug in "
+            "headphones) to interrupt me.",
             style="warn",
             markup=False,
         )

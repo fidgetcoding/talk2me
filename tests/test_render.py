@@ -61,7 +61,7 @@ def test_startup_lines() -> bool:
         "barge-in: off · tools: auto-approve ⚡\n"
         "   working on: /tmp/proj\n"
         "   (half-duplex: talking over the agent mid-speech is ignored "
-        "— run with --barge-in and headphones to interrupt it)\n",
+        "— run with --barge-in to interrupt it)\n",
     )
 
     cfg2 = Config(
@@ -101,8 +101,9 @@ def test_startup_lines() -> bool:
         results,
         "speaker_downgrade",
         _capture(r.speaker_downgrade),
-        "🔈 speakers on the output — barge-in off for this session so I "
-        "don't argue with my own echo. Plug in headphones to interrupt me.\n",
+        "🔈 speakers + --no-aec — I'll mute my ears only while I'm "
+        "actually speaking (so I never hear myself). Interrupt me in any "
+        "gap; drop --no-aec for full talk-over.\n",
     )
     _check(
         results,
