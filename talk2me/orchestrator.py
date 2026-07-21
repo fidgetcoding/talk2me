@@ -942,6 +942,9 @@ class Orchestrator:
         consecutive = 0
         trailing = 0
         cut = False
+        # Silero-rejection tally: print the first, then every 10th — a noisy
+        # stretch used to stack dozens of identical lines (live complaint).
+        onset_rejects = 0
         # Wake-word listener state, used ONLY while paused: collects
         # utterances WITHOUT ever cutting the turn, and acts solely on
         # resume commands. This is what keeps "wake up" audible mid-task
@@ -1051,9 +1054,19 @@ class Orchestrator:
                                     onset_audio,
                                     self.mic.sample_rate,
                                 ):
-                                    if self.cfg.debug:
+                                    onset_rejects += 1
+                                    if self.cfg.debug and (
+                                        onset_rejects == 1
+                                        or onset_rejects % 10 == 0
+                                    ):
+                                        tally = (
+                                            f" ×{onset_rejects}"
+                                            if onset_rejects > 1
+                                            else ""
+                                        )
                                         self.render.debug(
-                                            "(barge onset rejected — not speech)"
+                                            "(barge onset rejected — not "
+                                            f"speech{tally})"
                                         )
                                     buf.clear()
                                     consecutive = 0
@@ -1618,6 +1631,9 @@ _PAUSE_COMMANDS = frozenset(
 _RESUME_COMMANDS = frozenset(
     ("unpause", "wake up", "resume listening", "start listening", "im back")
 )
+# Token unions for the stacked-command pass in control_intent().
+_PAUSE_TOKENS = frozenset(w for p in _PAUSE_COMMANDS for w in p.split())
+_RESUME_TOKENS = frozenset(w for p in _RESUME_COMMANDS for w in p.split())
 # Voice-lock mode switches: "team session" opens the ears to everyone;
 # "solo session" locks them back to the enrolled voice.
 _TEAM_COMMANDS = frozenset(
@@ -1716,11 +1732,28 @@ def control_intent(text: str) -> str | None:
     if whole is not None:
         return whole
     segments = [s for s in re.split(r"[.!?;,]+", text) if s.strip()]
-    if len(segments) < 2:
+    if len(segments) >= 2:
+        intents = {_single_control_intent(s) for s in segments}
+        if len(intents) == 1 and None not in intents:
+            return intents.pop()
+    # Third pass: STACKED repeats of one command with no punctuation between
+    # ("Sleep go to sleep", live 2026-07-20 — reached the agent, which faked
+    # a pause while the ears stayed hot). Rule: every word belongs to ONE
+    # intent's vocabulary AND at least one complete phrase is present. Any
+    # outside word ("go to the sleep folder") disqualifies — a real
+    # instruction is never swallowed. Pause/resume only: those are the
+    # commands where a miss strands the session.
+    words = re.findall(r"[a-z]+", text.lower().replace("'", ""))
+    words = [w for w in words if w not in _FILLER_WORDS]
+    if not words:
         return None
-    intents = {_single_control_intent(s) for s in segments}
-    if len(intents) == 1 and None not in intents:
-        return intents.pop()
+    joined = f" {' '.join(words)} "
+    for intent, phrases, vocab in (
+        ("pause", _PAUSE_COMMANDS, _PAUSE_TOKENS),
+        ("resume", _RESUME_COMMANDS, _RESUME_TOKENS),
+    ):
+        if set(words) <= vocab and any(f" {p} " in joined for p in phrases):
+            return intent
     return None
 
 

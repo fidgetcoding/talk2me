@@ -155,6 +155,14 @@ def test_hallucination_and_controls() -> None:
         ("Okay, solo session.", "solo"),
         ("Everyone can talk.", "team"),
         ("Lock to my voice.", "solo"),
+        # Stacked repeats, no punctuation (live 2026-07-20: "Sleep go to
+        # sleep" reached the agent, which faked a pause while ears stayed hot):
+        ("Sleep go to sleep", "pause"),
+        ("wake up wake up", "resume"),
+        ("go to sleep sleep", "pause"),
+        ("go to the sleep folder and rename it", None),  # outside words win
+        ("stop", None),  # bare "stop" is a barge word, never a pause
+        ("up wake", None),  # vocabulary words without a complete phrase
     ]
     for text, want in cases:
         got = control_intent(text)

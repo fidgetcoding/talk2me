@@ -653,6 +653,19 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
                     "its own audio from the mic at the driver — talk over it "
                     "any time, any volume (--aec gate|off for the old layers)"
                 )
+                if cfg.vad == "webrtc":
+                    # Measured 2026-07-20: webrtc calls the voice processor's
+                    # noise-suppression hiss "voiced" on 60-76% of silent
+                    # frames (any aggressiveness), so turns close seconds
+                    # late or hold for minutes. The NS-flattened floor is
+                    # exactly what the energy threshold wants: 0% idle,
+                    # 2-3% during/after playback.
+                    cfg.vad = "energy"
+                    renderer.status_note(
+                        "native AEC: webrtc VAD misreads the processed "
+                        "signal (holds turns open) — using the energy VAD "
+                        "here"
+                    )
             elif cfg.aec != "off":
                 from .echogate import EchoRef
 

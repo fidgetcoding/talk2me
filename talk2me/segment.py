@@ -18,6 +18,12 @@ import numpy as np
 from .config import Config
 from .protocols import VAD
 
+# See the short-utterance close in segment_utterances: speech totals at or
+# under _SHORT_UTTERANCE_MS end their turn after _SHORT_SILENCE_MS of
+# trailing silence instead of the full cfg.silence_ms.
+_SHORT_UTTERANCE_MS = 1500
+_SHORT_SILENCE_MS = 800
+
 
 async def segment_utterances(
     frames: AsyncIterator[np.ndarray],
@@ -30,6 +36,17 @@ async def segment_utterances(
     """
     frame_ms = (vad.frame_samples / vad.sample_rate) * 1000.0
     silence_frames_needed = max(1, int(cfg.silence_ms / frame_ms))
+    # Short utterances close on a tighter window: sub-1.5s speech is
+    # command-shaped ("pause", "wake up", "stop") and waiting the full
+    # silence_ms reads as lag (live complaint 2026-07-20). Longer speech
+    # keeps the full window — mid-thought pauses are real; that's why
+    # silence_ms went 900->1200 in the first place. The rare short opener
+    # of a longer sentence this closes early is caught by pre-send
+    # stitching, which holds unfinished-sounding turns and joins.
+    short_silence_frames = max(
+        1, int(min(cfg.silence_ms, _SHORT_SILENCE_MS) / frame_ms)
+    )
+    short_speech_frames = int(_SHORT_UTTERANCE_MS / frame_ms)
     min_speech_frames = max(1, int(cfg.min_speech_ms / frame_ms))
     min_run_frames = max(
         1, int(getattr(cfg, "min_speech_run_ms", 0) / frame_ms)
@@ -102,7 +119,12 @@ async def segment_utterances(
             buf.append(frame)
             run_frames = 0
             trailing_silence += 1
-            if trailing_silence >= silence_frames_needed:
+            needed = (
+                short_silence_frames
+                if speech_frames <= short_speech_frames
+                else silence_frames_needed
+            )
+            if trailing_silence >= needed:
                 enough = speech_frames >= min_speech_frames
                 sustained = longest_run >= min_run_frames
                 emitted = enough and sustained
