@@ -19,7 +19,6 @@ Usage:  .venv/bin/python scripts/spike_vpio.py [--voice Ava] [--runs 1]
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import subprocess
 import tempfile

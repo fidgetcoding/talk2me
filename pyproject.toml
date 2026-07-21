@@ -17,6 +17,9 @@ dependencies = [
     "rich>=13,<15",
     "websockets>=15,<16",
     "kaldi-native-fbank>=1.20",
+    # Native AEC (vpio.py): macOS voice-processing capture. Darwin-only; every
+    # other platform rides the userspace echo-gate fallback.
+    "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

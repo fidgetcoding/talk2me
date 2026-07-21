@@ -775,7 +775,12 @@ class Orchestrator:
                         )
                     except asyncio.TimeoutError:
                         break
-                text = "".join(parts).strip()
+                # Join on newline, not "": the 80ms window exists to
+                # reassemble a multi-line PASTE into one message — but each
+                # readline() already strips nothing, so a bare join mashed
+                # separate quick lines together ("he" + "idk…" -> "heidk",
+                # live 2026-07-20). Line boundaries are content.
+                text = "\n".join(p.strip() for p in parts).strip()
                 if text:
                     await self._typed_queue.put(text)
         except asyncio.CancelledError:
@@ -1165,11 +1170,16 @@ class Orchestrator:
 
     def _own_speech_echo(self, text: str) -> bool:
         """True when a barge transcript is a (fuzzy) fragment of what the
-        agent itself said this turn — the echo-transcript backstop. Only
-        meaningful in echo-gated speakers mode; STT mishears the echo
-        ('which are commonest' for 'which are common this…'), so the match
-        is similarity over a sliding window, not equality."""
-        if self._echo_gate is None or not self._spoken_texts:
+        agent itself said this turn — the echo-transcript backstop. Armed
+        in BOTH speakers echo layers: the gate needs it for leaks, and
+        native AEC keeps it as the belt against imperfect cancellation at
+        max volume. STT mishears the echo ('which are commonest' for
+        'which are common this…'), so the match is similarity over a
+        sliding window, not equality."""
+        armed = self._echo_gate is not None or (
+            getattr(self.cfg, "aec_layer", "") == "native"
+        )
+        if not armed or not self._spoken_texts:
             return False
         b = _norm_speech(text)
         if len(b.split()) < 3:

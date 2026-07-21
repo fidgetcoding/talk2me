@@ -94,6 +94,9 @@ jobs:
       - name: test_echogate
         run: python -m tests.test_echogate
 
+      - name: test_vpio
+        run: python -m tests.test_vpio
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest

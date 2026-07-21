@@ -257,8 +257,9 @@ def run_wizard(existing: dict | None = None) -> dict:
     p()
     p(f"[bold {CYAN}]4 · interrupting[/]  Barge-in keeps the mic live while "
       "it talks — start speaking and it shuts up and listens, like a person. "
-      "[dim]Headphones or speakers both work: on speakers it filters its own "
-      "voice out of the mic, so only YOU can cut it off.[/]")
+      "[dim]Headphones or speakers both work: on speakers, macOS cancels its "
+      "own audio out of the mic at the driver (the FaceTime echo canceller), "
+      "so only YOU can cut it off — at any volume.[/]")
     barge_in = Confirm.ask(
         "  barge-in on? (recommended)", default=prev.get("barge_in", True)
     )

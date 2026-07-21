@@ -224,14 +224,18 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
-        "--aec", action=argparse.BooleanOptionalAction, default=True,
+        "--aec", choices=["auto", "native", "gate", "off"], default="auto",
         help=(
-            "echo-gated speakers barge-in (ON by default): on open-air "
-            "speakers, filter the agent's own playback out of the barge "
-            "decision so you can talk over it without headphones. --no-aec "
-            "restores the old behavior (speakers mute the ears while it "
-            "speaks)."
+            "how speakers barge-in filters the agent's own voice. auto "
+            "(default): macOS driver-level echo cancellation when it probes "
+            "healthy, else the userspace echo gate. native/gate force a "
+            "layer; off restores the old behavior (speakers mute the ears "
+            "while it speaks)."
         ),
+    )
+    p.add_argument(
+        "--no-aec", dest="aec", action="store_const", const="off",
+        help="alias for --aec off (kept from v2.4)",
     )
     p.add_argument(
         "--save-dir", default=os.environ.get("TALK2ME_SAVE_DIR") or None,
@@ -614,12 +618,47 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         # any mic sound the playback can't explain is by definition not its
         # own voice. (This superseded the voice-lock echo-guard, which needed
         # a speaker-ID separation real laptop mics don't deliver.)
+        native_aec = False
         if cfg.barge_in and output_is_speakers(output_idx):
-            if cfg.aec:
+            try_native = cfg.aec in ("auto", "native")
+            if try_native and cfg.input_device is not None:
+                # The OS voice processor follows the system default mic — an
+                # explicit --input-device must stay honored, so the gate
+                # covers this topology.
+                if cfg.aec == "native":
+                    renderer.status_note(
+                        "--aec native can't honor --input-device (the OS "
+                        "voice processor follows the system default mic) — "
+                        "using the echo gate instead"
+                    )
+                try_native = False
+            if try_native:
+                from . import vpio
+
+                # probe() also warms the engine the session will reuse; a
+                # wedged/unavailable voice processor fails here, BEFORE the
+                # session starts with a silent mic.
+                native_aec = vpio.probe()
+                if not native_aec and cfg.aec == "native":
+                    renderer.status_note(
+                        "--aec native didn't probe healthy on this machine — "
+                        "using the echo gate instead"
+                    )
+            if native_aec:
+                cfg.aec_active = True
+                cfg.aec_layer = "native"
+                cfg.half_duplex = False
+                renderer.status_note(
+                    "speakers + barge-in: macOS voice processing subtracts "
+                    "its own audio from the mic at the driver — talk over it "
+                    "any time, any volume (--aec gate|off for the old layers)"
+                )
+            elif cfg.aec != "off":
                 from .echogate import EchoRef
 
                 echo_ref = EchoRef(tts.sample_rate)
                 cfg.aec_active = True
+                cfg.aec_layer = "gate"
                 cfg.half_duplex = False
                 renderer.status_note(
                     "speakers + barge-in: its own voice off the speakers is "
@@ -632,7 +671,14 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
                 cfg.half_duplex = True
                 cfg.barge_downgraded = True
 
-        mic = Mic(cfg.sample_rate, factory.frame_samples(cfg), device=input_idx)
+        if native_aec:
+            from .vpio import VoiceProcessingMic
+
+            mic = VoiceProcessingMic(cfg.sample_rate, factory.frame_samples(cfg))
+        else:
+            mic = Mic(
+                cfg.sample_rate, factory.frame_samples(cfg), device=input_idx
+            )
         speaker = Speaker(tts.sample_rate, device=output_idx, echo_ref=echo_ref)
 
     session_log = None

@@ -200,7 +200,12 @@ class RetroRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
-        if getattr(cfg, "aec_active", False):
+        if getattr(cfg, "aec_layer", "") == "native":
+            barge = (
+                "ON — speakers, native AEC (macOS cancels its own audio at "
+                "the driver; just talk — any volume)"
+            )
+        elif getattr(cfg, "aec_active", False):
             barge = "ON — speakers (its own voice is filtered out; just talk)"
         elif getattr(cfg, "echo_guard", False):
             barge = "ON — voice-locked talk-over (speakers; talk ~1s to cut)"
