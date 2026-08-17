@@ -37,7 +37,7 @@ dropped. **The plan is to rebind Wispr's trigger to a normal chord** such as
 a spike. Install it into the project venv only when testing:
 
 ```bash
-/Users/nathandavidovich/code/talk2me/.venv/bin/pip install pyobjc-framework-Quartz
+/Users/you/code/talk2me/.venv/bin/pip install pyobjc-framework-Quartz
 ```
 
 The module imports fine without it; only an actual key tap needs it (you'll get
@@ -71,7 +71,7 @@ Wispr running + Accessibility granted. Run these by hand:
 2. Run the spike, sending a printable key:
 
    ```bash
-   /Users/nathandavidovich/code/talk2me/.venv/bin/python \
+   /Users/you/code/talk2me/.venv/bin/python \
      -m talk2me.input.wispr_spike a
    ```
 
@@ -86,7 +86,7 @@ Wispr running + Accessibility granted. Run these by hand:
 3. Fire the rebound combo:
 
    ```bash
-   /Users/nathandavidovich/code/talk2me/.venv/bin/python \
+   /Users/you/code/talk2me/.venv/bin/python \
      -m talk2me.input.wispr_spike ctrl opt space
    ```
 

@@ -190,14 +190,14 @@ if __name__ == "__main__":
         assert str(store).startswith(os.path.realpath(tmp_home)), "path not under TALK2ME_HOME"
 
         sid = str(uuid.uuid4())
-        save_session(sid, cwd="/Users/nathandavidovich/code/talk2me", model="sonnet")
+        save_session(sid, cwd="/Users/you/code/talk2me", model="sonnet")
         assert store.exists(), "save_session did not create the store"
 
         loaded = load_last_session()
         print(f"loaded: {loaded}")
         assert loaded is not None, "load returned None after save"
         assert loaded["session_id"] == sid, "session_id round-trip mismatch"
-        assert loaded["cwd"] == "/Users/nathandavidovich/code/talk2me", "cwd mismatch"
+        assert loaded["cwd"] == "/Users/you/code/talk2me", "cwd mismatch"
         assert loaded["model"] == "sonnet", "model mismatch"
         assert "saved_at" in loaded, "saved_at missing"
 

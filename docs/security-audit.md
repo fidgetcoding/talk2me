@@ -1,7 +1,7 @@
 # talk2me — Security Audit
 
 Date: 2026-05-22
-Scope: `/Users/nathandavidovich/code/talk2me` — full source read.
+Scope: `/Users/you/code/talk2me` — full source read.
 Reviewer: security-auditor (read-only; no code changes, recommendations only).
 Trust model: talk2me is a local, single-user CLI voice broker. The operator is
 trusted. The **untrusted inputs** are: (1) transcribed microphone audio (whisper

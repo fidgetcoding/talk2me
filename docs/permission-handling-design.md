@@ -433,6 +433,6 @@ Reverse-engineered / community (corroborating the stdio control envelope — tre
 - Claude stream-json event cheatsheet (event types): https://takopi.dev/reference/runners/claude/stream-json-cheatsheet/
 
 talk2me code read (read-only):
-- `/Users/nathandavidovich/code/talk2me/talk2me/backends/claude_code.py`
-- `/Users/nathandavidovich/code/talk2me/talk2me/orchestrator.py`
-- `/Users/nathandavidovich/code/talk2me/talk2me/protocols.py`
+- `/Users/you/code/talk2me/talk2me/backends/claude_code.py`
+- `/Users/you/code/talk2me/talk2me/orchestrator.py`
+- `/Users/you/code/talk2me/talk2me/protocols.py`
