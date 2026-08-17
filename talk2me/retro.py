@@ -134,7 +134,7 @@ class _WorkPanel:
         if self.typeahead:
             # Whole row default (white), icon included, matching the idle
             # bottom line — your own words never render dim or tinted
-            # (Nate's call, launch day).
+            # (maintainer's call, launch day).
             lines.append(Text(f"⌨ {self.typeahead[-70:]}"))
         return Panel(
             Group(*lines),

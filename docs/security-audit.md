@@ -268,7 +268,7 @@ if txt and ("error" in txt.lower() or "fatal" in txt.lower()):
 Any stderr line containing "error"/"fatal" is forwarded into a `BackendError` and
 printed to the user's terminal (`orchestrator.py:106-107`). stderr is untrusted
 output from `claude`; a crafted or noisy line could inject ANSI escape sequences
-or terminal control characters into Nate's terminal via the printed message. Low
+or terminal control characters into the user's terminal via the printed message. Low
 because it's local stdout and `claude` is broadly trusted, but terminal-escape
 injection from a child process's stderr is a known footgun.
 

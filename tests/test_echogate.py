@@ -95,7 +95,7 @@ def verdict_cases() -> None:
     # Echo PLUS an independent second voice IS foreign. Amp 0.25 ≈ talking
     # at comparable loudness to the TTS — the field-tuned 0.50 bar
     # deliberately gives up whispered talk-overs (real own-echo measured
-    # 0.30-0.41 on Nate's hardware; a whisper bar can't clear that).
+    # 0.30-0.41 on the reference hardware; a whisper bar can't clear that).
     other = _voice(1.2, seed=9, mod_hz=5.3, phase=1.3, amp=0.25)
     mixed = _as_echo(played)[-int(1.2 * SR):] + other
     is_foreign = gate.foreign(mixed, SR)
