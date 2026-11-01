@@ -8,6 +8,8 @@ Run:  ./.venv/bin/python -m tests.test_webrtc_vad
 Requires:  pip install talk2me[webrtc]
 """
 
+import importlib.util
+
 import numpy as np
 
 from talk2me.vad.webrtc import WebrtcVAD
@@ -58,4 +60,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # An optional extra: a default install has nothing to test here. CI installs it.
+    if importlib.util.find_spec("webrtcvad") is None:
+        print('(skipped: no webrtcvad. pip install -e ".[webrtc]" to run this one)')
+        raise SystemExit(0)
     raise SystemExit(main())
