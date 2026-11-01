@@ -82,6 +82,35 @@ def test_denylist_reaches_the_cli() -> None:
     check("text mode keeps its default posture", argv[argv.index("--permission-mode") + 1] == "bypassPermissions")
 
 
+def test_malformed_agent_output() -> None:
+    """Junk on the wire costs that line. Everything here goes through the real reader."""
+    esc = "\x1b"
+    junk = [
+        "this is not json", "[1, 2, 3]", "5", "null", '"a string"', "{}",
+        json.dumps({"type": "stream_event", "event": "not a dict"}),
+        json.dumps({"type": "stream_event", "event": {"type": "content_block_delta", "delta": "nope"}}),
+        json.dumps({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": 5}}}),
+        json.dumps({"type": "assistant", "message": "not a dict"}),
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": None, "input": "str"}]}}),
+        json.dumps({"type": "control_request", "request": "not a dict"}),
+        '{"type": "stream_event", "event": {"type": "content_block_delta"',  # torn
+    ]
+    proc, _ = _talk2me(["--text"], "go\n", [{"raw": junk, "huge": 20 * 1024 * 1024, "say": f"Clean {esc}]0;pwned{esc}\\{esc}[31mreply"}])
+    out = proc.stdout.decode("utf-8", errors="replace")
+    check("junk from the agent doesn't end the session", proc.returncode == 0, proc.stderr.decode(errors="replace")[-200:])
+    check("the real reply gets through", "Clean" in out and "reply" in out, out[-160:])
+    check("escape codes never reach the terminal", esc not in out)
+
+
+def test_agent_dies() -> None:
+    proc, _ = _talk2me(["--text"], "go\n", [{"die": 3}])
+    err = proc.stdout.decode("utf-8", errors="replace") + proc.stderr.decode("utf-8", errors="replace")
+    check("agent dying mid-turn: says so, exits 1", proc.returncode == 1 and "rc=3" in err and "Traceback" not in err, err[-200:])
+    proc, _ = _talk2me(["--text", "--gated"], "go\ny\n", [{"ask": "npm test", "die": 3}])
+    err = proc.stdout.decode("utf-8", errors="replace") + proc.stderr.decode("utf-8", errors="replace")
+    check("agent dying during a verdict: no traceback", proc.returncode == 1 and "Traceback" not in err, err[-200:])
+
+
 def test_harmless_flags() -> None:
     env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
     env["TALK2ME_CONFIG"] = os.devnull
@@ -93,6 +122,8 @@ def main() -> int:
     test_text_turn()
     test_gate_typed()
     test_denylist_reaches_the_cli()
+    test_malformed_agent_output()
+    test_agent_dies()
     test_harmless_flags()
     ok = all(RESULTS)
     print(f"[{'PASS' if ok else 'FAIL'}] overall ({sum(RESULTS)}/{len(RESULTS)})")

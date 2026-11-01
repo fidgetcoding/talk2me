@@ -119,6 +119,9 @@ jobs:
       - name: test_mlx_whisper
         run: python -m tests.test_mlx_whisper
 
+      - name: test_recovery
+        run: python -m tests.test_recovery
+
       - name: test_preflight
         run: python -m tests.test_preflight
 
