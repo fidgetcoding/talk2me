@@ -598,6 +598,8 @@ The short version of a long fight with physics:
 - **v2.5.0** — the one we were chasing. macOS's own echo canceller (the FaceTime one) cleans the mic at the driver: its own voice comes out unintelligible to the transcriber at any volume, so you just talk. Plus the ⌨ input line — type at it while it works and it cuts in like a barge — and snappier pause/wake.
 - **v2.6.0** is better manners. Voice stops auto-approving tools: a safety audit flagged it, it was right, and now it asks out loud unless you say otherwise. The denylist grew from 8 rules to 69 after I tested the old one against the real CLI and watched `rm -fr` stroll past. The installer pins to release tags instead of `main`. And [a race on 24 clips](#the-numbers-and-how-much-to-trust-them) got written down: base.en stays the default, Whisper large-v3-turbo on the Apple-Silicon GPU joins as the opt-in `--stt whisper-gpu`.
 
+- **Since v2.6.0**, I went after everything on my own "isn't proven" list. An OS sandbox (`--sandbox`), so a written script can't walk past the rules. Voice-lock finally enforces, after I found the bug that had it observing for three versions. Voice commands in five more languages. The dead air between the default voice's chunks is gone. CI now drives the live mic loop on Linux with virtual sound cards, the headless suite on Windows, and the phone page in real browsers over a real SSH tunnel, and those runs found real crashes. And the ears finally got tested on real people. A real mic and a real iPhone are still on me.
+
 That's the destination we set out for: a voice loop you can talk over, type over, and trust on open speakers. It got there. What's in [Not done yet](#not-done-yet) is real, mapped, and none of it is a mystery — the seams were built for this (swap a VAD, an STT, a TTS, a whole agent backend, or the renderer without touching the loop). **The rest is for the community to keep evolving.** Fork it, gut it, teach it new tricks — PRs and weird ideas welcome.
 
 ## How it evolved
@@ -608,6 +610,7 @@ The README tells you where this landed. The receipts live in `docs/`, warts incl
 - **[SECURITY.md](SECURITY.md):** where the posture stands today, including what the denylist can't do.
 - **[The permission spike](docs/permission-spike-results.md):** the tool-approval wire pinned byte by byte, plus the denylist tested against the real CLI, what stopped and what didn't.
 - **[The permission design](docs/permission-handling-design.md):** how the spoken gate got designed before any of it worked.
+- **[The denylist spike](docs/permission-spike-results.md#denylist-spike-2026-11-01-claude-cli-21296)** is why the sandbox exists: what a pattern can't stop.
 - **[The STT research](docs/stt-upgrade-research.md):** how to chase Wispr Flow quality locally, and why term accuracy matters more than pretty punctuation when the reader is a coding agent.
 - **[The AEC plan](docs/v2.5-aec-plan.md):** the long fight with physics, from echo gate to macOS's own canceller, phases and field protocol included.
 - **[Performance notes](docs/perf-notes.md), [architecture assessment](docs/architecture-assessment.md), [code review](docs/code-review.md), [integration plan](docs/integration-plan.md), [retro skin plan](docs/retro-skin-plan.md), [Wispr spike](docs/wispr-spike.md):** the rest of the paper trail.
