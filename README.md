@@ -10,6 +10,8 @@
 
 You say something. It hears you, types it to your coding agent, reads the answer out loud, and reopens the mic on its own. That's the whole loop. You never touch the keyboard unless you want to.
 
+**Want the real story?** [ESSENCE.md](ESSENCE.md) is the one-pager. [EVOLUTION.md](EVOLUTION.md) is the whole fight, with the rollback, the voice-lock bug and the audit that was right.
+
 ---
 
 ## Quick nav
@@ -607,6 +609,7 @@ That's the destination we set out for: a voice loop you can talk over, type over
 
 The README tells you where this landed. The receipts live in `docs/`, warts included, and a couple of them argue with decisions I made later:
 
+- **[EVOLUTION.md](EVOLUTION.md):** the full story, dated round by round.
 - **[The security audit](docs/security-audit.md):** the original threat model, RCE by sound. It told me not to make bypass the default. I did anyway for a few versions, and the note in there says how that went.
 - **[SECURITY.md](SECURITY.md):** where the posture stands today, including what the denylist can't do.
 - **[The permission spike](docs/permission-spike-results.md):** the tool-approval wire pinned byte by byte, plus the denylist tested against the real CLI, what stopped and what didn't.
