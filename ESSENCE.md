@@ -20,9 +20,9 @@
 - **Talking over speakers:** macOS's native echo cancellation, field-tested up to about 75% volume.
 - **CI on every push:** 27 headless suites on three Python versions and on Windows, the live voice loop on Linux with virtual sound cards, the phone page in real browsers over a real SSH tunnel, and `--sandbox` through the real `claude` CLI on macOS and Linux.
 - **Ears on recordings of real people:** on audiobook readers, word errors were 5.6% for base.en, 3.5% for GPU Whisper and 1.7% for Parakeet. On single spoken words, the approval gate got 92.5% right on base.en, with no opposite verdicts. These are files, not a mic in a room.
-- **Voice-lock:** on recordings of 40 real speakers through a simulated laptop room, strangers let in fell from 93.5% to 6.3%, and it now enforces for 39 of the 40. The owner gets rejected 9.2% of the time, mostly on the shortest clips. It's a filter, not a lock: anything under 0.8 seconds always passes.
+- **Voice-lock:** on recordings of 40 real speakers through a simulated laptop room, strangers let in fell from 93.5% to 6.3%, and it now enforces for 39 of the 40. The owner gets rejected 9.2% of the time, mostly on the shortest clips. It's off until you enroll, and it's a filter, not a lock: anything under 0.8 seconds always passes. It hasn't heard a real voice through a real mic since the fix.
 - **Commands in six languages:** English plus Spanish, French, German, Italian and Portuguese, typed or spoken. On synthetic voices, single command words landed 68 of 80 times on `--whisper-model base`.
 
-Everything added since v2.6.0 ran in CI and on recordings. My own real-mic test of this build comes before the tag.
+Everything added since v2.6.0 ran in CI and from files. My own real-mic test of this build comes before the tag.
 
 See [EVOLUTION.md](EVOLUTION.md) for how it got here.

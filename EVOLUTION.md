@@ -113,16 +113,15 @@ The scoping note (private note, May 22) has the turn, step by step:
   - Commands in five more languages.
   - Chunks that render side by side, so the default voice stops waiting on itself.
   - A clean first run: one sentence each for no `claude`, no PortAudio, a busy port, a typo'd model.
-- **Tested:** see section 6. CI now drives what I'd only ever claimed: the real process through real PortAudio on virtual sound cards, every headless suite on Windows, and the real phone page in Chromium through a real `ssh -L` tunnel.
+- **Tested:** see section 6. On recordings of real people, Parakeet came out best on audiobook sentences and worst on one word (75.0% at the gate, 23 false approvals of 600). CI now drives what I'd only ever claimed: the real process through real PortAudio on virtual sound cards, every headless suite on Windows, and the real phone page in Chromium through a real `ssh -L` tunnel.
 - **Broke:**
   - Ctrl-C mid-sentence closed the stream under a running write, and ALSA corrupted the heap on Linux.
   - Windows crashed on its first keystroke setup, and a bare `claude` couldn't launch npm's `claude.cmd`.
   - A torn packet hung up on the phone.
-  - Real speakers reordered my ears table: Parakeet is the best at sentences and the worst at one word (75.0% at the gate, 23 false approvals of 600).
   - My first sandbox hid the keychain files, which would have logged a subscription out (`1133134`).
 - **Fixed:** all of those.
 
-**The voice-lock ending.** I measured it for the first time on recordings of real people: 40 speakers from LibriSpeech, each enrolled through the real enrollment path. The numbers were terrible, and that's what cracked it. The speaker model expects mean-normalized features, and a spike back in July had wrongly talked me out of normalizing, by concluding it "inverted its metric". So the bug was never laptop mics. It was me (`e6ce7b0`).
+**The voice-lock ending.** I measured it for the first time on recordings of real people: 40 speakers from LibriSpeech, each enrolled through the real enrollment path. The numbers were terrible, and that's what cracked it. The speaker model expects mean-normalized features, and the first voice-lock commit (`6eeb35f`, July 19) left that out, after a spike the same day wrongly concluded normalizing "inverted its metric". So the bug was never laptop mics. It was mine, and `e6ce7b0` fixes it.
 
 | 40 real speakers, recordings | Before | After |
 |---|---|---|
@@ -133,9 +132,11 @@ The scoping note (private note, May 22) has the turn, step by step:
 | Clean recordings: speakers it enforces for | 5 | 40 |
 | Clean recordings: strangers let in | 91.5% | 2.2% |
 | Clean recordings: equal-error rate | 21.0% | 1.1% |
-| Clean recordings: owner rejected | not recorded | 0.5% |
+| Clean recordings: owner rejected | 1.0% | 0.5% |
 
-Most owner rejections in the laptop room are on the shortest clips, and anything under 0.8 seconds always passes. Old voiceprints can't be scored the new way, so they keep their recipe and each launch says to re-enroll.
+The bench is `tests/manual_voicelock_bench.py`: audiobook recordings from files, through the real enrollment, with the other 39 speakers as the strangers. The laptop room is a simulation: synthetic room echo, a laptop-like frequency response, fan-like noise and a random level. "Before" looks generous because a speaker who falls back to observing counts as accepting everyone.
+
+Most owner rejections in the laptop room are on the shortest clips, and anything under 0.8 seconds always passes. Old voiceprints can't be scored the new way, so they keep their recipe and each launch says to re-enroll. It's a filter, and it hasn't heard a real voice through a real mic since the fix.
 
 ## 5. Feature family tree
 
@@ -174,11 +175,12 @@ Most owner rejections in the laptop room are on the shortest clips, and anything
 | Nov 1 | Voice-lock on 40 real speakers | Table in Round 8 | `tests/manual_voicelock_bench.py`, `e6ce7b0` |
 | Nov 1 | Foreign command words on synthetic voices | 35 of 80 before, 68 of 80 on base, 72 of 80 on turbo | `e7bcf6a` |
 | Nov 1 | Default voice on a 10-sentence reply, files with a fake speaker | Worst stop 380 to 880 ms before, 16 ms or less after. Restarts 9, then 4 or 5 | `be9a62f`, `tests/manual_voice_gap_check.py` |
-| Nov 1 | Live loop on Linux virtual sound cards | 16 checks in CI | `244cce5`, `tests/live_linux_audio_check.py` |
-| Nov 1 | Phone page in Chromium over a real `ssh -L` tunnel, fake mic from a file | 18 checks in CI | `10edcf2`, `tests/live_phone_browser_check.py` |
+| Nov 1 | Live loop on Linux virtual sound cards | 16 of 16 in CI | `244cce5`, `tests/live_linux_audio_check.py` |
+| Nov 1 | Phone page in Chromium over a real `ssh -L` tunnel, fake mic from a file | 18 of 18 in CI | `10edcf2`, `tests/live_phone_browser_check.py` |
 | Nov 1 | `--sandbox`: a hostile script under the real sandbox, with an unsandboxed control, and through the real `claude` CLI against a fake endpoint | Pass in CI on macOS and Linux | `73eff4e`, `tests/test_sandbox.py`, `tests/manual_sandbox_check.py` |
 | Nov 1, `e8bbd5a` | All 9 CI jobs | Green | GitHub Actions |
-| Nov 1, `e8bbd5a` | 27 headless suites, Python 3.12, one Mac | 27 of 27 pass | Run while writing this |
+| Nov 1, `e8bbd5a` | 27 headless suites, Python 3.12, one Mac | 27 of 27 pass, including voice commands 95, flow 73, sandbox 56, echogate 34, permission 34, preflight 31 | Run while writing this, counts from a clean-clone run |
+| Nov 1 | Denylist against the real CLI, and the sandbox through the real CLI | 72 of 72, and 9 of 9 | `tests/manual_denylist_check.py`, `tests/manual_sandbox_check.py` |
 
 The voices in the first race are synthetic, so that accuracy is a hint at best. The later benches use real people's recordings, from files.
 
