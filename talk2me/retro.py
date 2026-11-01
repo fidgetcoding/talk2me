@@ -244,7 +244,9 @@ class RetroRenderer:
             return path.replace(home, "~", 1) if path.startswith(home) else path
 
         tools_mode = (
-            "auto-approve ⚡"
+            "codex sandbox"
+            if cfg.agent == "codex"
+            else "auto-approve ⚡"
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )

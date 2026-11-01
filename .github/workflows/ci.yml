@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Headless tests (py${{ matrix.python-version }})
@@ -99,6 +102,9 @@ jobs:
 
       - name: test_typeline
         run: python -m tests.test_typeline
+
+      - name: test_mlx_whisper
+        run: python -m tests.test_mlx_whisper
 
   lint:
     name: Ruff

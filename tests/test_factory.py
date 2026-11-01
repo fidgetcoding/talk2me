@@ -12,6 +12,9 @@ Run:  ./.venv/bin/python -m tests.test_factory
 
 from __future__ import annotations
 
+import os
+
+from talk2me import factory
 from talk2me.backends import ClaudeCodeBackend
 from talk2me.config import Config
 from talk2me.factory import (
@@ -152,6 +155,61 @@ def test_build_stt_parakeet() -> bool:
     )
 
 
+def test_build_stt_mlx_whisper() -> bool:
+    # Same lazy contract as parakeet: CI has no MLX, and building must not care.
+    import sys
+
+    stt = build_stt(Config(stt="mlx-whisper", vocab=["Lorecraft"], language="es"))
+    from talk2me.stt.mlx_whisper import MLXWhisperSTT
+
+    ok = (
+        isinstance(stt, MLXWhisperSTT)
+        and isinstance(stt, STT)
+        and stt._mlx is None
+        and "mlx_whisper" not in sys.modules
+        and stt._vocab == ["Lorecraft"]
+        and stt._language == "es"
+        and isinstance(stt._make_fallback(), WhisperSTT)
+    )
+    return _line("build_stt mlx-whisper", ok, f"stt={type(stt).__name__}")
+
+
+def test_resolve_stt() -> bool:
+    real = factory.mlx_whisper_supported, factory.mlx_whisper_installed
+
+    def on(supported: bool, installed: bool) -> None:
+        factory.mlx_whisper_supported = lambda: supported
+        factory.mlx_whisper_installed = lambda: installed
+
+    try:
+        on(True, True)
+        apple = factory.resolve_stt("auto")
+        apple_whisper = factory.resolve_stt("whisper")
+        apple_parakeet = factory.resolve_stt("parakeet")
+        apple_model = factory.resolve_stt("auto", whisper_model_set=True)
+        on(True, False)
+        missing = factory.resolve_stt("auto")
+        missing_named = factory.resolve_stt("mlx-whisper")
+        on(False, False)
+        other = factory.resolve_stt("auto")
+        other_named = factory.resolve_stt("mlx-whisper")
+    finally:
+        factory.mlx_whisper_supported, factory.mlx_whisper_installed = real
+    ok = (
+        apple == ("mlx-whisper", None)
+        # A saved or typed engine is never second-guessed.
+        and apple_whisper == ("whisper", None)
+        and apple_parakeet == ("parakeet", None)
+        and apple_model == ("whisper", None)
+        and missing[0] == "whisper" and "pip install mlx-whisper" in missing[1]
+        and missing_named[0] == "whisper" and missing_named[1]
+        # Off Apple Silicon whisper is simply the default: nothing to announce.
+        and other == ("whisper", None)
+        and other_named[0] == "whisper" and "Apple Silicon" in other_named[1]
+    )
+    return _line("resolve_stt", ok, f"apple={apple} missing={missing[0]} other={other}")
+
+
 def test_hotword_context() -> bool:
     # Live context merges after static vocab, deduped case-insensitively.
     stt = WhisperSTT(vocab=["Lorecraft"])
@@ -181,20 +239,49 @@ def test_parse_permission_posture() -> bool:
 
     default = _parse_args([])
     gated = _parse_args(["--gated"])
+    auto = _parse_args(["--auto-approve"])
+    text = _parse_args(["--text"])
+    text_gated = _parse_args(["--text", "--gated"])
     ok = (
-        default.permission_mode == "bypassPermissions"
-        and default.voice_approval is False
-        # The denylist survives bypass — it's the load-bearing guardrail.
-        and list(DEFAULT_DISALLOWED_TOOLS)[0] in default.disallowed_tools
+        # A mic is not a keyboard: voice asks first unless told otherwise.
+        default.permission_mode == "default"
+        and default.voice_approval is True
         and gated.permission_mode == "default"
         and gated.voice_approval is True
+        and auto.permission_mode == "bypassPermissions"
+        and auto.voice_approval is False
+        # The denylist survives bypass — it's the load-bearing guardrail.
+        and list(DEFAULT_DISALLOWED_TOOLS)[0] in auto.disallowed_tools
+        # Typed input keeps its old default; the flag still turns the gate on.
+        and text.permission_mode == "bypassPermissions"
+        and text_gated.voice_approval is True
     )
     return _line(
         "parse permission posture",
         ok,
         f"default={default.permission_mode}/gate={default.voice_approval} "
-        f"gated={gated.permission_mode}/gate={gated.voice_approval}",
+        f"auto={auto.permission_mode} text={text.permission_mode}",
     )
+
+
+def test_denylist_shape() -> bool:
+    from talk2me.config import DEFAULT_DISALLOWED_TOOLS
+
+    # The real matching proof is tests/manual_denylist_check.py, against the
+    # CLI. Here: the rules the audit named are present, and none can break the
+    # comma-joined --disallowedTools argument.
+    must_have = (
+        "Bash(rm -rf:*)", "Bash(rm -fr*)", "Bash(*/rm *)", "Bash(find * -delete*)",
+        "Bash(python3 -c*)", "Bash(node -e*)", "Bash(bash -c*)", "Bash(scp:*)",
+        "Bash(nc:*)", "Bash(*/curl *)", "Bash(git -* push*)",
+    )
+    rules = DEFAULT_DISALLOWED_TOOLS
+    ok = (
+        all(r in rules for r in must_have)
+        and not any("," in r for r in rules)
+        and len(rules) == len(set(rules))
+    )
+    return _line("denylist shape", ok, f"{len(rules)} rules")
 
 
 def test_frame_samples() -> bool:
@@ -204,14 +291,19 @@ def test_frame_samples() -> bool:
 
 
 def main() -> int:
+    # Tests must never read a real ~/.talk2me/config.json: _parse_args loads it.
+    os.environ["TALK2ME_CONFIG"] = "/nonexistent-t2m-test-config"
     results = [
         test_build_tts(),
         test_build_vad(),
         test_build_stt(),
         test_build_backend(),
         test_build_stt_parakeet(),
+        test_build_stt_mlx_whisper(),
+        test_resolve_stt(),
         test_hotword_context(),
         test_parse_permission_posture(),
+        test_denylist_shape(),
         test_frame_samples(),
     ]
     overall = all(results)

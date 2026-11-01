@@ -216,6 +216,8 @@ Rationale for `default` over the alternatives:
 - `acceptEdits` silently runs `rm`/`mv`/`cp` inside cwd with no spoken
   confirmation — too much trust for a hands-free loop where Nate isn't watching
   a diff.
+- *(Later history: v2.2 to v2.5 shipped bypass as the voice default anyway; v2.6.0
+  restored the gate and made bypass opt-in. `SECURITY.md` has the current posture.)*
 - `bypassPermissions` is off the table (full system access, inherited by
   subagents).
 - `dontAsk` is attractive (hard deny, no stall) and is the right **fallback** if

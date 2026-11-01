@@ -17,9 +17,10 @@ from .config import Config
 # --- security caps / allowlists (security-audit.md M2, M3, H1, M1, L2) ---
 
 # Permission modes safe to forward to `claude` verbatim. `bypassPermissions`
-# (and any other auto-approve-everything mode) is deliberately excluded: under a
-# voice loop, ambient audio → whisper → unconfirmed tool execution makes a silent
-# bypass a full RCE-by-sound posture. See security-audit.md M2.
+# (and any other auto-approve-everything mode) is deliberately excluded here:
+# under a voice loop, ambient audio → whisper → unconfirmed tool execution is a
+# full RCE-by-sound posture. See security-audit.md M2. It's reachable only by
+# name, through --auto-approve or the wizard, and voice defaults to the gate.
 # ("manual" is the name newer CLI help shows for the classic prompt-me posture;
 # "default" still parses and behaves identically — spike-verified on 2.1.214.)
 SAFE_PERMISSION_MODES = ("default", "manual", "acceptEdits", "plan")
@@ -91,13 +92,21 @@ def _parse_args(argv: list[str]) -> Config:
     )
     p.add_argument("--cwd", default=None, help="working dir for the agent")
     p.add_argument(
-        "--gated", action="store_true",
+        "--gated", action=argparse.BooleanOptionalAction, default=None,
         help=(
-            "spoken-approval mode: tools outside a read-only allowlist pause "
-            "the turn and ask out loud ('approve or deny?'). The DEFAULT is "
-            "auto-approve: tools just run, like the Claude app — except the "
-            "hard denylist (sudo, rm -rf, git push, curl…), which stays "
-            "blocked in every mode."
+            "spoken-approval mode, the DEFAULT for voice: tools outside a "
+            "read-only allowlist pause the turn and ask out loud ('approve or "
+            "deny?'). A hard denylist (sudo, recursive rm, git push, curl…) "
+            "stays blocked in every mode."
+        ),
+    )
+    p.add_argument(
+        "--auto-approve", action="store_false", dest="gated",
+        help=(
+            "tools just run with nobody asking, like the Claude app. Fast, but "
+            "in voice mode anything the mic picks up (you, a TV, a roommate) "
+            "can run commands. The denylist still applies, and it can't catch "
+            "everything."
         ),
     )
     p.add_argument(
@@ -139,23 +148,30 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
-        "--stt", default="whisper", choices=["whisper", "parakeet"],
+        "--stt", default="auto",
+        choices=["auto", "mlx-whisper", "whisper", "parakeet"],
         help=(
-            "transcription engine. whisper (default): CPU, supports --vocab "
-            "hotword biasing. parakeet: Apple-Silicon GPU via MLX — more "
-            "accurate AND ~10x faster, ~2 GB RAM, English-only, no vocab "
-            "biasing (`pip install -e \".[parakeet]\"`)."
+            "transcription engine. auto (default): mlx-whisper on Apple "
+            "Silicon, whisper everywhere else. mlx-whisper: Whisper "
+            "large-v3-turbo on the GPU, ~2 GB RAM, 1.6 GB download once. "
+            "whisper: base.en on the CPU, runs anywhere. parakeet: Apple-Silicon "
+            "GPU, fastest, English-only, no vocab biasing "
+            "(`pip install -e \".[parakeet]\"`)."
         ),
     )
-    p.add_argument("--whisper-model", default="base.en")
+    p.add_argument(
+        "--whisper-model", default=None,
+        help="CPU whisper model (default base.en). Setting it selects --stt whisper "
+        "unless --stt says otherwise.",
+    )
     p.add_argument(
         "--language", default="en",
         help=(
-            "transcription language (whisper only): a 2-letter code (es, de, "
-            "fr…) or 'auto' to detect per utterance. Non-English needs a "
-            "multilingual model, e.g. --whisper-model base — the .en models "
-            "are English-only, and so is parakeet. Voice COMMANDS (pause/"
-            "wake/approve) stay English for now."
+            "transcription language: a 2-letter code (es, de, fr…) or 'auto' "
+            "to detect per utterance. mlx-whisper handles these as is. CPU "
+            "whisper needs a multilingual model, e.g. --whisper-model base. "
+            "The .en models are English-only, and so is parakeet. Voice "
+            "COMMANDS (pause/wake/approve) stay English for now."
         ),
     )
     p.add_argument(
@@ -322,11 +338,13 @@ def _parse_args(argv: list[str]) -> Config:
 
     input_mode = "text" if a.text else "voice"
 
-    # Default posture: auto-approve (bypassPermissions) with the scoped
-    # denylist still enforced — Anthropic's deny rules apply in EVERY mode,
-    # bypass included, so the catastrophic verbs stay blocked while everything
-    # else flows without spoken gates. --gated restores the approval loop.
-    if a.gated:
+    # Default posture: voice is gated, because a mic is not a keyboard. It
+    # stays that way until someone asks by name: --auto-approve, or a saved
+    # `gated: false` from the wizard (kept as saved). Typed input keeps its old
+    # default of auto-approve, since nothing ambient can reach it. Either way
+    # the denylist holds: Anthropic's deny rules apply in EVERY mode.
+    gated = a.gated if a.gated is not None else input_mode == "voice"
+    if gated:
         permission_mode = a.permission_mode
         voice_approval = not a.no_voice_approval
     else:
@@ -360,6 +378,10 @@ def _parse_args(argv: list[str]) -> Config:
 
     from .config import DEFAULT_ALLOWED_TOOLS, DEFAULT_DISALLOWED_TOOLS
 
+    stt, stt_notice = factory.resolve_stt(
+        a.stt, whisper_model_set=a.whisper_model is not None
+    )
+
     return Config(
         debug=a.debug,
         save_dir=a.save_dir,
@@ -387,8 +409,9 @@ def _parse_args(argv: list[str]) -> Config:
         half_duplex=not a.barge_in,
         aec=a.aec,
         input_mode=input_mode,
-        stt=a.stt,
-        whisper_model=a.whisper_model,
+        stt=stt,
+        stt_notice=stt_notice,
+        whisper_model=a.whisper_model or "base.en",
         language=a.language,
         tts=a.tts,
         voice=a.voice,
@@ -511,6 +534,14 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
     from .render import build_renderer
 
     renderer = build_renderer(cfg)
+
+    if cfg.stt_notice:
+        renderer.status_note(cfg.stt_notice)
+    if "bypass" in cfg.permission_mode.lower() and cfg.agent != "codex":
+        renderer.status_note(
+            "tools run with nobody asking, and anything the mic hears can start "
+            "them (t2m --gated, or t2m --setup, turns the spoken check on)"
+        )
 
     # Voice-lock enrollment: explicit (--enroll-voice) or automatic when the
     # lock is wanted but no voiceprint exists yet. Runs BEFORE the voice

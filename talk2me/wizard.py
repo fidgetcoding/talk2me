@@ -8,6 +8,7 @@ the DEFAULTS for every launch; explicit CLI flags always win over the file.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import sys
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
+from .factory import mlx_whisper_supported
 from .retro import CYAN, GREEN, THEME
 
 CONFIG_DIR = os.path.expanduser("~/.talk2me")
@@ -108,13 +110,21 @@ def _installed_voices() -> list[str]:
     return sorted(dict.fromkeys(names), key=lambda n: (rank(n), n))
 
 
-def _parakeet_available() -> bool:
-    try:
-        import parakeet_mlx  # noqa: F401
-
+def _offer_install(p, name: str, pip_name: str) -> bool:
+    """True once the engine's package is importable; offers a pip install first."""
+    if importlib.util.find_spec(name.replace("-", "_")) is not None:
         return True
-    except ImportError:
+    if not Confirm.ask(
+        f"  {name} isn't installed. Install it now? (pip, one-time; "
+        "the model downloads on first run)",
+        default=True,
+    ):
         return False
+    if subprocess.call([sys.executable, "-m", "pip", "install", pip_name]) == 0:
+        return True
+    p(f"  [warn]install failed, using whisper for now "
+      f"(switch later with --stt {name})[/]")
+    return False
 
 
 def run_wizard(existing: dict | None = None) -> dict:
@@ -188,37 +198,32 @@ def run_wizard(existing: dict | None = None) -> dict:
 
     # 2 — the ears
     p()
-    p(f"[bold {CYAN}]2 · the ears[/]  Speech-to-text engine. "
-      "[dim]whisper: runs everywhere, CPU, any language. parakeet: "
-      "Apple-Silicon GPU — faster AND more accurate, ~2 GB RAM, but "
-      "English-only.[/]")
-    stt = Prompt.ask(
-        "  ears", choices=["whisper", "parakeet"],
-        default=prev.get("stt") or "whisper",
-    )
-    if stt == "parakeet" and not _parakeet_available():
-        if Confirm.ask(
-            "  parakeet isn't installed — install it now? (pip, one-time; "
-            "the model downloads on first run)",
-            default=True,
-        ):
-            rc = subprocess.call(
-                [sys.executable, "-m", "pip", "install", "parakeet-mlx"]
-            )
-            if rc != 0:
-                p("  [warn]install failed — using whisper for now "
-                  "(switch later with --stt parakeet)[/]")
-                stt = "whisper"
-        else:
-            stt = "whisper"
+    ear_choices = ["whisper", "parakeet"]
+    if mlx_whisper_supported():
+        ear_choices.insert(0, "mlx-whisper")
+        p(f"[bold {CYAN}]2 · the ears[/]  Speech-to-text engine. "
+          "[dim]mlx-whisper (recommended): Whisper large-v3-turbo on your "
+          "GPU, the best at coding talk, ~2 GB RAM and a 1.6 GB download once. "
+          "whisper: base.en on the CPU, lighter, runs everywhere. parakeet: "
+          "fastest, but English-only with no custom vocab.[/]")
+    else:
+        p(f"[bold {CYAN}]2 · the ears[/]  Speech-to-text engine. "
+          "[dim]whisper: runs everywhere, CPU, any language. parakeet: "
+          "Apple-Silicon GPU only, English-only.[/]")
+    ear_default = prev.get("stt") if prev.get("stt") in ear_choices else ear_choices[0]
+    stt = Prompt.ask("  ears", choices=ear_choices, default=ear_default)
+    if stt == "mlx-whisper" and not _offer_install(p, "mlx-whisper", "mlx-whisper"):
+        stt = "whisper"
+    if stt == "parakeet" and not _offer_install(p, "parakeet-mlx", "parakeet-mlx"):
+        stt = "whisper"
     language = prev.get("language") or "en"
     whisper_model: str | None = prev.get("whisper_model")
-    if stt == "whisper":
+    if stt in ("whisper", "mlx-whisper"):
         p("  [dim]language: a 2-letter code (en, es, de, fr, pt, ja…) or "
           "'auto' to detect per sentence. Voice commands (pause/wake/"
           "approve) stay English for now.[/]")
         language = Prompt.ask("  language", default=language).strip() or "en"
-        if language != "en" and (whisper_model or "base.en").endswith(".en"):
+        if stt == "whisper" and language != "en" and (whisper_model or "base.en").endswith(".en"):
             # .en models are English-only; swap to the multilingual sibling.
             whisper_model = (whisper_model or "base.en").removesuffix(".en")
             p(f"  [dim](using the multilingual model: {whisper_model})[/]")
@@ -266,14 +271,17 @@ def run_wizard(existing: dict | None = None) -> dict:
 
     # 5 — tools
     p()
-    p(f"[bold {CYAN}]5 · tools[/]  auto-approve: the agent just works, like "
-      "the Claude app — with the catastrophic stuff (sudo, force-push, "
-      "rm -rf) hard-blocked in every mode. gated: it asks out loud before "
-      "any non-read tool and you say approve/deny.")
+    p(f"[bold {CYAN}]5 · tools[/]  gated (recommended): it asks out loud before "
+      "any tool that isn't read-only, and you say approve or deny. auto-approve: "
+      "tools just run with nobody asking, like the Claude app. Faster, but "
+      "anything the mic picks up (you, a TV, a roommate) can run commands. "
+      "[dim]Either way a denylist blocks the obvious disasters (sudo, recursive "
+      "rm, git push, curl). A denylist can't catch everything, so don't read it "
+      "as a sandbox.[/]")
     tools = Prompt.ask(
         "  tools",
-        choices=["auto-approve", "gated"],
-        default="gated" if prev.get("gated") else "auto-approve",
+        choices=["gated", "auto-approve"],
+        default="gated" if prev.get("gated", True) else "auto-approve",
     )
 
     # 6 — where it works

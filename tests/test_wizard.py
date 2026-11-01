@@ -76,6 +76,82 @@ def test_saved_config_becomes_defaults() -> None:
     os.environ["TALK2ME_CONFIG"] = "/nonexistent-t2m-test-config"
 
 
+def test_saved_posture_is_respected() -> None:
+    """The v2.6 gate default must not overrule what anyone already picked."""
+    from talk2me.__main__ import _parse_args
+    from talk2me.wizard import save_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["TALK2ME_CONFIG"] = os.path.join(tmp, "cfg.json")
+        # A pre-2.6 wizard run: both keys were always written.
+        save_config({"stt": "whisper", "gated": False, "whisper_model": None})
+        cfg = _parse_args([])
+        _report(
+            "saved auto-approve + whisper kept",
+            cfg.permission_mode == "bypassPermissions" and cfg.stt == "whisper",
+        )
+        _report(
+            "--gated beats a saved auto-approve",
+            _parse_args(["--gated"]).permission_mode == "default",
+        )
+        save_config({"gated": True})
+        _report(
+            "--auto-approve beats a saved gate",
+            _parse_args(["--auto-approve"]).permission_mode == "bypassPermissions",
+        )
+        save_config({"stt": "parakeet"})
+        _report("saved parakeet kept", _parse_args([]).stt == "parakeet")
+        # Enrolling voice-lock writes a file with no wizard answers in it, so
+        # the user never picked a posture: they get the safe default.
+        save_config({"voice_lock": True})
+        cfg = _parse_args([])
+        _report(
+            "no saved answer -> gated",
+            cfg.permission_mode == "default" and cfg.voice_approval is True,
+        )
+    os.environ["TALK2ME_CONFIG"] = "/nonexistent-t2m-test-config"
+
+
+def test_wizard_defaults() -> None:
+    """Enter through every prompt: what a new user gets, and what a returning
+    one keeps. The prompts are stubbed to take their defaults; no TTY needed."""
+    from rich.prompt import Confirm, Prompt
+
+    from talk2me import wizard
+
+    real = Prompt.ask, Confirm.ask, wizard._installed_voices, wizard.mlx_whisper_supported, wizard._offer_install
+    asked: dict[str, list[str]] = {}
+
+    def take_default(prompt, *, default=None, choices=None, **_kw):
+        asked[prompt.strip()] = choices or []
+        return default
+
+    Prompt.ask = staticmethod(take_default)
+    Confirm.ask = staticmethod(lambda _prompt, *, default=None, **_kw: default)
+    wizard._installed_voices = list
+    # Never let a test reach the real pip.
+    wizard._offer_install = lambda _p, _name, _pip: True
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["TALK2ME_CONFIG"] = os.path.join(tmp, "cfg.json")
+            wizard.mlx_whisper_supported = lambda: True
+            fresh = wizard.run_wizard({})
+            apple_choices = asked["ears"]
+            kept = wizard.run_wizard({"stt": "whisper", "gated": False})
+            wizard.mlx_whisper_supported = lambda: False
+            linux = wizard.run_wizard({"stt": "mlx-whisper"})
+            linux_choices = asked["ears"]
+    finally:
+        Prompt.ask, Confirm.ask, wizard._installed_voices, wizard.mlx_whisper_supported, wizard._offer_install = real
+    _report("wizard default posture is gated", fresh["gated"] is True)
+    _report("wizard offers GPU ears on Apple Silicon", apple_choices[0] == "mlx-whisper")
+    _report("wizard keeps a saved whisper + auto-approve",
+            kept["stt"] == "whisper" and kept["gated"] is False)
+    _report("wizard hides GPU ears elsewhere",
+            "mlx-whisper" not in linux_choices and linux["stt"] == "whisper")
+    os.environ["TALK2ME_CONFIG"] = "/nonexistent-t2m-test-config"
+
+
 def test_first_run_trigger() -> None:
     from talk2me.wizard import should_run_first_time
 
@@ -127,6 +203,8 @@ def main() -> int:
     os.environ.setdefault("TALK2ME_CONFIG", "/nonexistent-t2m-test-config")
     test_save_load_roundtrip()
     test_saved_config_becomes_defaults()
+    test_saved_posture_is_respected()
+    test_wizard_defaults()
     test_first_run_trigger()
     test_session_continuity()
     ok = all(RESULTS)

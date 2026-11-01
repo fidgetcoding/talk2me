@@ -139,7 +139,9 @@ class PlainRenderer:
             flush=True,
         )
         tools_mode = (
-            "auto-approve ⚡"
+            "codex sandbox"
+            if cfg.agent == "codex"
+            else "auto-approve ⚡"
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )

@@ -32,15 +32,89 @@ DEFAULT_ALLOWED_TOOLS: tuple[str, ...] = (
 # Hard-denied in every mode — never even asked out loud. Irreversible /
 # exfiltration / privilege escalation. A voice user who isn't watching the
 # screen should not be able to say "yes" to any of these.
+#
+# Matching, measured against the real CLI (docs/permission-spike-results.md):
+# `:*` is a word-bounded prefix, so `Bash(rm -rf:*)` misses `rm -fr` and
+# `/bin/rm -rf`. `*` matches anything anywhere, spaces included. The CLI does
+# split `a && b`, pipes and `sh -c '...'`, and peels wrappers like `env` and
+# `timeout`, so those don't need their own rules. This is a seatbelt for the
+# obvious verbs, NOT a sandbox: a script file, a renamed binary, a git alias or
+# `npm run` all walk past it. tests/manual_denylist_check.py re-runs the proof.
 DEFAULT_DISALLOWED_TOOLS: tuple[str, ...] = (
+    # Recursive delete
     "Bash(rm -rf:*)",
+    "Bash(rm -fr*)",
+    "Bash(rm -fR*)",
+    "Bash(rm -r*)",
+    "Bash(rm -R*)",
+    "Bash(rm * -r*)",
+    "Bash(rm * -R*)",
+    "Bash(rm --recursive*)",
+    "Bash(rm --force --recursive*)",
+    "Bash(*/rm *)",
+    "Bash(find * -delete*)",
+    "Bash(find * -exec*)",
+    "Bash(find * -ok*)",
+    # History and working-tree loss, publishing
     "Bash(git push:*)",
+    "Bash(git -* push*)",
     "Bash(git reset --hard:*)",
+    "Bash(git -* reset --hard*)",
+    "Bash(git clean:*)",
+    "Bash(git branch -D:*)",
+    # Network and exfiltration
     "Bash(curl:*)",
+    "Bash(*/curl *)",
     "Bash(wget:*)",
-    "Bash(sudo:*)",
+    "Bash(*/wget *)",
     "Bash(ssh:*)",
+    "Bash(*/ssh *)",
+    "Bash(scp:*)",
+    "Bash(*/scp *)",
+    "Bash(sftp:*)",
+    "Bash(rsync:*)",
+    "Bash(nc:*)",
+    "Bash(*/nc *)",
+    "Bash(ncat:*)",
+    "Bash(netcat:*)",
+    "Bash(socat:*)",
+    "Bash(telnet:*)",
+    "Bash(ftp:*)",
+    # One-liners: code that never lands in a file you could read first
+    "Bash(python -c*)",
+    "Bash(python3 -c*)",
+    "Bash(python3.* -c*)",
+    "Bash(*/python -c*)",
+    "Bash(*/python3 -c*)",
+    "Bash(*/python3.* -c*)",
+    "Bash(python)",
+    "Bash(python3)",
+    "Bash(node -e*)",
+    "Bash(node --eval*)",
+    "Bash(node -p*)",
+    "Bash(perl -e*)",
+    "Bash(ruby -e*)",
+    "Bash(php -r*)",
+    "Bash(sh -c*)",
+    "Bash(bash -c*)",
+    "Bash(zsh -c*)",
+    "Bash(*/sh -c*)",
+    "Bash(*/bash -c*)",
+    "Bash(*/zsh -c*)",
+    "Bash(sh)",
+    "Bash(bash)",
+    "Bash(zsh)",
+    "Bash(eval:*)",
+    "Bash(osascript:*)",
+    # Privilege, disks, the keychain
+    "Bash(sudo:*)",
+    "Bash(*/sudo *)",
+    "Bash(su:*)",
+    "Bash(doas:*)",
     "Bash(dd:*)",
+    "Bash(mkfs*)",
+    "Bash(diskutil erase*)",
+    "Bash(security:*)",
 )
 
 
@@ -126,9 +200,10 @@ class Config:
     # mechanics are identical; only the Mic/Speaker implementations change.
     phone: bool = False
     phone_port: int = 8765
-    # Transcription language (whisper only; parakeet is English-only).
+    # Transcription language (whisper and mlx-whisper; parakeet is English-only).
     # A 2-letter code ("en", "es", "de", …) or "auto" to let whisper detect.
-    # Non-English needs a multilingual model: --whisper-model base (not .en).
+    # On the CPU engine, non-English needs a multilingual model: --whisper-model
+    # base (not .en). mlx-whisper's turbo model is multilingual already.
     language: str = "en"
     # Alternate brain via an Anthropic-compatible endpoint (Kimi, GLM,
     # DeepSeek publish these officially for Claude Code). base_url aims the
@@ -154,10 +229,17 @@ class Config:
     max_utterance_ms: int = 90_000
 
     # --- STT ---
-    stt: str = "whisper"  # "whisper" (CPU, hotword biasing) | "parakeet" (M-series GPU)
+    # "mlx-whisper" (M-series GPU, turbo) | "whisper" (CPU, hotword biasing) |
+    # "parakeet" (M-series GPU, fastest). The CLI resolves its "auto" default to
+    # one of these by platform (factory.resolve_stt).
+    stt: str = "whisper"
+    # One line for the user when the ears aren't the ones asked for.
+    stt_notice: str | None = None
     whisper_model: str = "base.en"
+    mlx_whisper_model: str = "mlx-community/whisper-large-v3-turbo"
     parakeet_model: str = "mlx-community/parakeet-tdt-0.6b-v2"
-    vocab: list[str] = field(default_factory=list)  # bias terms (whisper only)
+    # Bias terms: hotwords on whisper, initial_prompt on mlx-whisper, unused on parakeet.
+    vocab: list[str] = field(default_factory=list)
 
     # --- TTS ---
     tts: str = "say"  # "say" | "kitten" | "null"

@@ -88,7 +88,10 @@ class PhoneBridge:
 
     def _http(self, connection, request):
         parts = urlsplit(request.path)
-        token_ok = parse_qs(parts.query).get("t", [""])[0] == self.token
+        given = parse_qs(parts.query).get("t", [""])[0]
+        # Bytes, not str: compare_digest raises on non-ASCII str, and a junk
+        # token from the URL has to earn a 403, not an exception.
+        token_ok = secrets.compare_digest(given.encode(), self.token.encode())
         if not token_ok:
             return connection.respond(403, "missing or bad token\n")
         if parts.path == "/ws":

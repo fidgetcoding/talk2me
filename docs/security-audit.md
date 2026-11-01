@@ -162,6 +162,12 @@ contents leak into the whisper prompt and indirectly into the model's context.
 
 ### M2 — `--permission-mode` is forwarded to `claude` verbatim; `bypassPermissions` would be dangerous
 
+> **Status, 2026-11-01 (v2.6.0).** This finding's advice was overruled for a while:
+> `--permission-mode` got its allowlist, but v2.2 through v2.5 made
+> `bypassPermissions` the voice default, the exact posture described below. v2.6.0
+> puts the default back to the spoken gate. Auto-approve now takes `--auto-approve`
+> or a wizard choice, and it's still reachable from voice. See `SECURITY.md`.
+
 File: `talk2me/__main__.py:21` → `config.py:14` → `claude_code.py:79-81`
 
 ```python

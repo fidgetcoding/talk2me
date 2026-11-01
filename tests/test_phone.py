@@ -49,6 +49,10 @@ async def main() -> int:
     check("page served with token", status == 200 and "talk2me" in body and "getUserMedia" in body)
     status_bad, _ = await asyncio.to_thread(_get_page, "/")
     check("page refused without token", status_bad == 403)
+    # A junk token that isn't ASCII still earns a 403: compare_digest raises on
+    # non-ASCII str, so this is what proves the check compares bytes.
+    status_junk, _ = await asyncio.to_thread(_get_page, "/?t=%C3%A9%C3%A9")
+    check("page refused with non-ASCII token", status_junk == 403)
 
     # A tokenless WebSocket is refused before the handshake completes.
     try:
