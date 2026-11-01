@@ -32,7 +32,7 @@ You say something. It hears you, types it to your coding agent, reads the answer
 One line, in any terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.7.0/install.sh | bash
 ```
 
 Then:
@@ -46,17 +46,17 @@ That's it. That's the command. Talk.
 Want GPU ears on Apple Silicon baked in from the start? Same line, one flag: `--parakeet` for the fastest, `--whisper-gpu` for the big Whisper. Both are chunky dependency piles, so give it a few minutes:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --parakeet
+curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.7.0/install.sh | bash -s -- --parakeet
 ```
 
 Other ways in, if that's your style:
 
 ```bash
 # pipx (isolated, on PATH, no thinking)
-pipx install "git+https://github.com/fidgetcoding/talk2me.git@v2.6.0"
+pipx install "git+https://github.com/fidgetcoding/talk2me.git@v2.7.0"
 
 # plain pip, your venv, your rules
-pip install "git+https://github.com/fidgetcoding/talk2me.git@v2.6.0"
+pip install "git+https://github.com/fidgetcoding/talk2me.git@v2.7.0"
 
 # or from a clone
 git clone https://github.com/fidgetcoding/talk2me.git && cd talk2me && pip install -e .
@@ -77,7 +77,7 @@ First run on macOS pops a **microphone permission** dialog for your terminal —
 The installer grabs the newest tagged release, not whatever landed on `main` five minutes ago. Want the bleeding edge anyway? Add `--ref main`. **v2** is the same voice loop with a new retro face. **v1** is the launch build, frozen forever as the `v1` branch and the `v1.0.0` tag. If you liked it plain, it's one flag away:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --v1
+curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.7.0/install.sh | bash -s -- --v1
 ```
 
 Re-run the installer with a different `--ref` any time to switch versions in place. Pinning by pip works too: `pip install "git+https://github.com/fidgetcoding/talk2me.git@v1.0.0"`.
@@ -599,7 +599,7 @@ The short version of a long fight with physics:
 - **v2.5.0** — the one we were chasing. macOS's own echo canceller (the FaceTime one) cleans the mic at the driver: its own voice comes out unintelligible to the transcriber at any volume, so you just talk. Plus the ⌨ input line — type at it while it works and it cuts in like a barge — and snappier pause/wake.
 - **v2.6.0** is better manners. Voice stops auto-approving tools: a safety audit flagged it, it was right, and now it asks out loud unless you say otherwise. The denylist grew from 8 rules to 69 after I tested the old one against the real CLI and watched `rm -fr` stroll past. The installer pins to release tags instead of `main`. And [a race on 24 clips](#the-numbers-and-how-much-to-trust-them) got written down: base.en stays the default, Whisper large-v3-turbo on the Apple-Silicon GPU joins as the opt-in `--stt whisper-gpu`.
 
-- **Since v2.6.0**, I went after everything on my own "isn't proven" list. An OS sandbox (`--sandbox`), so a written script can't walk past the rules. Voice-lock finally enforces, after I found the bug that had it observing for three versions. Voice commands in five more languages. The dead air between the default voice's chunks is gone. CI now drives the live mic loop on Linux with virtual sound cards, the headless suite on Windows, and the phone page in real browsers over a real SSH tunnel, and those runs found real crashes. And the ears finally got tested on real people. A real mic and a real iPhone are still on me.
+- **v2.7.0** is me going after everything on my own "isn't proven" list. An OS sandbox (`--sandbox`), so a written script can't walk past the rules. Voice-lock finally enforces, after I found the bug that had it observing for three versions. Voice commands in five more languages. The dead air between the default voice's chunks is gone. CI now drives the live mic loop on Linux with virtual sound cards, the headless suite on Windows, and the phone page in real browsers over a real SSH tunnel, and those runs found real crashes. And the ears finally got tested on real people. A real mic and a real iPhone are still on me.
 
 That's the destination we set out for: a voice loop you can talk over, type over, and trust on open speakers. It got there. What's in [Not done yet](#not-done-yet) is real, mapped, and none of it is a mystery — the seams were built for this (swap a VAD, an STT, a TTS, a whole agent backend, or the renderer without touching the loop). **The rest is for the community to keep evolving.** Fork it, gut it, teach it new tricks — PRs and weird ideas welcome.
 
@@ -616,7 +616,7 @@ The README tells you where this landed. The receipts live in `docs/`, warts incl
 - **[The AEC plan](docs/v2.5-aec-plan.md):** the long fight with physics, from echo gate to macOS's own canceller, phases and field protocol included.
 - **[Performance notes](docs/perf-notes.md), [architecture assessment](docs/architecture-assessment.md), [code review](docs/code-review.md), [integration plan](docs/integration-plan.md), [retro skin plan](docs/retro-skin-plan.md), [Wispr spike](docs/wispr-spike.md):** the rest of the paper trail.
 
-And the 7 tagged releases, if you want to run the past: [v1.0.0](https://github.com/fidgetcoding/talk2me/releases/tag/v1.0.0), [v2.0.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.0.0), [v2.1.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.1.0), [v2.2.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.2.0), [v2.3.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.3.0), [v2.3.1](https://github.com/fidgetcoding/talk2me/releases/tag/v2.3.1), [v2.5.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.5.0). (v2.4.0 never got its own tag; the echo gate lives in v2.5.0's history.) `./install.sh --ref v2.3.1` puts any of them on your machine.
+And the 9 tagged releases, if you want to run the past: [v1.0.0](https://github.com/fidgetcoding/talk2me/releases/tag/v1.0.0), [v2.0.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.0.0), [v2.1.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.1.0), [v2.2.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.2.0), [v2.3.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.3.0), [v2.3.1](https://github.com/fidgetcoding/talk2me/releases/tag/v2.3.1), [v2.5.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.5.0), [v2.6.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.6.0), [v2.7.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.7.0). (v2.4.0 never got its own tag; the echo gate lives in v2.5.0's history.) `./install.sh --ref v2.3.1` puts any of them on your machine.
 
 ## Requirements
 

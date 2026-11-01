@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # talk2me installer — clone, venv, install, put `t2m` on your PATH.
 #
-#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --parakeet
-#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --whisper-gpu
-#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --v1
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.7.0/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.7.0/install.sh | bash -s -- --parakeet
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.7.0/install.sh | bash -s -- --whisper-gpu
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.7.0/install.sh | bash -s -- --v1
 #
 # Installs the newest release tag, not whatever is on main right now; pass
 # --ref main for the bleeding edge. Everything lands in ~/.talk2me (override with
