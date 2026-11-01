@@ -40,7 +40,7 @@ DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = (".anthropic.com", ".claude.ai", "claud
 SECRET_PATHS: tuple[str, ...] = (
     ".ssh", ".aws", ".gnupg", ".azure", ".kube", ".docker", ".netrc", ".npmrc", ".pypirc",
     ".git-credentials", ".config/gcloud", ".config/gh", ".zsh_history", ".bash_history",
-    "Library/Keychains", "Library/Cookies", "Library/Messages", "Library/Mail",
+    "Library/Cookies", "Library/Messages", "Library/Mail",
     "Library/Safari", "Library/Application Support/Google/Chrome",
     "Library/Application Support/Firefox",
 )
@@ -208,6 +208,10 @@ def seatbelt_profile(settings: SandboxSettings, proxy_port: int, scratch: str) -
     for rel in AGENT_STATE_PATHS:
         lines += [f"(allow file-write* (subpath {_quoted(os.path.join(home, rel))}))"]
     lines += [f'(allow file-write* (regex #"^{_regex_escape(os.path.join(home, AGENT_STATE_PREFIX))}"))']
+    # Reading and rotating the agent's login goes through the keychain files, in this
+    # process. Without this a subscription login looks logged out, or loses a refresh.
+    keychains = _quoted(os.path.join(home, "Library/Keychains"))
+    lines += [f"(allow file-write* (subpath {keychains}))"]
     lines += ["", "; Things that would run later, outside the sandbox."]
     for rel in LOCKED_AGENT_FILES:
         lines += [f"(deny file-write* (subpath {_quoted(os.path.join(home, rel))}))"]

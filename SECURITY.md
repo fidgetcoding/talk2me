@@ -75,7 +75,7 @@ Inside, the agent can:
   which tunnels to the model API on port 443 and refuses everything else, DNS
   included
 - read most of the disk, except `~/.ssh`, `~/.aws`, `~/.gnupg`, browser data, mail
-  and the other usual secret stores
+  and the other usual secret stores (the login keychain stays reachable, see below)
 
 It's off by default because it breaks normal things: `npm install` needs
 `--sandbox-allow-host .npmjs.org`, and on a Mac, reaching a local dev server or
@@ -103,8 +103,10 @@ What it still can't do:
   `api.anthropic.com` using somebody else's key. Every host you add with
   `--sandbox-allow-host` is another way out.
 - **Your login is reachable.** The agent has to authenticate, so on Linux
-  `~/.claude/.credentials.json` stays readable, and on a Mac a script can ask the
-  keychain the same way the CLI does.
+  `~/.claude/.credentials.json` stays readable, and on a Mac a script can use the
+  keychain the same way the CLI does. It also means the keychain files stay writable
+  on a Mac, because the CLI rotates its login token there, so a script could damage
+  them. It can't send what it finds anywhere but the allowed hosts.
 - **The Mac's sandbox is deprecated and undocumented.** Apple still ships
   `sandbox-exec` and marks it deprecated. The rules that stop launching things
   outside it (`open`, `osascript`, `launchctl`) go by path plus a list of system

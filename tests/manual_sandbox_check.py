@@ -94,6 +94,8 @@ async def _attack(sandboxed: bool) -> dict:
         (home / ".bashrc").write_text("clean\n")
         (home / ".zshrc").write_text("clean\n")
         (home / ".claude").mkdir()
+        # A real install already has this file, and the CLI rewrites it atomically.
+        (home / ".claude.json").write_text("{}\n")
         project.mkdir()
         steps = [
             {"name": "Write", "input": {"file_path": str(home / ".zshrc"), "content": "pwned\n"}},

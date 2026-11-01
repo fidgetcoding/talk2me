@@ -274,6 +274,9 @@ def test_pure() -> None:
     check("profile denies network first", profile.index("(deny network*)") < profile.index('"localhost:1234"'))
     check("profile keeps other loopback closed", 'localhost:*"))\n(allow network-bind' not in profile)
     check("profile hides secrets after allowing writes", profile.index("(deny file-read*") > profile.index("(deny file-write*)"))
+    # The CLI's own login lives here: hide it and a subscription login looks logged out.
+    check("keychain isn't hidden", 'deny file-read* (subpath "/private/var/tmp/h/Library/Keychains"' not in profile)
+    check("keychain can rotate a token", "Library/Keychains" in profile and "(allow file-write*" in profile)
     check("profile keeps audio out", "audio" in profile and "/usr/bin/afplay" in profile)
     loose = seatbelt_profile(SandboxSettings(project="/var/tmp/p", home="/var/tmp/h", allow_localhost=True), 1, "/var/tmp/s")
     check("--sandbox-localhost opens loopback", '(allow network-outbound (remote ip "localhost:*"))' in loose)
