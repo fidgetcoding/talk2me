@@ -14,7 +14,7 @@ dependencies = [
     "numpy>=1.24",
     "sounddevice>=0.4",
     "faster-whisper>=1.0",
-    "rich>=13,<15",
+    "rich>=13,<16",
     "websockets>=15,<16",
     "kaldi-native-fbank>=1.20",
     # Native AEC (vpio.py): macOS voice-processing capture. Darwin-only; every
