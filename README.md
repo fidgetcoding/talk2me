@@ -128,6 +128,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --continue` (or `-c`) | Pick up where you left off — resumes this folder's last session, memory intact. No more "what game?". |
 | `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default, speakers included). |
 | `t2m --auto-approve` | Tools run with nobody asking. Fast, but anything the mic hears can start them. The default asks out loud first (`--gated`). See [Saying yes out loud](#saying-yes-out-loud). |
+| `t2m --sandbox` | The OS keeps the agent to this project and the model API, so a script can't walk around the rules (macOS and Linux). `--sandbox-allow-host .npmjs.org` lets more through. |
 | `t2m --stt parakeet` | The speed option: about 0.1s per sentence on the GPU, English-only (Apple Silicon; `pip install -e ".[parakeet]"` first). See [Switching the ears](#switching-the-ears). |
 | `t2m --stt whisper-gpu` | The big Whisper on the GPU: large-v3-turbo, about 0.55s per sentence, ~2 GB RAM, 1.6 GB download on first use (Apple Silicon; `pip install -e ".[whisper-gpu]"` first). |
 | `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
@@ -264,7 +265,7 @@ Why this is the default: a mic isn't a keyboard. It hears you, the TV, and your 
 
 **The denylist, in every mode.** `sudo`, recursive `rm`, `find -delete`, `git push`, `git reset --hard`, `curl`, `wget`, `ssh`, `scp`, `nc`, `dd`, one-liners like `python -c` and `bash -c`, and the absolute-path spellings of those: 69 rules, blocked outright, not askable, no voice override. Extend it anytime: `--deny-tool 'Bash(docker:*)'`.
 
-Don't mistake it for a sandbox, though. It reads the command line, and there are endless ways to spell a command. Write a script and run it, make a git alias, copy a binary to a new name: all of that walks right past. I tested exactly this against the real CLI, and [SECURITY.md](SECURITY.md) has the honest list of what gets through. For anything you can't afford to lose, use a throwaway checkout.
+Don't mistake it for a sandbox, though. It reads the command line, and there are endless ways to spell a command. Write a script and run it, make a git alias, copy a binary to a new name: all of that walks right past. I tested exactly this against the real CLI, and [SECURITY.md](SECURITY.md) has the honest list of what gets through. Want a real wall? `t2m --sandbox` has the OS enforce it: the agent can write only to the project and reach only the model API, so a script gets stopped by the kernel instead of by a pattern. It's off by default because `npm install` and friends then need `--sandbox-allow-host`, and it's macOS and Linux only. I tested it by running a hostile script at it, and [SECURITY.md](SECURITY.md#the-real-wall---sandbox) has what it stops and what it can't.
 
 The startup line always tells you which mood you're in: `tools: gated (spoken approvals)` or `tools: auto-approve ⚡`.
 
@@ -632,7 +633,7 @@ python -m tests.manual_denylist_check # the denylist against the real `claude`, 
 python -m tests.manual_stt_bench      # the ears race: real latency, synthetic voices, from files
 ```
 
-That's the highlight reel — 22 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
+That's the highlight reel — 23 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
 
 What those can't tell you is how well it actually hears, because the fake transcriber always gets it right. That part got measured separately, on real audio from files: see [the numbers](#the-numbers-and-how-much-to-trust-them), and the caveat that goes with them. `manual_denylist_check` is worth rerunning after a `claude` upgrade, since how the rules match is the CLI's call, not mine. Nothing in any of this opens your mic or speakers.
 

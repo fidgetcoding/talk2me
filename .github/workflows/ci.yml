@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "ci/**"]
   pull_request:
     branches: [main]
 
@@ -30,7 +30,7 @@ jobs:
       # sounddevice imports PortAudio at import time; the pure tests pull it in
       # transitively, so the shared lib must exist before install/run.
       - name: Install PortAudio system library
-        run: sudo apt-get update && sudo apt-get install -y libportaudio2 pulseaudio pulseaudio-utils
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 pulseaudio pulseaudio-utils bubblewrap
 
       # Ubuntu 26.04's PortAudio refuses to initialize without a PulseAudio
       # server to connect to, and runners have no sound hardware or server.
@@ -118,6 +118,47 @@ jobs:
 
       - name: test_mlx_whisper
         run: python -m tests.test_mlx_whisper
+
+      - name: test_sandbox
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          python -m tests.test_sandbox
+
+  sandbox-linux:
+    name: OS sandbox, real claude CLI (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install bubblewrap and PortAudio
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap libportaudio2
+          # Ubuntu's AppArmor blocks the unprivileged namespaces bwrap needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: pip install -e .
+      - name: Hostile script against the sandbox
+        run: python -m tests.test_sandbox
+      # No account needed: a fake local endpoint plays the model.
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Hostile script through the real claude CLI
+        run: python -m tests.manual_sandbox_check
+
+  sandbox-macos:
+    name: OS sandbox, real claude CLI (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e .
+      - name: Hostile script against the sandbox
+        run: python -m tests.test_sandbox
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Hostile script through the real claude CLI
+        run: python -m tests.manual_sandbox_check
 
   lint:
     name: Ruff

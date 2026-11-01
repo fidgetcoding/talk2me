@@ -164,6 +164,20 @@ def build_backend(cfg: Config) -> AgentBackend:
 
     from .continuity import save_last_session
 
+    sandbox = None
+    if cfg.sandbox:
+        from .sandbox import DEFAULT_ALLOWED_HOSTS, SandboxSettings, host_of_url
+
+        hosts = [*DEFAULT_ALLOWED_HOSTS, *cfg.sandbox_allow_hosts]
+        base_host = host_of_url(cfg.backend_base_url) if cfg.backend_base_url else None
+        if base_host:
+            hosts.append(base_host)
+        sandbox = SandboxSettings(
+            project=cfg.cwd or os.getcwd(),
+            allow_hosts=hosts,
+            allow_localhost=cfg.sandbox_localhost or base_host in ("localhost", "127.0.0.1"),
+        )
+
     backend = ClaudeCodeBackend(
         claude_bin=cfg.claude_bin,
         model=cfg.model,
@@ -179,6 +193,7 @@ def build_backend(cfg: Config) -> AgentBackend:
         ),
         extra_env=extra_env or None,
         resume_session_id=cfg.resume_session_id,
+        sandbox=sandbox,
     )
     # Record this session for `--continue` next time, keyed by working dir.
     save_last_session(cfg.cwd, backend._session_id)

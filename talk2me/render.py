@@ -145,6 +145,8 @@ class PlainRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
+        if cfg.sandbox:
+            tools_mode += " · OS sandbox"
         print(
             f"   model: {cfg.model or 'claude default'} · "
             f"ears: {cfg.stt} · voice: {cfg.voice or 'system'} "

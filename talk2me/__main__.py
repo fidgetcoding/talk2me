@@ -110,6 +110,30 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
+        "--sandbox", action=argparse.BooleanOptionalAction, default=False,
+        help=(
+            "run the agent inside an OS sandbox (macOS sandbox-exec, Linux "
+            "bubblewrap): it can write only to the project, and reach only the "
+            "model API. Unlike the denylist, a script can't walk past it. Off by "
+            "default because npm install and friends need --sandbox-allow-host."
+        ),
+    )
+    p.add_argument(
+        "--sandbox-allow-host", action="append", default=[], dest="sandbox_allow_hosts",
+        help=(
+            "extra host the sandboxed agent may reach on port 443, repeatable. "
+            "'.npmjs.org' with the dot covers subdomains too."
+        ),
+    )
+    p.add_argument(
+        "--sandbox-localhost", action="store_true",
+        help=(
+            "macOS: let the sandboxed agent reach other services on this Mac's "
+            "loopback (dev servers, databases). On Linux the sandbox has its own "
+            "private loopback, so its own dev servers already work."
+        ),
+    )
+    p.add_argument(
         "--permission-mode", default="default", choices=SAFE_PERMISSION_MODES,
         help="fine-tune the posture used WITH --gated (bypass values blocked here)",
     )
@@ -373,6 +397,15 @@ def _parse_args(argv: list[str]) -> Config:
 
     from .config import DEFAULT_ALLOWED_TOOLS, DEFAULT_DISALLOWED_TOOLS
 
+    # Fail closed: asked for a sandbox and can't have one means no launch.
+    use_sandbox = a.sandbox and a.agent != "codex"
+    if use_sandbox:
+        from .sandbox import available
+
+        reason = available()
+        if reason:
+            p.error(reason)
+
     stt, stt_notice = factory.resolve_stt(a.stt)
 
     return Config(
@@ -394,6 +427,9 @@ def _parse_args(argv: list[str]) -> Config:
         permission_mode=permission_mode,
         with_user_config=a.with_user_config,
         voice_approval=voice_approval,
+        sandbox=use_sandbox,
+        sandbox_allow_hosts=a.sandbox_allow_hosts,
+        sandbox_localhost=a.sandbox_localhost,
         allowed_tools=list(DEFAULT_ALLOWED_TOOLS) + a.allow_tool,
         disallowed_tools=(
             [] if dangerously else list(DEFAULT_DISALLOWED_TOOLS) + a.deny_tool

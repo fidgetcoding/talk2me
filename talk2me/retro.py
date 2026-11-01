@@ -250,6 +250,8 @@ class RetroRenderer:
             if "bypass" in cfg.permission_mode.lower()
             else "gated (spoken approvals)"
         )
+        if cfg.sandbox:
+            tools_mode += " · OS sandbox"
         if getattr(cfg, "aec_layer", "") == "native":
             barge = (
                 "ON — speakers, native AEC (macOS cancels its own audio at "

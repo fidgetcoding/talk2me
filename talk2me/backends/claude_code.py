@@ -35,6 +35,7 @@ from ..events import (
     ToolActivity,
     TurnComplete,
 )
+from ..sandbox import Sandbox, SandboxSettings
 
 # Generous per-line ceiling for the stdout/stderr StreamReaders. The default is
 # 64 KiB, past which readuntil() raises LimitOverrunError and wedges the stream
@@ -146,8 +147,11 @@ class ClaudeCodeBackend:
         append_system_prompt: str | None = None,
         extra_env: dict[str, str] | None = None,
         resume_session_id: str | None = None,
+        sandbox: SandboxSettings | None = None,
     ) -> None:
         self._bin = claude_bin
+        self._sandbox_settings = sandbox
+        self._sandbox: Sandbox | None = None
         self._model = model
         self._cwd = cwd
         self._permission_mode = permission_mode
@@ -230,8 +234,15 @@ class ClaudeCodeBackend:
         env = None
         if self._extra_env:
             env = {**os.environ, **self._extra_env}
+        argv = self._argv()
+        if self._sandbox_settings is not None:
+            # Raises SandboxUnavailable rather than ever running unsandboxed.
+            self._sandbox = Sandbox(self._sandbox_settings)
+            await self._sandbox.start()
+            argv = self._sandbox.wrap(argv)
+            env = self._sandbox.env(env)
         self._proc = await asyncio.create_subprocess_exec(
-            *self._argv(),
+            *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -343,6 +354,10 @@ class ClaudeCodeBackend:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._reader_task = None
         self._stderr_task = None
+
+        if self._sandbox is not None:
+            await self._sandbox.close()
+            self._sandbox = None
 
         if self._proc is None:
             return

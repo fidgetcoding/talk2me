@@ -160,6 +160,13 @@ class Config:
         default_factory=lambda: list(DEFAULT_DISALLOWED_TOOLS)
     )
 
+    # Opt-in OS sandbox around the whole agent process (talk2me/sandbox.py):
+    # writes limited to the project, network limited to named hosts. Costs
+    # npm install and friends unless their hosts get listed.
+    sandbox: bool = False
+    sandbox_allow_hosts: list[str] = field(default_factory=list)
+    sandbox_localhost: bool = False
+
     # --- input ---
     input_mode: str = "voice"  # "voice" | "text"
 

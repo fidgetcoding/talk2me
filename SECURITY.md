@@ -39,8 +39,8 @@ What's in place:
 
 ## What the denylist can't do
 
-It's a seatbelt, not a sandbox. It matches the text of a command, and there are
-endless ways to spell a command. Measured against the real CLI
+It's a seatbelt, not a sandbox (`--sandbox`, below, is the sandbox). It matches the
+text of a command, and there are endless ways to spell a command. Measured against the real CLI
 (`tests/manual_denylist_check.py`, results in `docs/permission-spike-results.md`),
 Claude Code's matcher is good at the wrappers: `a && b`, pipes, `sh -c '...'`,
 `env` and `timeout` all get seen through. These still walk past it, and under
@@ -57,11 +57,61 @@ The gate's allowlist runs some commands without asking, and a few of those can r
 code: `npm run` and `pytest` execute whatever the project defines, and `cat` can
 read any file you can. Trim it if that bothers you: `--deny-tool 'Bash(npm run:*)'`.
 
-So the gate is the protection, and it's only as good as the person answering it.
-It can't tell your voice from anyone else's, so someone in the room can say
-"approve" too. `--voice-lock` narrows that where its calibration holds, but on a
-laptop mic it often only observes. For anything you can't afford to lose, run in a
-container or a throwaway checkout, with no credentials you'd miss.
+So on its own, the gate is the protection, and it's only as good as the person
+answering it. It can't tell your voice from anyone else's, so someone in the room
+can say "approve" too. `--voice-lock` narrows that where its calibration holds, but
+on a laptop mic it often only observes.
+
+## The real wall: `--sandbox`
+
+`t2m --sandbox` runs the agent inside an OS sandbox: `sandbox-exec` on macOS,
+bubblewrap on Linux. The kernel refuses the operation whichever process asks, so
+it covers Bash, any script Bash runs, and the agent's own Write and Edit tools.
+
+Inside, the agent can:
+
+- write to the project, a private temp folder, and its own session state
+- reach the network only through a small proxy talk2me runs outside the sandbox,
+  which tunnels to the model API on port 443 and refuses everything else, DNS
+  included
+- read most of the disk, except `~/.ssh`, `~/.aws`, `~/.gnupg`, browser data, mail
+  and the other usual secret stores
+
+It's off by default because it breaks normal things: `npm install` needs
+`--sandbox-allow-host .npmjs.org`, and on a Mac, reaching a local dev server or
+database needs `--sandbox-localhost`. If the sandbox can't run, talk2me refuses to
+start instead of quietly running without it. Windows has no sandbox wired up, so
+`--sandbox` refuses there.
+
+I tested it with a hostile script, not just a policy file. `tests/test_sandbox.py`
+runs an actual script under the actual sandbox in a fake home, on Mac and Linux in
+CI. It tries to edit shell profiles, plant git and agent hooks, write through
+symlinks and hard links, read SSH keys, connect out, resolve DNS and tunnel through
+the proxy to a stranger, and it checks the disk afterwards from outside. The same
+script runs with no sandbox first, so a pass can't mean the attack was broken.
+`tests/manual_sandbox_check.py` does it through the real `claude` CLI: its own Write
+tool, then a script it wrote and ran.
+
+What it still can't do:
+
+- **The project is writable, by design.** A bad instruction can still wreck
+  uncommitted work. Hooks, git config and agent settings inside the project stay
+  read-only, because those would run later outside the sandbox. On Mac that also
+  means `git init` fails inside it. On Linux only the ones that already exist get
+  locked.
+- **The model API is reachable, also by design.** A script could send data to
+  `api.anthropic.com` using somebody else's key. Every host you add with
+  `--sandbox-allow-host` is another way out.
+- **Your login is reachable.** The agent has to authenticate, so on Linux
+  `~/.claude/.credentials.json` stays readable, and on a Mac a script can ask the
+  keychain the same way the CLI does.
+- **The Mac's sandbox is deprecated and undocumented.** Apple still ships
+  `sandbox-exec` and marks it deprecated. The rules that stop launching things
+  outside it (`open`, `osascript`, `launchctl`) go by path plus a list of system
+  services, so a purpose-built native binary asking launchd directly isn't something
+  I've ruled out.
+- **Kernel bugs are out of scope.** For anything you can't afford to lose, a
+  container or VM with no credentials you'd miss is still the stronger answer.
 
 `--agent codex` doesn't use any of this: Codex runs in its own sandbox
 (`workspace-write`, no network) and never asks.

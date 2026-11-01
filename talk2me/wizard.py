@@ -20,6 +20,7 @@ from rich.prompt import Confirm, Prompt
 
 from .factory import whisper_gpu_supported
 from .retro import CYAN, GREEN, THEME
+from .sandbox import available as sandbox_available
 
 CONFIG_DIR = os.path.expanduser("~/.talk2me")
 
@@ -28,7 +29,7 @@ CONFIG_DIR = os.path.expanduser("~/.talk2me")
 ALLOWED_KEYS = (
     "model", "stt", "voice", "barge_in", "gated", "cwd", "save_dir",
     "language", "whisper_model", "backend_base_url", "backend_auth_env",
-    "agent", "voice_lock",
+    "agent", "voice_lock", "sandbox",
 )
 
 # Alternate brains that publish Anthropic-compatible endpoints, officially
@@ -284,6 +285,13 @@ def run_wizard(existing: dict | None = None) -> dict:
         default="gated" if prev.get("gated", True) else "auto-approve",
     )
 
+    use_sandbox = prev.get("sandbox", False)
+    if agent == "claude" and sandbox_available() is None:
+        p("  [dim]OS sandbox: the kernel keeps the agent to this project and the "
+          "model API, so a script can't get around it. Off by default because "
+          "npm install and friends then need --sandbox-allow-host.[/]")
+        use_sandbox = Confirm.ask("  sandbox the agent?", default=use_sandbox)
+
     # 6 — where it works
     p()
     p(f"[bold {CYAN}]6 · the folder[/]  What the agent works on. "
@@ -361,6 +369,7 @@ def run_wizard(existing: dict | None = None) -> dict:
         "voice": voice,
         "barge_in": barge_in,
         "gated": tools == "gated",
+        "sandbox": use_sandbox,
         "cwd": cwd,
         "save_dir": save_dir,
         "language": language,
