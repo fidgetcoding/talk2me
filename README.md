@@ -440,10 +440,25 @@ I raced them: 24 clips, 8 coding sentences read by 3 voices ("Refactor useAuthSt
 
 That's data, not a verdict, and here's the fine print:
 
-- **Those voices are synthetic.** macOS `say` reading into a file, one Mac. `python -m tests.manual_stt_bench` reruns the race if you want your own numbers. The latency holds up. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it.
+- **Those voices are synthetic.** macOS `say` reading into a file, one Mac. [Real people](#on-real-people) are below, and they do reorder it. `python -m tests.manual_stt_bench` reruns the race if you want your own numbers. The latency holds up. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it.
 - **Those speeds are on a quiet Mac.** With other jobs grinding in the background, the same race came back around 1s for `whisper-gpu`, 0.66s for base.en and 0.31s for parakeet. The word errors didn't move.
 - **Word-error rate can't see meaning.** It scores "use AuthStore" and "use all stores" the same way, and only one of those points a coding agent at the right thing. Read the misses column too.
 - **Vocab moves the number, on both Whispers.** Same 24 clips, same terms: base.en takes them as hotwords, `whisper-gpu` as a prompt. Terms that match the sentences take base.en to 7.3% and `whisper-gpu` to 6.6%. That's a best case, because I handed them the answers. Terms that don't match, closer to everyday life, nudge base.en to 13.2% and `whisper-gpu` to 10.9%. Terms cost base.en a little speed (medians of 0.47 to 0.58s across two runs), and `whisper-gpu` held at 0.52 to 0.58s.
+
+### On real people
+
+macOS voices only tell you so much, so I also ran the ears on recordings of real people, from files. Two openly licensed sets, both [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), downloaded on first run and not stored in this repo:
+
+- [LibriSpeech](https://www.openslr.org/12) dev-clean (Panayotov et al.): 40 volunteers reading audiobooks. 200 clips, 4,367 words.
+- [Speech Commands](https://arxiv.org/abs/1804.03209) v0.02 test set (Warden, Google): people saying one word into their own laptop or phone. I scored 100 clips each of "yes", "go", "no" and "stop" on what the spoken gate would have done, plus 600 clips of other words that should do nothing.
+
+| Engine | Word errors, sentences | Worst speaker | Gate got it right | Opposite verdict | False approvals (of 600) |
+|---|---|---|---|---|---|
+| **whisper base.en, CPU (the default)** | 5.6% | 20.4% | 92.5% | 0 | 6 |
+| large-v3-turbo, GPU (`whisper-gpu`) | 3.5% | 11.7% | 93.0% | 0 | 1 |
+| parakeet v2, GPU | 1.7% | 5.9% | 75.0% | 1 | 23 |
+
+The rest of the time the gate heard nothing usable and asked again, which is the safe way to miss. Parakeet is the best listener on long sentences and the worst on one word, so think twice before pairing it with the spoken gate. Caveats: audiobook readers in quiet rooms aren't people talking to a laptop, there's no coding jargon in either set, and the gate clips are one word cut out of context. Rerun it with `python -m tests.manual_real_speech_bench --data <folder>`.
 
 More engines can slide in the same way. Everything hides behind one contract, so adding one is a single file, and your muscle memory doesn't change.
 
@@ -631,6 +646,7 @@ python -m tests.test_flow           # run-on speech chunking + unfinished-senten
 python -m tests.manual_backend_check  # one real cheap turn against Claude Code
 python -m tests.manual_denylist_check # the denylist against the real `claude`, no model, no cost
 python -m tests.manual_stt_bench      # the ears race: real latency, synthetic voices, from files
+python -m tests.manual_real_speech_bench --data <folder>  # the same ears on recordings of real people
 ```
 
 That's the highlight reel — 26 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push, and on Windows.
