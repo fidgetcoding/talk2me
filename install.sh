@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # talk2me installer — clone, venv, install, put `t2m` on your PATH.
 #
-#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.sh | bash -s -- --parakeet
-#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.sh | bash -s -- --v1
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --parakeet
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --v1
 #
-# Everything lands in ~/.talk2me (override with TALK2ME_HOME). Re-running updates
-# (and re-running with a different --ref switches versions in place).
+# Installs the newest release tag, not whatever is on main right now; pass
+# --ref main for the bleeding edge. Everything lands in ~/.talk2me (override with
+# TALK2ME_HOME). Re-running updates to the newest tag (and re-running with a
+# different --ref switches versions in place).
 set -euo pipefail
 
 REPO="https://github.com/fidgetcoding/talk2me.git"
 DIR="${TALK2ME_HOME:-$HOME/.talk2me}"
 BIN="$HOME/.local/bin"
-REF="main"      # any branch or tag: --ref v1, --ref v1.0.0 (--v1 is shorthand)
+REF=""          # any branch or tag: --ref main, --ref v1.0.0 (--v1 is shorthand)
 PARAKEET=0
 
 while [ $# -gt 0 ]; do
@@ -26,9 +28,22 @@ while [ $# -gt 0 ]; do
 done
 
 echo "🎙️  talk2me installer"
-[ "$REF" = "main" ] || echo "→ version: $REF"
 
 command -v git >/dev/null 2>&1 || { echo "❌ need git first"; exit 1; }
+
+latest_tag() {
+  # awk reads to the end on purpose: with pipefail, anything that closes the
+  # pipe early (head, awk's exit) can kill the script on SIGPIPE.
+  git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v*' \
+    | awk -F/ '!found && $NF ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ { print $NF; found = 1 }'
+}
+
+if [ -z "$REF" ]; then
+  REF="$(latest_tag || true)"
+  [ -n "$REF" ] || { echo "⚠️  couldn't find a release tag, installing main"; REF="main"; }
+fi
+echo "→ version: $REF"
+
 PY="$(command -v python3.13 || command -v python3.12 || command -v python3.11 || command -v python3 || true)"
 [ -n "$PY" ] || { echo "❌ need Python 3.11+"; exit 1; }
 "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' \
@@ -53,6 +68,9 @@ if [ "$PARAKEET" = "1" ]; then
   echo "→ installing with the Parakeet GPU ears (Apple Silicon)…"
   "$DIR/venv/bin/pip" install -q -e "$DIR/repo[parakeet]"
 else
+  if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ]; then
+    echo "→ installing, GPU ears included. Big dependencies, so a few minutes on a slow line…"
+  fi
   "$DIR/venv/bin/pip" install -q -e "$DIR/repo"
 fi
 
