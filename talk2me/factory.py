@@ -129,7 +129,6 @@ def build_tts(cfg: Config) -> TTS:
 
 def build_backend(cfg: Config) -> AgentBackend:
     from .backends import ClaudeCodeBackend
-
     from .config import VOICE_SYSTEM_PROMPT
     from .continuity import save_last_session as _save_session
 

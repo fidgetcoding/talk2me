@@ -17,7 +17,7 @@ import numpy as np
 
 try:
     import webrtcvad
-except Exception:  # pragma: no cover - optional dependency
+except Exception:  # noqa: BLE001  pragma: no cover - optional dependency
     webrtcvad = None
 
 # WebRTC VAD only accepts these sample rates and frame durations. Anything else

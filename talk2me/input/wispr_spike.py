@@ -25,10 +25,7 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:  # keep the module import-clean without Quartz installed
-    pass
+from typing import Any
 
 # --- Static maps (no Quartz import needed to read these) ----------------------
 

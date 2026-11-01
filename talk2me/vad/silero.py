@@ -185,7 +185,7 @@ class SileroVAD:
         """Resample to 16 kHz via linear interpolation (no scipy dependency)."""
         if self.sample_rate == _MODEL_SAMPLE_RATE or samples.size == 0:
             return samples
-        n_out = int(round(samples.shape[0] * _MODEL_SAMPLE_RATE / self.sample_rate))
+        n_out = round(samples.shape[0] * _MODEL_SAMPLE_RATE / self.sample_rate)
         if n_out <= 0:
             return np.zeros(0, dtype=np.float32)
         src_idx = np.linspace(0.0, samples.shape[0] - 1, num=n_out, dtype=np.float64)

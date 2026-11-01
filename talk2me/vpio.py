@@ -51,7 +51,7 @@ def is_available() -> bool:
         return False
     try:
         import AVFoundation  # noqa: F401  (pyobjc-framework-AVFoundation)
-    except Exception:
+    except Exception:  # noqa: BLE001  pyobjc import fails in many ways off a real Mac
         return False
     return True
 
@@ -95,7 +95,7 @@ def probe() -> bool:
         got = {"peak": 0.0, "frames": 0}
         done = threading.Event()
 
-        def tap(buf, when) -> None:  # noqa: ANN001
+        def tap(buf, when) -> None:
             n = int(buf.frameLength())
             ch = buf.floatChannelData()
             if n == 0 or ch is None:
@@ -117,7 +117,7 @@ def probe() -> bool:
             inp.removeTapOnBus_(0)
             engine.stop()
         return got["frames"] > 0 and got["peak"] > _DEAD_PEAK
-    except Exception:
+    except Exception:  # noqa: BLE001  any probe failure means no native AEC
         return False
 
 
@@ -256,13 +256,13 @@ class VoiceProcessingMic(Mic):
         ratio = src_rate / self.sample_rate
         if abs(ratio - round(ratio)) < 1e-9:
             self._resampler = (
-                None if round(ratio) == 1 else _FirDecimator(int(round(ratio)))
+                None if round(ratio) == 1 else _FirDecimator(round(ratio))
             )
         else:
             self._resampler = _LinearResampler(src_rate, self.sample_rate)
         self._pending = np.zeros(0, dtype=np.float32)
 
-        def tap(buf, when) -> None:  # noqa: ANN001
+        def tap(buf, when) -> None:
             n = int(buf.frameLength())
             ch = buf.floatChannelData()
             if n == 0 or ch is None:

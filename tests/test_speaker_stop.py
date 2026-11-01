@@ -84,7 +84,7 @@ async def main() -> int:
         try:
             result = await asyncio.wait_for(sp.play(_blocks(10)), timeout=5)
             crashed = False
-        except Exception as exc:  # the live-run failure mode
+        except Exception as exc:  # noqa: BLE001  the live-run failure mode
             result, crashed = None, True
             print(f"  play() raised: {exc!r}", flush=True)
         await stopper

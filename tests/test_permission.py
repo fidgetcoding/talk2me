@@ -320,7 +320,7 @@ async def test_gate_approve() -> None:
 
 async def test_gate_deny() -> None:
     frames = _speech(15) + _silence(35) + _speech(15) + _silence(35)
-    backend, tts, _ = await _run_gate(["Run the tests.", "no thanks"], frames)
+    backend, _tts, _ = await _run_gate(["Run the tests.", "no thanks"], frames)
     check(
         "deny: responded deny with message",
         backend.permission_responses == [("req-1", False, "Denied by voice")],
@@ -349,7 +349,7 @@ async def test_gate_unclear_then_approve() -> None:
     frames = (
         _speech(15) + _silence(35) + _speech(15) + _silence(35) + _speech(15) + _silence(35)
     )
-    backend, tts, _ = await _run_gate(["Run the tests.", "banana", "yes"], frames)
+    backend, _tts, _ = await _run_gate(["Run the tests.", "banana", "yes"], frames)
     check(
         "unclear->approve: responded allow",
         backend.permission_responses == [("req-1", True, None)],

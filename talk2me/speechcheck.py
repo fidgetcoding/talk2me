@@ -108,13 +108,13 @@ def build_speech_check(
                 lock = VoiceLock()
                 if not lock.load():
                     lock = None
-        except Exception:
+        except Exception:  # noqa: BLE001  a bad voice lock must not stop speech checks
             lock = None
     return SileroSpeechCheck(voicelock=lock)
 
 
 def _resample_to_16k(audio: np.ndarray, sample_rate: int) -> np.ndarray:
-    n_out = int(round(audio.shape[0] * 16000 / sample_rate))
+    n_out = round(audio.shape[0] * 16000 / sample_rate)
     if n_out <= 0:
         return audio.astype(np.float32)
     x_old = np.linspace(0.0, 1.0, num=audio.shape[0], endpoint=False)

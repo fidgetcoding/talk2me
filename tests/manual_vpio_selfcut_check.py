@@ -36,9 +36,7 @@ from .fakes import FakeBackend
 COUNT_REPLY = (
     "Counting for the echo test now. "
     + " ".join(f"{w}." for w in (
-        "One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve "
-        "Thirteen Fourteen Fifteen Sixteen Seventeen Eighteen Nineteen "
-        "Twenty".split()
+        ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen", "Twenty"]
     ))
     + " That is the whole count, done."
 )
@@ -101,13 +99,13 @@ async def one_pass(volume: int, reply: str) -> tuple[int, bool]:
             orch._handle_user_text("count for me", typed=False), timeout=120
         )
         completed = True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
     finally:
         run_task.cancel()
         try:
             await run_task
-        except (asyncio.CancelledError, Exception):
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110  teardown: the outcome no longer matters
             pass
     return backend.interrupts, completed
 

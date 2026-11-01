@@ -145,7 +145,7 @@ class CodexBackend:
                     )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # never die silently
+        except Exception as exc:  # noqa: BLE001  never die silently
             await self._events.put(BackendError(f"codex turn: {exc!r}"))
         finally:
             if self._proc is proc:
@@ -235,7 +235,7 @@ class CodexBackend:
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110  teardown: the task's outcome no longer matters
                 pass
         proc, self._proc = self._proc, None
         if proc is not None and proc.returncode is None:

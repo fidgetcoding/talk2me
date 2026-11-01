@@ -29,6 +29,7 @@ import numpy as np
 
 from .audio import Mic, Speaker
 from .config import Config
+from .continuity import list_sessions, record_title, save_last_session
 from .events import (
     AgentEvent,
     AssistantTextDelta,
@@ -39,7 +40,6 @@ from .events import (
     ToolActivity,
     TurnComplete,
 )
-from .continuity import list_sessions, record_title, save_last_session
 from .protocols import STT, TTS, VAD, AgentBackend
 from .render import PlainRenderer, Renderer
 from .segment import segment_utterances
@@ -56,8 +56,7 @@ MAX_CONTINUATION_EXTENSIONS = 3
 # Trailing words that mean the speaker hasn't finished the thought, even when
 # the STT appended a period.
 _TRAILING_FILLERS = frozenset(
-    "um uh like so and but or basically the a an to of for with i you know "
-    "guess mean".split()
+    ["um", "uh", "like", "so", "and", "but", "or", "basically", "the", "a", "an", "to", "of", "for", "with", "i", "you", "know", "guess", "mean"]
 )
 
 
@@ -106,12 +105,10 @@ PERMISSION_LISTEN_TIMEOUT_S = 60.0
 # on any overlap ("no, don't do it" contains both kinds of token) — never
 # auto-allow on ambiguity.
 _DENY_TOKENS = frozenset(
-    "deny denied no nope stop cancel reject rejected skip never negative "
-    "don't dont".split()
+    ["deny", "denied", "no", "nope", "stop", "cancel", "reject", "rejected", "skip", "never", "negative", "don't", "dont"]
 )
 _APPROVE_TOKENS = frozenset(
-    "approve approved yes yeah yep yup go allow allowed sure okay ok confirm "
-    "affirmative".split()
+    ["approve", "approved", "yes", "yeah", "yep", "yup", "go", "allow", "allowed", "sure", "okay", "ok", "confirm", "affirmative"]
 )
 _APPROVE_PHRASES = ("do it", "go ahead")
 
@@ -796,49 +793,43 @@ class Orchestrator:
 
     async def _typed_worker(self) -> None:
         """Consume assembled keyboard messages and run them as user turns."""
-        try:
-            while True:
-                text = (await self._typed_queue.get()).strip()
-                if text:
-                    # Spawn, don't await: awaiting serialized the worker on
-                    # the running turn, so a line typed DURING a typed turn
-                    # queued silently instead of cutting in. _turn_lock is
-                    # what serializes execution; the takeover path in
-                    # _handle_user_text needs to run while the lock is held.
-                    self._typed_tasks = [
-                        t for t in self._typed_tasks if not t.done()
-                    ]
-                    self._typed_tasks.append(
-                        asyncio.create_task(
-                            self._handle_user_text(text, typed=True)
-                        )
+        while True:
+            text = (await self._typed_queue.get()).strip()
+            if text:
+                # Spawn, don't await: awaiting serialized the worker on
+                # the running turn, so a line typed DURING a typed turn
+                # queued silently instead of cutting in. _turn_lock is
+                # what serializes execution; the takeover path in
+                # _handle_user_text needs to run while the lock is held.
+                self._typed_tasks = [
+                    t for t in self._typed_tasks if not t.done()
+                ]
+                self._typed_tasks.append(
+                    asyncio.create_task(
+                        self._handle_user_text(text, typed=True)
                     )
-        except asyncio.CancelledError:
-            raise
+                )
 
     async def _stdin_assembler(self) -> None:
         """Join a burst of stdin lines (a paste) into ONE message: lines that
         arrive within 80ms of each other belong together."""
-        try:
+        while True:
+            parts = [await self._stdin_lines.get()]
             while True:
-                parts = [await self._stdin_lines.get()]
-                while True:
-                    try:
-                        parts.append(
-                            await asyncio.wait_for(self._stdin_lines.get(), 0.08)
-                        )
-                    except asyncio.TimeoutError:
-                        break
-                # Join on newline, not "": the 80ms window exists to
-                # reassemble a multi-line PASTE into one message — but each
-                # readline() already strips nothing, so a bare join mashed
-                # separate quick lines together ("he" + "idk…" -> "heidk",
-                # live 2026-07-20). Line boundaries are content.
-                text = "\n".join(p.strip() for p in parts).strip()
-                if text:
-                    await self._typed_queue.put(text)
-        except asyncio.CancelledError:
-            raise
+                try:
+                    parts.append(
+                        await asyncio.wait_for(self._stdin_lines.get(), 0.08)
+                    )
+                except TimeoutError:
+                    break
+            # Join on newline, not "": the 80ms window exists to
+            # reassemble a multi-line PASTE into one message — but each
+            # readline() already strips nothing, so a bare join mashed
+            # separate quick lines together ("he" + "idk…" -> "heidk",
+            # live 2026-07-20). Line boundaries are content.
+            text = "\n".join(p.strip() for p in parts).strip()
+            if text:
+                await self._typed_queue.put(text)
 
     def _start_stdin_thread(self) -> None:
         """Own the typed input. On a real TTY: the TypeLine — cbreak mode,
@@ -864,7 +855,7 @@ class Orchestrator:
             try:
                 self._typeline.start()
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001  broken termios falls back to the legacy pump
                 self._typeline = None  # broken termios — legacy pump below
 
         def pump() -> None:
@@ -953,38 +944,39 @@ class Orchestrator:
             # 2026-07-19: the first Ctrl-C printed '🎧 listening…' and kept
             # running instead of quitting.
             current = asyncio.current_task()
-            if current is not None and getattr(current, "cancelling", None):
-                if current.cancelling():
-                    raise
+            if (
+                current is not None
+                and getattr(current, "cancelling", None)
+                and current.cancelling()
+            ):
+                raise
             return None
 
     async def _working_ticker(self) -> None:
         """Soft blip every WORKING_TICK_QUIET_S of silence during a tool run —
         the audible version of a spinner, so 'thinking hard' never sounds like
         'crashed'. Only after this turn has actually used a tool."""
-        try:
-            while True:
-                await asyncio.sleep(2)
-                if self._interrupted or not self._saw_tool:
-                    continue
-                if time.monotonic() - self._last_audible < WORKING_TICK_QUIET_S:
-                    continue
-                self._last_audible = time.monotonic()
-                # Screen companion to the audible tick — a long silent build
-                # shows life in BOTH channels.
-                self.render.working(self._tool_count)
-                if self._ticks_broken:
-                    continue
-                try:
-                    subprocess.Popen(
-                        ["afplay", "-v", "0.4", _TICK_SOUND],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                except (FileNotFoundError, OSError):
-                    self._ticks_broken = True  # no afplay (Linux) — screen only
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await asyncio.sleep(2)
+            if self._interrupted or not self._saw_tool:
+                continue
+            if time.monotonic() - self._last_audible < WORKING_TICK_QUIET_S:
+                continue
+            self._last_audible = time.monotonic()
+            # Screen companion to the audible tick — a long silent build
+            # shows life in BOTH channels.
+            self.render.working(self._tool_count)
+            if self._ticks_broken:
+                continue
+            try:
+                # Fire and forget: a spawn is fast and nothing waits on the blip.
+                subprocess.Popen(  # noqa: ASYNC220
+                    ["afplay", "-v", "0.4", _TICK_SOUND],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except (FileNotFoundError, OSError):
+                self._ticks_broken = True  # no afplay (Linux) — screen only
 
     async def _barge_monitor(self) -> str | None:
         """Watch the live mic during agent speech; cut playback on real speech.
@@ -1064,7 +1056,7 @@ class Orchestrator:
                         break  # starved or over-long: flush what we have
                     try:
                         frame = await asyncio.wait_for(anext(frames), remaining)
-                    except (StopAsyncIteration, asyncio.TimeoutError):
+                    except (TimeoutError, StopAsyncIteration):
                         break
                 else:
                     try:
@@ -1372,7 +1364,7 @@ class Orchestrator:
             if task is not None:
                 try:
                     await task
-                except Exception:
+                except Exception:  # noqa: BLE001, S110  teardown: the task's outcome no longer matters
                     pass
         self._render_task = self._play_task = None
         self._render_q = self._blocks_q = None
@@ -1390,7 +1382,7 @@ class Orchestrator:
             try:
                 async for block in self.tts.synthesize(text):
                     blocks.append(block)
-            except Exception as exc:  # a bad render skips the chunk, not the turn
+            except Exception as exc:  # noqa: BLE001  a bad render skips the chunk, not the turn
                 self.render.error(f"[tts] {exc!r}")
                 continue
             await self._blocks_q.put(blocks)
@@ -1515,7 +1507,7 @@ class Orchestrator:
                         return ""
                     try:
                         frame = await asyncio.wait_for(anext(frames), remaining)
-                    except (StopAsyncIteration, asyncio.TimeoutError):
+                    except (TimeoutError, StopAsyncIteration):
                         return ""
                 speech = self.vad.is_speech(frame)
                 if not started:
@@ -1784,7 +1776,7 @@ _PICK_CANCEL = frozenset(("cancel", "never mind", "nevermind", "stop", "forget i
 # live-observed). Stripped from the ends only, so words inside a phrase and
 # real instructions ("keep working") stay untouched.
 _FILLER_WORDS = frozenset(
-    "hey ok okay so um uh well please now wait actually alright yeah like".split()
+    ["hey", "ok", "okay", "so", "um", "uh", "well", "please", "now", "wait", "actually", "alright", "yeah", "like"]
 )
 
 

@@ -228,7 +228,7 @@ class VoiceLock:
         self.threshold = float(data["threshold"])
         try:
             self.meta = json.loads(str(data["meta"]))
-        except Exception:
+        except Exception:  # noqa: BLE001  corrupt metadata must not block a valid lock
             self.meta = {}
         return True
 
@@ -290,7 +290,7 @@ def _tts_impostor_clips(voice: str | None) -> list[np.ndarray]:
                         w.readframes(w.getnframes()), dtype=np.int16
                     )
                 clips.append(pcm.astype(np.float32) / 32768.0)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112  skip a clip that won't decode
             continue
     return clips
 
@@ -342,7 +342,7 @@ async def run_enrollment(cfg) -> bool:
                 clips.append(utterance)
                 print("     ✓ got it")
                 break
-    except (asyncio.TimeoutError, StopAsyncIteration):
+    except (TimeoutError, StopAsyncIteration):
         print("  (no speech heard — enrollment cancelled)")
         return False
     finally:

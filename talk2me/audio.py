@@ -13,7 +13,7 @@ import numpy as np
 
 try:
     import sounddevice as sd
-except Exception:  # pragma: no cover - import-time hardware/portaudio issues
+except Exception:  # noqa: BLE001  pragma: no cover - import-time hardware/portaudio issues
     sd = None
 
 # Cap on the mic frame backlog. At 16 kHz / 30 ms frames that's ~33 frames/sec,
@@ -91,7 +91,7 @@ def output_is_speakers(device: int | None) -> bool:
         if idx is None or int(idx) < 0:
             return False
         name = sd.query_devices(int(idx))["name"]
-    except Exception:
+    except Exception:  # noqa: BLE001  best-effort probe: unknown means not speakers
         return False
     return _name_looks_like_speakers(str(name))
 
@@ -102,7 +102,7 @@ def format_device_table() -> str:
         return "sounddevice/portaudio unavailable — no devices to list."
     try:
         default_in, default_out = sd.default.device
-    except Exception:  # pragma: no cover - portaudio without a default device
+    except Exception:  # noqa: BLE001  pragma: no cover - portaudio without a default device
         default_in = default_out = None
     lines = ["INPUT devices (mic):"]
     for i, name in devices_of_kind("input"):
@@ -142,7 +142,7 @@ class Mic:
         # our own drop-oldest evictions. Surfaced so callers can see real-time loss.
         self.dropped_frames = 0
 
-    def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
+    def _callback(self, indata, frames, time_info, status) -> None:
         if self._muted:
             return
         if status:
@@ -292,7 +292,7 @@ class Speaker:
                 try:
                     stream.stop()
                     stream.close()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110  teardown must not mask the play result
                     pass
 
             threading.Thread(

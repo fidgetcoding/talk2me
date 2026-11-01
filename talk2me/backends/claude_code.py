@@ -359,7 +359,7 @@ class ClaudeCodeBackend:
                 pass
             try:
                 await asyncio.wait_for(self._proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 try:
                     self._proc.kill()
                 except ProcessLookupError:
@@ -414,7 +414,7 @@ class ClaudeCodeBackend:
             await self._events.put(BackendError(f"claude exited rc={rc}"))
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # defensive: never let the reader die silently
+        except Exception as exc:  # noqa: BLE001  defensive: never let the reader die silently
             await self._events.put(BackendError(f"stdout reader: {exc!r}"))
 
     async def _drain_stderr(self) -> None:
@@ -442,7 +442,7 @@ class ClaudeCodeBackend:
                 _sanitize(raw.decode("utf-8", errors="replace").strip())
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001, S110  stderr drain is best effort
             pass
 
     def _translate(self, obj: dict) -> list[AgentEvent]:

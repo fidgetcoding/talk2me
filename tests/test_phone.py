@@ -58,7 +58,7 @@ async def main() -> int:
     try:
         async with websockets.connect(f"ws://127.0.0.1:{port}/ws"):
             check("ws refused without token", False, "connected?!")
-    except Exception:
+    except Exception:  # noqa: BLE001  any refusal counts, the library's error type varies
         check("ws refused without token", True)
 
     async with websockets.connect(f"ws://127.0.0.1:{port}/ws?t={bridge.token}") as ws:

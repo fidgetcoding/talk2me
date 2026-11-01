@@ -142,7 +142,7 @@ def _say(voice: str, text: str, tmp: str, name: str) -> np.ndarray | None:
         with wave.open(wav) as w:
             pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
         return pcm.astype(np.float32) / 32768.0
-    except Exception:
+    except Exception:  # noqa: BLE001  no say/afconvert means skip this fixture
         return None
 
 

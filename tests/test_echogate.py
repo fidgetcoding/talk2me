@@ -355,12 +355,12 @@ def own_speech_matcher_cases() -> None:
     orch = object.__new__(Orchestrator)
     orch._echo_gate = object()  # any non-None: AEC mode
     orch._spoken_texts = [
-        "Quantum physics is the branch of physics that describes how nature "
-        "behaves at the smallest scales.",
-        "Keep an eye out for afternoon thunderstorms, which are common this "
-        "time of year.",
-        "Yeah, thunderstorms are the most common severe weather in NYC "
-        "during summer.",
+        ("Quantum physics is the branch of physics that describes how nature "
+        "behaves at the smallest scales."),
+        ("Keep an eye out for afternoon thunderstorms, which are common this "
+        "time of year."),
+        ("Yeah, thunderstorms are the most common severe weather in NYC "
+        "during summer."),
     ]
     orch.render = PlainRenderer()
 

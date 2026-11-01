@@ -97,7 +97,7 @@ def _installed_voices() -> list[str]:
     """Names from `say -v ?`, best first: Premium, then Enhanced, then stock."""
     try:
         out = subprocess.run(
-            ["say", "-v", "?"], capture_output=True, text=True, timeout=10
+            ["say", "-v", "?"], capture_output=True, text=True, timeout=10, check=False
         ).stdout
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return []
@@ -106,7 +106,7 @@ def _installed_voices() -> list[str]:
         m = re.match(r"^(.*?)\s{2,}[a-z]{2}[_-]", line)
         if m:
             names.append(m.group(1).strip())
-    rank = lambda n: 0 if "(Premium)" in n else 1 if "(Enhanced)" in n else 2  # noqa: E731
+    rank = lambda n: 0 if "(Premium)" in n else 1 if "(Enhanced)" in n else 2
     return sorted(dict.fromkeys(names), key=lambda n: (rank(n), n))
 
 

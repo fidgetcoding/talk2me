@@ -43,7 +43,7 @@ def restore_all() -> None:
     for fd, attrs in items:
         try:
             termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110  terminal restore is best effort on exit
             pass
 
 
@@ -116,7 +116,7 @@ class TypeLine:
         try:
             f = sys.stdin.fileno() if fd is None else fd
             return os.isatty(f)
-        except Exception:
+        except Exception:  # noqa: BLE001  no usable stdin means not a tty
             return False
 
     def start(self) -> None:
@@ -152,5 +152,5 @@ class TypeLine:
         if attrs is not None:
             try:
                 termios.tcsetattr(self._fd, termios.TCSADRAIN, attrs)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110  terminal restore is best effort on exit
                 pass

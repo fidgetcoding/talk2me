@@ -9,11 +9,10 @@ everything but live capture + UX feel is exercised right here.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import AsyncIterator
 
 import numpy as np
-
-from collections import deque
 
 from talk2me.events import (
     AgentEvent,

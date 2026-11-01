@@ -48,7 +48,9 @@ class KittenTTS:
         """
         if self._model is None:
             try:
-                from kittentts import KittenTTS as _KittenTTS  # lazy: keep import optional
+                from kittentts import (
+                    KittenTTS as _KittenTTS,  # lazy: keep import optional
+                )
             except ImportError as exc:  # pragma: no cover  (depends on env)
                 raise RuntimeError(
                     f"KittenTTS requires the 'kittentts' package — install with `{_PIP_HINT}`"

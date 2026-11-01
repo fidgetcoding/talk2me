@@ -185,7 +185,7 @@ class RetroRenderer:
             try:
                 self.console.file.write("\r\x1b[2K")
                 self.console.file.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110  the terminal may already be gone
                 pass
             self._ta_visible = False
 
@@ -199,7 +199,7 @@ class RetroRenderer:
             return
         try:
             is_tty = self.console.file.isatty()
-        except Exception:
+        except Exception:  # noqa: BLE001  the terminal may already be gone
             is_tty = False
         if not is_tty or self._inline:
             return
@@ -208,7 +208,7 @@ class RetroRenderer:
             if buffer:
                 self.console.file.write(f"⌨ {buffer[-160:]}")
             self.console.file.flush()
-        except Exception:
+        except Exception:  # noqa: BLE001  the terminal may already be gone
             return
         self._ta_visible = bool(buffer)
 
@@ -222,7 +222,7 @@ class RetroRenderer:
         self._live = self._panel = None
         try:
             live.stop()  # transient=True wipes the panel from the screen
-        except Exception:
+        except Exception:  # noqa: BLE001  the terminal may already be gone
             return
         if panel is not None:
             self.console.print(
@@ -496,7 +496,7 @@ class RetroRenderer:
             try:
                 live.start()
                 self._live = live
-            except Exception:
+            except Exception:  # noqa: BLE001  rich failure falls back to linear lines
                 self._live = self._panel = None  # fall back to linear lines
         if self._panel is not None:
             self._panel.add(name, detail)
@@ -519,7 +519,7 @@ class RetroRenderer:
         try:
             lexer = Syntax.guess_lexer(detail or name, body)
             inner = Syntax(body, lexer, background_color="default", word_wrap=True)
-        except Exception:
+        except Exception:  # noqa: BLE001  a lexer failure falls back to plain text
             inner = Text(body, style="detail")
         title = Text.assemble((name, "chip"))
         if detail:

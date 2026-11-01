@@ -52,7 +52,7 @@ async def main() -> int:
 
     try:
         await asyncio.wait_for(consume(), timeout=90)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("\n[timeout] no TurnComplete in 90s")
     finally:
         await backend.close()

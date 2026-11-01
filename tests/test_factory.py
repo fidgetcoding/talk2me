@@ -276,7 +276,7 @@ def test_parse_permission_posture() -> bool:
         and auto.permission_mode == "bypassPermissions"
         and auto.voice_approval is False
         # The denylist survives bypass — it's the load-bearing guardrail.
-        and list(DEFAULT_DISALLOWED_TOOLS)[0] in auto.disallowed_tools
+        and next(iter(DEFAULT_DISALLOWED_TOOLS)) in auto.disallowed_tools
         # Typed input keeps its old default; the flag still turns the gate on.
         and text.permission_mode == "bypassPermissions"
         and text_gated.voice_approval is True

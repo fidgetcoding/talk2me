@@ -62,7 +62,7 @@ class ParakeetMLXSTT:
             os.environ["HF_HUB_OFFLINE"] = "1"
             try:
                 self._model = from_pretrained(self._model_name)
-            except Exception:
+            except Exception:  # noqa: BLE001  any offline miss retries online
                 if prior is None:
                     os.environ.pop("HF_HUB_OFFLINE", None)
                 else:

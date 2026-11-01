@@ -62,13 +62,7 @@ def test_overflow() -> None:
     rest, chunk = _drain_overflow(short)
     check("overflow: short buffer untouched", chunk is None and rest == short)
 
-    numbers = ", ".join(
-        ["one", "two", "three", "four", "five", "six", "seven", "eight",
-         "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-         "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
-         "twenty-one", "twenty-two", "twenty-three", "twenty-four",
-         "twenty-five", "twenty-six", "twenty-seven", "twenty-eight"]
-    ) + ", "
+    numbers = "one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty-two, twenty-three, twenty-four, twenty-five, twenty-six, twenty-seven, twenty-eight" + ", "
     rest, chunk = _drain_overflow(numbers)
     ok = (
         chunk is not None

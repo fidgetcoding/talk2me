@@ -52,11 +52,11 @@ import os
 import re
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-__all__ = ["session_store_path", "save_session", "load_last_session"]
+__all__ = ["load_last_session", "save_session", "session_store_path"]
 
 _STORE_FILENAME = "last-session.json"
 _DEFAULT_HOME = "~/.talk2me"
@@ -121,7 +121,7 @@ def save_session(
         "session_id": session_id,
         "cwd": cwd,
         "model": model,
-        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "saved_at": datetime.now(UTC).isoformat(),
     }
     data = json.dumps(payload, indent=2, ensure_ascii=False)
 

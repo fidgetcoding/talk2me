@@ -45,7 +45,7 @@ def main() -> int:
             fn()
         except ValueError:
             results.append((label, True))
-        except Exception:
+        except Exception:  # noqa: BLE001  anything but ValueError is the failure under test
             results.append((label, False))
         else:
             results.append((label, False))

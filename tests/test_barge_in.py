@@ -240,9 +240,9 @@ async def echo_guard_case() -> None:
 
         calls = {"n": 0}
 
-        def gate(audio, sr, _ok=gate_ok):
-            calls["n"] += 1
-            return True if calls["n"] == 1 else _ok  # 1st = the question
+        def gate(audio, sr, _ok=gate_ok, _calls=calls):
+            _calls["n"] += 1
+            return True if _calls["n"] == 1 else _ok  # 1st = the question
 
         backend = GuardBackend()
         orch = Orchestrator(
@@ -258,10 +258,10 @@ async def echo_guard_case() -> None:
             speech_check=gate,
         )
 
-        async def _release() -> None:
+        async def _release(_backend=backend) -> None:
             await asyncio.sleep(1.2)
-            if backend.interrupts == 0:
-                await backend._q.put(TurnComplete(text="Counting"))
+            if _backend.interrupts == 0:
+                await _backend._q.put(TurnComplete(text="Counting"))
 
         rel = asyncio.create_task(_release())
         await asyncio.wait_for(orch.run(), timeout=15)
