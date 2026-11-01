@@ -534,7 +534,8 @@ def _collect_vocab(
     try:
         # O_NOFOLLOW: refuse to open through a symlink even if it appeared between
         # the lstat above and this open (TOCTOU hardening).
-        fd = os.open(expanded, os.O_RDONLY | os.O_NOFOLLOW)
+        # (Windows has no O_NOFOLLOW; the lstat above is the check there.)
+        fd = os.open(expanded, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(fd, encoding="utf-8") as fh:
             # Bounded read: never pull more than the size cap into memory even if
             # the file grew or has no newlines (a single unbroken "line").
@@ -958,6 +959,11 @@ async def _run_text(cfg: Config) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    # A Windows pipe defaults to a code page with no emoji. A replaced character
+    # beats a crash halfway through a sentence.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     try:
         while True:
             cfg = _parse_args(args)

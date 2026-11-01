@@ -11,8 +11,7 @@ Run:  ./.venv/bin/python -m tests.test_typeline
 
 import asyncio
 import os
-import pty
-import termios
+import sys
 
 from talk2me.typeline import LineEditor, TypeLine
 
@@ -65,6 +64,9 @@ def test_editor() -> None:
 
 
 async def test_pty_roundtrip() -> None:
+    import pty
+    import termios
+
     master, slave = pty.openpty()
     loop = asyncio.get_running_loop()
     submits: list[str] = []
@@ -112,7 +114,11 @@ async def test_pty_roundtrip() -> None:
 
 async def main() -> int:
     test_editor()
-    await test_pty_roundtrip()
+    if sys.platform == "win32":
+        # No ptys or cbreak here: the plain line reader takes over, so make sure it does.
+        check("Windows falls back to the line reader", not TypeLine.available())
+    else:
+        await test_pty_roundtrip()
     print(f"\n{'ALL PASS' if FAILS == 0 else f'{FAILS} FAILURES'}")
     return FAILS
 

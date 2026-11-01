@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import uuid
 from collections.abc import AsyncIterator
 
@@ -235,6 +236,8 @@ class ClaudeCodeBackend:
         if self._extra_env:
             env = {**os.environ, **self._extra_env}
         argv = self._argv()
+        # Windows only runs .exe by bare name, and npm installs claude as claude.cmd.
+        argv[0] = shutil.which(argv[0]) or argv[0]
         if self._sandbox_settings is not None:
             # Raises SandboxUnavailable rather than ever running unsandboxed.
             self._sandbox = Sandbox(self._sandbox_settings)

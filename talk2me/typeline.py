@@ -25,9 +25,14 @@ from __future__ import annotations
 import codecs
 import os
 import sys
-import termios
 import threading
-import tty
+
+try:
+    import termios
+    import tty
+except ImportError:  # Windows: no cbreak here, so the plain line reader takes over
+    termios = None
+    tty = None
 
 # fd -> saved termios attrs, drained by restore_all() on any exit path.
 _SAVED: dict[int, list] = {}
@@ -113,6 +118,8 @@ class TypeLine:
 
     @staticmethod
     def available(fd: int | None = None) -> bool:
+        if termios is None:
+            return False
         try:
             f = sys.stdin.fileno() if fd is None else fd
             return os.isatty(f)

@@ -613,7 +613,7 @@ Everywhere:
 - There is no `say` on Linux, and the default voice **degrades to silence** rather than erroring. Pick a voice explicitly: `--tts kitten` (local neural voice, `pip install -e ".[kitten]"`) or `--tts null` (answers stay on screen).
 - Whisper transcription and the `--text` mode are plain CPU Python and should work as-is.
 
-**Windows** — untested, no built-in voice path. `--text` mode should work; everything else is unverified.
+**Windows**: CI now runs every headless suite on a Windows runner, plus the real `python -m talk2me` through real pipes with a stand-in `claude.cmd`. That turned up real bugs, now fixed: it crashed importing a Unix-only terminal module, couldn't find an npm-installed `claude`, and died on `--vocab-file`. So `--text` works there. What it doesn't prove is anything about a live mic. The runner has no sound hardware, nobody has talked to it on Windows, and there's no built-in voice (`--tts kitten` should work; `--text` is the path I'd trust). `--sandbox` refuses to start on Windows.
 
 ## Tests
 
@@ -633,7 +633,7 @@ python -m tests.manual_denylist_check # the denylist against the real `claude`, 
 python -m tests.manual_stt_bench      # the ears race: real latency, synthetic voices, from files
 ```
 
-That's the highlight reel — 25 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
+That's the highlight reel — 26 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push, and on Windows.
 
 What those can't tell you is how well it actually hears, because the fake transcriber always gets it right. That part got measured separately, on real audio from files: see [the numbers](#the-numbers-and-how-much-to-trust-them), and the caveat that goes with them. `manual_denylist_check` is worth rerunning after a `claude` upgrade, since how the rules match is the CLI's call, not mine. Nothing in any of this opens your mic or speakers.
 
@@ -646,7 +646,7 @@ No. It only speaks the assistant's actual sentences. The boring machinery stays 
 Because the interactive UI has no programmatic way in, and screen-scraping it is exactly the brittleness this project exists to avoid. The structured pipe is the reliable path — and for the "I just want the real UI, plus sound" case, [hook mode](#hear-claude-code-itself-hook-mode) does that.
 
 **Does it work on Windows or Linux?**
-The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voice that runs anywhere. On Linux you also need the system PortAudio library for the mic — see [Requirements](#requirements). Fair warning: the Linux mic loop is CI-tested, not human-tested.
+The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voice that runs anywhere. Windows passes the headless tests and `--text`, and nobody has tried a mic on it. On Linux you also need the system PortAudio library for the mic — see [Requirements](#requirements). Fair warning: the Linux mic loop is CI-tested, not human-tested.
 
 **Why not just type?**
 Because my hands are busy and my mouth isn't.

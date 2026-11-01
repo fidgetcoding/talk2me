@@ -277,8 +277,9 @@ def test_pure() -> None:
     check("profile keeps audio out", "audio" in profile and "/usr/bin/afplay" in profile)
     loose = seatbelt_profile(SandboxSettings(project="/var/tmp/p", home="/var/tmp/h", allow_localhost=True), 1, "/var/tmp/s")
     check("--sandbox-localhost opens loopback", '(allow network-outbound (remote ip "localhost:*"))' in loose)
-    tricky = seatbelt_profile(SandboxSettings(project='/var/tmp/a"b(c', home="/var/tmp/h"), 1, "/var/tmp/s")
-    check("odd paths stay quoted", '/a\\"b(c"' in tricky)
+    if sys.platform != "win32":
+        tricky = seatbelt_profile(SandboxSettings(project='/var/tmp/a"b(c', home="/var/tmp/h"), 1, "/var/tmp/s")
+        check("odd paths stay quoted", '/a\\"b(c"' in tricky)
 
     argv = bwrap_argv(settings, "/var/tmp/s", 18443)
     check("bwrap shares nothing", "--unshare-all" in argv and "--share-net" not in argv)

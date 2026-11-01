@@ -119,6 +119,9 @@ jobs:
       - name: test_mlx_whisper
         run: python -m tests.test_mlx_whisper
 
+      - name: test_cli_smoke
+        run: python -m tests.test_cli_smoke
+
       - name: test_speech_pipeline
         run: python -m tests.test_speech_pipeline
 
@@ -129,6 +132,33 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           python -m tests.test_sandbox
+
+  windows:
+    name: Headless tests (Windows)
+    runs-on: windows-latest
+    env:
+      # GitHub's Windows console defaults to a code page that can't print the
+      # app's emoji. A real Windows Terminal handles them; the runner needs telling.
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[webrtc]"
+      - name: Every headless suite
+        shell: bash
+        run: |
+          failed=0
+          for t in tests/test_*.py; do
+            name=$(basename "$t" .py)
+            echo "::group::$name"
+            python -m "tests.$name" || { echo "FAILED: $name"; failed=$((failed+1)); }
+            echo "::endgroup::"
+          done
+          echo "$failed suites failed"
+          exit "$failed"
 
   sandbox-linux:
     name: OS sandbox, real claude CLI (Linux)
