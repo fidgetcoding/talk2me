@@ -232,7 +232,7 @@ async def test_hostile_script() -> None:
         await box.start()
         try:
             port = box.proxy.port if sys.platform == "darwin" else sandbox._LINUX_PROXY_PORT
-            victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])  # noqa: ASYNC220
             listener = socket.socket(socket.AF_UNIX)
             sock_path = str(root / "outside.sock")
             listener.bind(sock_path)
