@@ -429,20 +429,20 @@ Asked for `whisper-gpu` where it can't run? It says so in one line and uses whis
 
 I raced them: 24 clips, 8 coding sentences read by 3 voices ("Refactor useAuthStore so the orchestrator stops polling"), on one M2 Max.
 
-| Engine | Median per clip | Worst | Word errors | What its misses look like |
-|---|---|---|---|---|
-| **whisper base.en, CPU (the default)** | **0.46s** | 0.60s | 12.5% | "use all stores", "piedest", "Superbase" |
-| whisper large-v3-turbo, CPU | 6.17s | 6.43s | 11.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
-| large-v3-turbo, GPU (`whisper-gpu`) | ~0.55s | 0.7s, 1.1s when cold | 13.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
-| parakeet v2, GPU | 0.11s | 0.27s | 13.2% | "use auth store", "super base" |
-| parakeet v3, GPU | 0.12s | 0.13s | 14.5% | "use aut store", "py test" |
+| Engine | Median per clip | Worst | Word errors | ...with unrelated terms | ...with terms that match | What its misses look like |
+|---|---|---|---|---|---|---|
+| **whisper base.en, CPU (the default)** | **0.46s** | 0.60s | 12.5% | 13.2% | 7.3% | "use all stores", "piedest", "Superbase" |
+| whisper large-v3-turbo, CPU | 6.17s | 6.43s | 11.2% | not run | not run | "use AuthStore", "PyTest", "SupaBaseEdge" |
+| large-v3-turbo, GPU (`whisper-gpu`, optional) | ~0.55s | 0.7s, 1.1s when cold | 13.2% | 10.9% | 6.6% | "use AuthStore", "PyTest", "SupaBaseEdge" |
+| parakeet v2, GPU (optional) | 0.11s | 0.27s | 13.2% | no vocab | no vocab | "use auth store", "super base" |
+| parakeet v3, GPU | 0.12s | 0.13s | 14.5% | no vocab | no vocab | "use aut store", "py test" |
 
 That's data, not a verdict, and here's the fine print:
 
 - **Those voices are synthetic.** macOS `say` reading into a file, one Mac. `python -m tests.manual_stt_bench` reruns the race if you want your own numbers. The latency holds up. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it.
 - **Those speeds are on a quiet Mac.** With other jobs grinding in the background, the same race came back around 1s for `whisper-gpu`, 0.66s for base.en and 0.31s for parakeet. The word errors didn't move.
 - **Word-error rate can't see meaning.** It scores "use AuthStore" and "use all stores" the same way, and only one of those points a coding agent at the right thing. Read the misses column too.
-- **Vocab moves the number.** Run through the engine, `whisper-gpu` drops to 10.9% with some unrelated terms in its prompt, and to 6.6% when the prompt knows the words in the test. That second one is a best case: I handed it the answers. base.en has its own version of this in hotwords, and it didn't get the same test, so don't compare those.
+- **Vocab moves the number, on both Whispers.** Same 24 clips, same terms: base.en takes them as hotwords, `whisper-gpu` as a prompt. Terms that match the sentences take base.en to 7.3% and `whisper-gpu` to 6.6%. That's a best case, because I handed them the answers. Terms that don't match, closer to everyday life, nudge base.en to 13.2% and `whisper-gpu` to 10.9%. Terms cost base.en a little speed (medians of 0.47 to 0.58s across two runs), and `whisper-gpu` held at 0.52 to 0.58s.
 
 More engines can slide in the same way. Everything hides behind one contract, so adding one is a single file, and your muscle memory doesn't change.
 

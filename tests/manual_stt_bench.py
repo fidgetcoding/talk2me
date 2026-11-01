@@ -36,8 +36,10 @@ SENTENCES = [
     "Switch the default model to large v3 turbo and compare the latency on my Mac.",
 ]
 VOICES = ["Ava (Premium)", "Samantha", "Daniel"]
-# A prompt that knows the test's words: the best case, not the typical one.
+# Terms that are in the test sentences: the best case, not the typical one.
 VOCAB = ["useAuthStore", "orchestrator.py", "pytest", "Supabase", "Kubernetes", "Zod", "TypeScript"]
+# Terms that aren't: closer to what live context seeding usually carries.
+CONTEXT = ["webhook_handler", "magma.js", "sync_helpers", "Morgen", "useThemeStore"]
 
 
 def _render(folder: str) -> list[tuple[str, np.ndarray]]:
@@ -100,15 +102,24 @@ async def _race(label: str, stt, clips: list[tuple[str, np.ndarray]]) -> None:
         print(f"    {text}")
 
 
+def _with_context(stt):
+    stt.set_context(CONTEXT)
+    return stt
+
+
 async def main() -> None:
     with tempfile.TemporaryDirectory() as folder:
         clips = _render(folder)
     print(f"{len(clips)} clips, {sum(len(c[1]) for c in clips) / 16000:.0f} s of speech")
+    # Same terms on both Whisper engines: hotwords on the CPU, a prompt on the GPU.
     await _race("whisper base.en, CPU", WhisperSTT(), clips)
+    await _race("whisper base.en, CPU, unrelated context", _with_context(WhisperSTT()), clips)
+    await _race("whisper base.en, CPU, knows the words", WhisperSTT(vocab=VOCAB), clips)
     if "--cpu-turbo" in sys.argv:
         await _race("whisper large-v3-turbo, CPU", WhisperSTT(model="large-v3-turbo"), clips)
     await _race("large-v3-turbo, GPU", MLXWhisperSTT(), clips)
-    await _race("large-v3-turbo, GPU, prompt knows the words", MLXWhisperSTT(vocab=VOCAB), clips)
+    await _race("large-v3-turbo, GPU, unrelated context", _with_context(MLXWhisperSTT()), clips)
+    await _race("large-v3-turbo, GPU, knows the words", MLXWhisperSTT(vocab=VOCAB), clips)
     await _race("parakeet v2, GPU", ParakeetMLXSTT(), clips)
 
 
