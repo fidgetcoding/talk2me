@@ -59,8 +59,9 @@ read any file you can. Trim it if that bothers you: `--deny-tool 'Bash(npm run:*
 
 So on its own, the gate is the protection, and it's only as good as the person
 answering it. It can't tell your voice from anyone else's, so someone in the room
-can say "approve" too. `--voice-lock` narrows that where its calibration holds, but
-on a laptop mic it often only observes.
+can say "approve" too. `--voice-lock` narrows that, measured on recordings rather than
+a live room (README), and it has a hole: clips under 0.8 seconds always pass, so a
+quick "approve" from someone else still lands.
 
 ## The real wall: `--sandbox`
 

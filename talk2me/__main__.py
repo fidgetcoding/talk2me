@@ -621,6 +621,11 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
             "voice-lock couldn't load its model — running unlocked"
         )
         cfg.voice_lock = False
+    if getattr(getattr(speech_check, "voicelock", None), "needs_reenroll", False):
+        renderer.status_note(
+            "voice-lock got much better at telling voices apart, but your voiceprint "
+            "predates that: run t2m --enroll-voice to get it"
+        )
     lock_healthy = (
         cfg.voice_lock
         and speech_check is not None

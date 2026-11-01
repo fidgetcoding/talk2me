@@ -7,9 +7,13 @@ the part that makes a thin global margin workable — CALIBRATES the accept
 threshold per install: it measures your self-similarity AND the similarity of
 the agent's own TTS voice, then places the bar between them.
 
-Recipe pinned by live spike (2026-07-19): kaldi-native-fbank 80-mel fbank on
-int16-scale samples (model metadata: normalize_samples=0), dither 0, and
-crucially NO cepstral mean normalization — CMN inverts this model's metric.
+Recipe: kaldi-native-fbank 80-mel fbank on int16-scale samples (model metadata:
+normalize_samples=0), dither 0, then cepstral mean normalization. CMN is what
+this model was trained on. A spike on 2026-07-19 concluded it "inverted the
+metric", and for three versions the lock ran without it: on 40 real speakers that
+was an 18.8% equal-error rate against 2.1% with it, and it's why the lock so often
+fell back to observing. Voiceprints saved before the fix keep their old recipe
+(FEATURES_LEGACY) until the owner re-enrolls, because the two aren't comparable.
 
 Utterances shorter than MIN_VERIFY_S embed unreliably and PASS unlocked (a
 "wake up" must never be rejected); the Silero speech gate still applies.
@@ -29,6 +33,7 @@ MODEL_URL = (
     "speaker-recongition-models/wespeaker_en_voxceleb_CAM%2B%2B.onnx"
 )  # yes, "recongition" — the tag is spelled that way upstream
 
+FEATURES_LEGACY, FEATURES_CURRENT = 1, 2  # no CMN, CMN
 MIN_VERIFY_S = 0.8  # below this, verification is unreliable -> pass-through
 DEFAULT_THRESHOLD = 0.60
 # Sanity bounds only — the calibrated midpoint must be free to follow the
@@ -94,6 +99,12 @@ class VoiceLock:
         self.voiceprint: np.ndarray | None = None
         self.threshold: float = DEFAULT_THRESHOLD
         self.meta: dict = {}
+        self.features_version = FEATURES_CURRENT
+
+    @property
+    def needs_reenroll(self) -> bool:
+        """Loaded a voiceprint made with the old, weaker recipe."""
+        return self.voiceprint is not None and self.features_version < FEATURES_CURRENT
 
     # ---- model -----------------------------------------------------------
 
@@ -123,7 +134,6 @@ class VoiceLock:
         n = fb.num_frames_ready
         if n == 0:
             return np.zeros((1, 80), dtype=np.float32)
-        # NO CMN — spike-verified: normalization inverts this model's metric.
         return np.stack([fb.get_frame(i) for i in range(n)]).astype(np.float32)
 
     @staticmethod
@@ -140,7 +150,10 @@ class VoiceLock:
 
     def embed(self, audio: np.ndarray) -> np.ndarray:
         audio = self._trim(np.asarray(audio, dtype=np.float32))
-        feats = self._fbank(audio)[None, ...]
+        feats = self._fbank(audio)
+        if self.features_version >= FEATURES_CURRENT:
+            feats = feats - feats.mean(axis=0, keepdims=True)
+        feats = feats[None, ...]
         emb = self._session().run(None, {"feats": feats})[0][0]
         return emb / (np.linalg.norm(emb) + 1e-9)
 
@@ -150,10 +163,12 @@ class VoiceLock:
         self,
         clips: list[np.ndarray],
         impostor_clips: list[np.ndarray] | None = None,
+        features_version: int = FEATURES_CURRENT,
     ) -> dict:
         """Build + persist the voiceprint. `impostor_clips` (the agent's own
         TTS voice, synthesized at enrollment) calibrate the threshold: the
         bar lands between your self-similarity and the closest impostor."""
+        self.features_version = features_version
         embs = [self.embed(c) for c in clips]
         # Outlier rejection: ONE broken capture (clipped mic, a cough, a
         # rushed take) must not poison the whole print — live-hit: six clips
@@ -200,6 +215,9 @@ class VoiceLock:
                 threshold = max(lo + 0.35 * (hi - lo), lo + 0.03)
                 threshold = min(threshold, hi - 0.02)  # owner always passes
         threshold = float(np.clip(threshold, THRESHOLD_FLOOR, THRESHOLD_CEIL))
+        # The floor must not undo "the owner always passes" on a quiet-voiced print.
+        if self_sims:
+            threshold = min(threshold, min(self_sims) - 0.02)
         self.voiceprint, self.threshold = vp, threshold
         self.meta = {
             "self_sims": [round(s, 3) for s in self_sims],
@@ -215,7 +233,7 @@ class VoiceLock:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         np.savez(
             path, voiceprint=vp, threshold=threshold,
-            meta=json.dumps(self.meta),
+            meta=json.dumps(self.meta), features_version=features_version,
         )
         return self.meta
 
@@ -226,6 +244,9 @@ class VoiceLock:
             return False
         self.voiceprint = data["voiceprint"]
         self.threshold = float(data["threshold"])
+        self.features_version = (
+            int(data["features_version"]) if "features_version" in data.files else FEATURES_LEGACY
+        )
         try:
             self.meta = json.loads(str(data["meta"]))
         except Exception:  # noqa: BLE001  corrupt metadata must not block a valid lock

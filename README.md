@@ -328,6 +328,8 @@ Working with people? Say **"team session"** and the lock opens — everyone talk
 
 (Speakers talk-over used to ride on the voiceprint; it doesn't anymore — the [echo gate](#interrupting-it) covers speakers for everyone, enrolled or not, deterministically. Voice-lock is purely about *who* gets listened to.)
 
+One thing it won't stop: anything under 0.8 seconds always passes, because a fast "wake up" must never get eaten. So a short "approve" from someone else still lands.
+
 Honesty corner: the enrollment calibrates its accept-bar against the agent's own TTS voice (the impostor that matters most) and warns you if the margin comes out thin. Speaker verification is probabilistic — a very similar voice may occasionally slip through or a bad mic day may make it doubt you. Re-enroll any time with `t2m --enroll-voice`; kill it any time with `--no-voice-lock` or "team session".
 
 ## Hear Claude Code itself (hook mode)
@@ -581,7 +583,7 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **Phone mode on a real iPhone.** It's still never been driven from real hardware or a real Blink tunnel. Everything short of that now runs in CI: the real page in Chromium with an iPhone's screen and user agent, a fake mic fed from a file, through a real `ssh -L` tunnel into real base.en, the reply playing through the page's own code, plus reloads, wrong tokens, a talk-over, and a flaky network from a simulated phone. Safari's own engine (WebKit's Linux build) loads the page, takes the tap and connects, but it has no fake mic to feed, so it sent zero audio frames and the mic path has never run in WebKit. What only an iPhone can answer: iOS's audio session and autoplay rules, its echo cancellation, and what a locked screen or an incoming call does.
 - **`whisper-gpu` on a real voice.** It has only heard files so far: the synthetic-voice race, spoken-command clips, and those same files replayed through the full loop with a fake mic, spoken "approve" and "deny" included. It hasn't been through a real mic in a real room, which is one reason it's opt-in.
 - **Voice commands in other languages are young.** Spanish, French, German, Italian and Portuguese work now, typed or spoken, with `--language`. On files read by synthetic voices, single command words landed 68 of 80 times on `--whisper-model base` and 72 of 80 on `whisper-gpu` (it was 35 of 80 before I started feeding the engines those words as hints). Very short words are the hard part: "oui" and "no" still get lost, and a miss just means it asks again. No real accents tested, nothing past those five languages, and its own spoken replies ("Approve or deny?") are still English.
-- **Voice-lock is young.** It ships (see [Voice-lock](#voice-lock-only-you)) but speaker verification is probabilistic, and on some mic/room combos the calibration comes out too weak to enforce — the lock then runs in observe mode (scores logged, nothing blocked) rather than risk going deaf on its own owner.
+- **Voice-lock on a real laptop.** For three versions this mostly just observed, because it kept failing to tell people apart. I'd blamed laptop mics. It turned out I'd been feeding the speaker model the wrong features: it was trained with mean-normalized input, and an early spike wrongly talked me out of that. Fixed. On 40 real speakers from recordings (LibriSpeech), through a simulated laptop room, it went from enforcing for 4 of them to 39, and from letting 93.5% of strangers through to 6.3%, while rejecting its owner 9.2% of the time, mostly on 1 to 1.5 second clips. On the clean recordings: 2.2% of strangers, 0.5% of owners (`python -m tests.manual_voicelock_bench --data <folder>`). A simulated room isn't a real one, and it still hasn't met a real laptop mic. If you enrolled before this fix, your old print keeps working the old way until you run `t2m --enroll-voice`, and it tells you so at launch.
 
 ## The road here
 
@@ -668,7 +670,7 @@ The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voic
 Because my hands are busy and my mouth isn't.
 
 **Is this going to hear my roommate and start talking to Claude?**
-Typing, taps, coughs, and fan hum — no: a real speech classifier gates every utterance now. An actual human voice at conversation volume — yes, it can't tell your roommate from you yet. Telling voices apart (enroll yours once, everyone else stops existing) is the planned v3. Until then: "pause listening", or `--energy-threshold` up. And since the gate can't tell voices apart either, your roommate can say "approve" too, so don't run this next to a prankster.
+Typing, taps, coughs, and fan hum — no: a real speech classifier gates every utterance now. An actual human voice at conversation volume — yes, unless you've enrolled [voice-lock](#voice-lock-only-you), which tells voices apart. Otherwise: "pause listening", or `--energy-threshold` up. And since the gate can't tell voices apart either, your roommate can say "approve" too, so don't run this next to a prankster.
 
 **Can the brain be something other than Claude?**
 Yes — `--agent codex` runs OpenAI's Codex CLI, and Kimi / GLM / DeepSeek plug in through their official Anthropic-compatible endpoints (`t2m --setup` walks you through it). Same loop, same feed, different mind.

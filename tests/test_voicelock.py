@@ -12,6 +12,7 @@ refused with the calibrated threshold. This is the discrimination proof; CI
 Run:  ./.venv/bin/python -m tests.test_voicelock
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -107,6 +108,51 @@ def test_logic_with_stub_embedder() -> None:
     os.environ["TALK2ME_VOICEPRINT"] = "/nonexistent-t2m-test-voiceprint"
 
 
+def test_feature_recipes() -> None:
+    """Voiceprints from before the fix keep their recipe until the owner re-enrolls:
+    scoring an old print with new features would be nonsense."""
+    from talk2me.voicelock import FEATURES_CURRENT, FEATURES_LEGACY, VoiceLock
+
+    class StubSession:
+        def __init__(self) -> None:
+            self.fed = None
+
+        def run(self, _outputs, inputs):
+            self.fed = inputs["feats"]
+            return [np.ones((1, 4), dtype=np.float32)]
+
+    audio = 0.2 * np.sin(np.arange(16000) / 3).astype(np.float32)
+    lock = VoiceLock(path="/nonexistent-model")
+    lock._sess = StubSession()
+    lock.features_version = FEATURES_CURRENT
+    lock.embed(audio)
+    _report("current recipe mean-normalizes", abs(float(lock._sess.fed.mean(axis=1).max())) < 1e-3)
+    lock.features_version = FEATURES_LEGACY
+    lock.embed(audio)
+    _report("old recipe stays as it was", abs(float(lock._sess.fed.mean())) > 1.0)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["TALK2ME_VOICEPRINT"] = os.path.join(tmp, "vp.npz")
+        np.savez(
+            os.environ["TALK2ME_VOICEPRINT"], voiceprint=np.array([1.0, 0.0]), threshold=0.6,
+            meta=json.dumps({"degraded": False}),
+        )
+        old = VoiceLock(path="/nonexistent-model")
+        _report(
+            "a pre-fix voiceprint loads on its old recipe",
+            old.load() is True and old.features_version == FEATURES_LEGACY and old.needs_reenroll,
+        )
+        fresh = VoiceLock(path="/nonexistent-model")
+        fresh.embed = lambda a: np.array([1.0, 0.0]) if float(np.mean(a)) >= 0 else np.array([0.0, 1.0])
+        fresh.enroll([np.ones(16000, dtype=np.float32) * v for v in (0.5, 0.6, 0.7)])
+        reloaded = VoiceLock(path="/nonexistent-model")
+        _report(
+            "re-enrolling moves it to the current recipe",
+            reloaded.load() is True and reloaded.features_version == FEATURES_CURRENT and not reloaded.needs_reenroll,
+        )
+    os.environ["TALK2ME_VOICEPRINT"] = "/nonexistent-t2m-test-voiceprint"
+
+
 def test_gate_solo_team_switch() -> None:
     from talk2me.speechcheck import SileroSpeechCheck
 
@@ -181,6 +227,7 @@ def test_real_model_discrimination() -> None:
 def main() -> int:
     os.environ.setdefault("TALK2ME_VOICEPRINT", "/nonexistent-t2m-test-voiceprint")
     test_logic_with_stub_embedder()
+    test_feature_recipes()
     test_gate_solo_team_switch()
     test_real_model_discrimination()
     ok = all(RESULTS)
