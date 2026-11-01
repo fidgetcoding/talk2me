@@ -433,13 +433,14 @@ I wanted the best listener I could get, so I raced them: 24 clips, 8 coding sent
 |---|---|---|---|---|
 | whisper base.en, CPU (the old default) | 0.46s | 0.60s | 12.5% | "use all stores", "piedest", "Superbase" |
 | whisper large-v3-turbo, CPU | 6.17s | 6.43s | 11.2% | Good ears, and you'd die waiting |
-| **large-v3-turbo, GPU (the new default)** | **~0.55s** | 0.67s | 13.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
+| **large-v3-turbo, GPU (the new default)** | **~0.55s** | 0.7s, 1.1s when cold | 13.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
 | parakeet v2, GPU | 0.11s | 0.27s | 13.2% | "use auth store", "super base" |
 | parakeet v3, GPU | 0.12s | 0.13s | 14.5% | "use aut store", "py test" |
 
 Now the fine print, because a table like that can lie to you:
 
-- **Those voices are synthetic.** macOS `say` reading into a file, one Mac, one run of the race. The latency numbers are solid. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it. Nobody has fully field-tested these ears with an actual voice yet (see [Not done yet](#not-done-yet)).
+- **Those voices are synthetic.** macOS `say` reading into a file, one Mac. `python -m tests.manual_stt_bench` reruns the race if you want your own numbers. The latency numbers are solid. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it. Nobody has fully field-tested these ears with an actual voice yet (see [Not done yet](#not-done-yet)).
+- **Those speeds are on a quiet Mac.** With other jobs grinding in the background, the same race came back around 1s for the GPU ears, 0.66s for base.en and 0.31s for parakeet. The word errors didn't move.
 - **Word-error rate undersells the GPU ears.** It scores "use AuthStore" as a miss. A coding agent knows what you meant. "use all stores" sends it hunting for something that doesn't exist. That difference is why turbo won despite a worse score than base.en.
 - **Vocab is where it pulls away.** Run through the actual engine, turbo drops to 10.9% with just some unrelated terms in its prompt, and to 6.6% when the prompt knows the words in the test. That second number is a best case: I handed it the answers. But it's also what happens after the agent says `useAuthStore` to you, because talk2me feeds the names it just used into the ears.
 
@@ -561,7 +562,7 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **The echo-gate fallback is young.** On macOS the native canceller carries speakers talk-over now, but wherever the fallback gate runs (Linux, `--aec gate`), its residual threshold was tuned on synthetic fixtures plus one laptop — a very reverberant room may need the bar moved. `--debug` prints the residual on every rejected onset so tuning is evidence, not vibes.
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 - **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
-- **The new ears on a real voice.** The GPU Whisper default has only heard files so far: the synthetic-voice race, plus spoken-command clips. It hasn't been through a real mic in a real room. If it's worse than the numbers suggest, `--stt whisper` is one flag away, and I want to hear about it.
+- **The new ears on a real voice.** The GPU Whisper default has only heard files so far: the synthetic-voice race, spoken-command clips, and those same files replayed through the full loop with a fake mic, spoken "approve" and "deny" included. It hasn't been through a real mic in a real room. If it's worse than the numbers suggest, `--stt whisper` is one flag away, and I want to hear about it.
 - **Voice commands are English-only.** `--language es` transcribes your Spanish fine, but "pause"/"wake up"/"approve" still only land in English.
 - **Voice-lock is young.** It ships (see [Voice-lock](#voice-lock-only-you)) but speaker verification is probabilistic, and on some mic/room combos the calibration comes out too weak to enforce — the lock then runs in observe mode (scores logged, nothing blocked) rather than risk going deaf on its own owner.
 
@@ -627,6 +628,7 @@ python -m tests.test_continuation   # "wait, I wasn't done" stitching
 python -m tests.test_flow           # run-on speech chunking + unfinished-sentence holds
 python -m tests.manual_backend_check  # one real cheap turn against Claude Code
 python -m tests.manual_denylist_check # the denylist against the real `claude`, no model, no cost
+python -m tests.manual_stt_bench      # the ears race: real latency, synthetic voices, from files
 ```
 
 That's the highlight reel — 22 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
