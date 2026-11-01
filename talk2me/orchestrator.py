@@ -248,7 +248,11 @@ class Orchestrator:
         # Duck-typed: engines without warmup() lazy-load on first use.
         if hasattr(self.stt, "warmup"):
             self.render.loading_ears()
+            # Duck-typed too: engines that may download or fall back say so.
+            if hasattr(self.stt, "set_notifier"):
+                self.stt.set_notifier(self.render.status_note)
             await asyncio.to_thread(self.stt.warmup)
+            self.cfg.stt = getattr(self.stt, "engine_name", self.cfg.stt)
         if self._speech_check is not None and hasattr(self._speech_check, "warmup"):
             # Load the speech classifier BEFORE the mic opens — its first call
             # must never add latency inside the barge monitor's cut decision.

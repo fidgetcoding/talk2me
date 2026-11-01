@@ -8,7 +8,10 @@ That containment is the whole point: no provider swap should ripple outward.
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import platform
+import sys
 
 from .config import Config
 from .protocols import STT, TTS, VAD, AgentBackend
@@ -48,16 +51,63 @@ def build_vad(cfg: Config) -> VAD:
     raise ValueError(f"unknown vad: {cfg.vad!r}")
 
 
+def mlx_whisper_supported() -> bool:
+    """Apple Silicon only. A Rosetta Python reports x86_64 here, correctly."""
+    return sys.platform == "darwin" and platform.machine() == "arm64"
+
+
+def mlx_whisper_installed() -> bool:
+    # find_spec, not import: the real import costs seconds and belongs on the
+    # engine's worker thread. An import that still fails later hits the
+    # engine's own fallback.
+    return importlib.util.find_spec("mlx_whisper") is not None
+
+
+def resolve_stt(requested: str, *, whisper_model_set: bool = False) -> tuple[str, str | None]:
+    """Turn the --stt value into a concrete engine, plus a one-line notice when
+    the user should know they didn't get what they'd expect.
+
+    Asking for a specific CPU model (--whisper-model) counts as asking for the
+    CPU engine: that flag means nothing to the others.
+    """
+    if requested == "auto" and whisper_model_set:
+        return "whisper", None
+    if requested == "auto" and not mlx_whisper_supported():
+        return "whisper", None
+    if requested not in ("auto", "mlx-whisper"):
+        return requested, None
+    if not mlx_whisper_supported():
+        return "whisper", "mlx-whisper needs Apple Silicon, using whisper on the CPU"
+    if not mlx_whisper_installed():
+        return "whisper", (
+            "GPU ears aren't installed (pip install mlx-whisper), using whisper on the CPU"
+        )
+    return "mlx-whisper", None
+
+
+def _build_whisper(cfg: Config) -> STT:
+    from .stt import WhisperSTT
+
+    # Vocab rides as faster-whisper hotwords (whole-utterance biasing);
+    # see the module docstring in stt/whisper.py for why not initial_prompt.
+    return WhisperSTT(
+        model=cfg.whisper_model,
+        vocab=cfg.vocab,
+        language=cfg.language,
+    )
+
+
 def build_stt(cfg: Config) -> STT:
     if cfg.stt == "whisper":
-        from .stt import WhisperSTT
+        return _build_whisper(cfg)
+    if cfg.stt == "mlx-whisper":
+        from .stt.mlx_whisper import MLXWhisperSTT
 
-        # Vocab rides as faster-whisper hotwords (whole-utterance biasing);
-        # see the module docstring in stt/whisper.py for why not initial_prompt.
-        return WhisperSTT(
-            model=cfg.whisper_model,
+        return MLXWhisperSTT(
+            model=cfg.mlx_whisper_model,
             vocab=cfg.vocab,
             language=cfg.language,
+            fallback=lambda: _build_whisper(cfg),
         )
     if cfg.stt == "parakeet":
         from .stt.parakeet import ParakeetMLXSTT
