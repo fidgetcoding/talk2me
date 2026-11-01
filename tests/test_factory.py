@@ -159,7 +159,7 @@ def test_build_stt_mlx_whisper() -> bool:
     # Same lazy contract as parakeet: CI has no MLX, and building must not care.
     import sys
 
-    stt = build_stt(Config(stt="mlx-whisper", vocab=["Lorecraft"], language="es"))
+    stt = build_stt(Config(stt="whisper-gpu", vocab=["Lorecraft"], language="es"))
     from talk2me.stt.mlx_whisper import MLXWhisperSTT
 
     ok = (
@@ -171,43 +171,68 @@ def test_build_stt_mlx_whisper() -> bool:
         and stt._language == "es"
         and isinstance(stt._make_fallback(), WhisperSTT)
     )
-    return _line("build_stt mlx-whisper", ok, f"stt={type(stt).__name__}")
+    return _line("build_stt whisper-gpu", ok, f"stt={type(stt).__name__}")
 
 
 def test_resolve_stt() -> bool:
-    real = factory.mlx_whisper_supported, factory.mlx_whisper_installed
+    real = factory.whisper_gpu_supported, factory.whisper_gpu_installed
 
     def on(supported: bool, installed: bool) -> None:
-        factory.mlx_whisper_supported = lambda: supported
-        factory.mlx_whisper_installed = lambda: installed
+        factory.whisper_gpu_supported = lambda: supported
+        factory.whisper_gpu_installed = lambda: installed
 
     try:
         on(True, True)
-        apple = factory.resolve_stt("auto")
-        apple_whisper = factory.resolve_stt("whisper")
-        apple_parakeet = factory.resolve_stt("parakeet")
-        apple_model = factory.resolve_stt("auto", whisper_model_set=True)
+        ready = factory.resolve_stt("whisper-gpu")
+        whisper = factory.resolve_stt("whisper")
+        parakeet = factory.resolve_stt("parakeet")
         on(True, False)
-        missing = factory.resolve_stt("auto")
-        missing_named = factory.resolve_stt("mlx-whisper")
+        missing = factory.resolve_stt("whisper-gpu")
         on(False, False)
-        other = factory.resolve_stt("auto")
-        other_named = factory.resolve_stt("mlx-whisper")
+        elsewhere = factory.resolve_stt("whisper-gpu")
     finally:
-        factory.mlx_whisper_supported, factory.mlx_whisper_installed = real
+        factory.whisper_gpu_supported, factory.whisper_gpu_installed = real
     ok = (
-        apple == ("mlx-whisper", None)
-        # A saved or typed engine is never second-guessed.
-        and apple_whisper == ("whisper", None)
-        and apple_parakeet == ("parakeet", None)
-        and apple_model == ("whisper", None)
+        ready == ("whisper-gpu", None)
+        and whisper == ("whisper", None)
+        and parakeet == ("parakeet", None)
         and missing[0] == "whisper" and "pip install mlx-whisper" in missing[1]
-        and missing_named[0] == "whisper" and missing_named[1]
-        # Off Apple Silicon whisper is simply the default: nothing to announce.
-        and other == ("whisper", None)
-        and other_named[0] == "whisper" and "Apple Silicon" in other_named[1]
+        and elsewhere[0] == "whisper" and "Apple Silicon" in elsewhere[1]
     )
-    return _line("resolve_stt", ok, f"apple={apple} missing={missing[0]} other={other}")
+    return _line("resolve_stt", ok, f"ready={ready} missing={missing[0]}")
+
+
+def test_default_ears() -> bool:
+    """base.en on the CPU is the default, everywhere, with no new download."""
+    import sys
+    import tomllib
+    from pathlib import Path
+
+    from talk2me.__main__ import _parse_args
+
+    real = factory.whisper_gpu_supported, factory.whisper_gpu_installed
+    factory.whisper_gpu_supported = lambda: True
+    factory.whisper_gpu_installed = lambda: True
+    try:
+        cfg = _parse_args([])
+    finally:
+        factory.whisper_gpu_supported, factory.whisper_gpu_installed = real
+    stt = build_stt(cfg)
+    pyproject = tomllib.loads(
+        (Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+    ok = (
+        # Even on Apple Silicon with the package present, you have to ask.
+        cfg.stt == "whisper"
+        and cfg.whisper_model == "base.en"
+        and cfg.stt_notice is None
+        and isinstance(stt, WhisperSTT)
+        and stt._model_name == "base.en"
+        and "mlx_whisper" not in sys.modules
+        and not any("mlx" in dep for dep in pyproject["dependencies"])
+        and "whisper-gpu" in pyproject["optional-dependencies"]
+    )
+    return _line("default ears", ok, f"stt={cfg.stt} model={cfg.whisper_model}")
 
 
 def test_hotword_context() -> bool:
@@ -301,6 +326,7 @@ def main() -> int:
         test_build_stt_parakeet(),
         test_build_stt_mlx_whisper(),
         test_resolve_stt(),
+        test_default_ears(),
         test_hotword_context(),
         test_parse_permission_posture(),
         test_denylist_shape(),

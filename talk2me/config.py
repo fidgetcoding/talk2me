@@ -200,10 +200,10 @@ class Config:
     # mechanics are identical; only the Mic/Speaker implementations change.
     phone: bool = False
     phone_port: int = 8765
-    # Transcription language (whisper and mlx-whisper; parakeet is English-only).
+    # Transcription language (whisper and whisper-gpu; parakeet is English-only).
     # A 2-letter code ("en", "es", "de", …) or "auto" to let whisper detect.
     # On the CPU engine, non-English needs a multilingual model: --whisper-model
-    # base (not .en). mlx-whisper's turbo model is multilingual already.
+    # base (not .en). whisper-gpu's turbo model is multilingual already.
     language: str = "en"
     # Alternate brain via an Anthropic-compatible endpoint (Kimi, GLM,
     # DeepSeek publish these officially for Claude Code). base_url aims the
@@ -229,16 +229,15 @@ class Config:
     max_utterance_ms: int = 90_000
 
     # --- STT ---
-    # "mlx-whisper" (M-series GPU, turbo) | "whisper" (CPU, hotword biasing) |
-    # "parakeet" (M-series GPU, fastest). The CLI resolves its "auto" default to
-    # one of these by platform (factory.resolve_stt).
+    # "whisper" (CPU, hotword biasing, the default) | "whisper-gpu" (M-series
+    # GPU, turbo, opt-in) | "parakeet" (M-series GPU, fastest, opt-in).
     stt: str = "whisper"
     # One line for the user when the ears aren't the ones asked for.
     stt_notice: str | None = None
     whisper_model: str = "base.en"
     mlx_whisper_model: str = "mlx-community/whisper-large-v3-turbo"
     parakeet_model: str = "mlx-community/parakeet-tdt-0.6b-v2"
-    # Bias terms: hotwords on whisper, initial_prompt on mlx-whisper, unused on parakeet.
+    # Bias terms: hotwords on whisper, initial_prompt on whisper-gpu, unused on parakeet.
     vocab: list[str] = field(default_factory=list)
 
     # --- TTS ---

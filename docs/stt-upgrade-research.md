@@ -2,7 +2,7 @@
 
 *Research report, 2026-07-18. Rec #1 (hotwords + decode pinning + live context seeding) shipped same day; #2 and #3 open.*
 
-*Update, v2.6.0 (2026-11-01): Whisper large-v3-turbo on the Apple-Silicon GPU, through mlx-whisper, is now the default on Apple Silicon. Parakeet stayed as the speed option. A 24-clip race on synthetic voices had it level with the other engines on word errors, with misses a coding agent can still read, and live context halves the errors when it knows the words. Results and caveats are in the README under "Switching the ears". The report below is as written in July.*
+*Update, v2.6.0 (2026-11-01): base.en on the CPU stays the default. Whisper large-v3-turbo on the Apple-Silicon GPU, through mlx-whisper, joined parakeet as an opt-in (`--stt whisper-gpu`). A 24-clip race on synthetic voices is written up in the README under "Switching the ears", caveats included. The report below is as written in July.*
 
 ## The core reframe (read this first)
 

@@ -119,7 +119,7 @@ def test_wizard_defaults() -> None:
 
     from talk2me import wizard
 
-    real = Prompt.ask, Confirm.ask, wizard._installed_voices, wizard.mlx_whisper_supported, wizard._offer_install
+    real = Prompt.ask, Confirm.ask, wizard._installed_voices, wizard.whisper_gpu_supported, wizard._offer_install
     asked: dict[str, list[str]] = {}
 
     def take_default(prompt, *, default=None, choices=None, **_kw):
@@ -130,25 +130,30 @@ def test_wizard_defaults() -> None:
     Confirm.ask = staticmethod(lambda _prompt, *, default=None, **_kw: default)
     wizard._installed_voices = list
     # Never let a test reach the real pip.
-    wizard._offer_install = lambda _p, _name, _pip: True
+    wizard._offer_install = lambda _p, _name, _module, _pip: True
     try:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["TALK2ME_CONFIG"] = os.path.join(tmp, "cfg.json")
-            wizard.mlx_whisper_supported = lambda: True
+            wizard.whisper_gpu_supported = lambda: True
             fresh = wizard.run_wizard({})
             apple_choices = asked["ears"]
             kept = wizard.run_wizard({"stt": "whisper", "gated": False})
-            wizard.mlx_whisper_supported = lambda: False
-            linux = wizard.run_wizard({"stt": "mlx-whisper"})
+            kept_gpu = wizard.run_wizard({"stt": "whisper-gpu"})
+            wizard.whisper_gpu_supported = lambda: False
+            linux = wizard.run_wizard({"stt": "whisper-gpu"})
             linux_choices = asked["ears"]
     finally:
-        Prompt.ask, Confirm.ask, wizard._installed_voices, wizard.mlx_whisper_supported, wizard._offer_install = real
+        Prompt.ask, Confirm.ask, wizard._installed_voices, wizard.whisper_gpu_supported, wizard._offer_install = real
     _report("wizard default posture is gated", fresh["gated"] is True)
-    _report("wizard offers GPU ears on Apple Silicon", apple_choices[0] == "mlx-whisper")
+    _report(
+        "wizard defaults to base.en, lists whisper-gpu as an option",
+        fresh["stt"] == "whisper" and "whisper-gpu" in apple_choices,
+    )
+    _report("wizard keeps a saved whisper-gpu", kept_gpu["stt"] == "whisper-gpu")
     _report("wizard keeps a saved whisper + auto-approve",
             kept["stt"] == "whisper" and kept["gated"] is False)
-    _report("wizard hides GPU ears elsewhere",
-            "mlx-whisper" not in linux_choices and linux["stt"] == "whisper")
+    _report("wizard hides whisper-gpu elsewhere",
+            "whisper-gpu" not in linux_choices and linux["stt"] == "whisper")
     os.environ["TALK2ME_CONFIG"] = "/nonexistent-t2m-test-config"
 
 

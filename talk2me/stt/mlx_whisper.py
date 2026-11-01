@@ -1,9 +1,9 @@
 """Whisper large-v3-turbo on the Apple-Silicon GPU, through mlx-whisper.
 
-The big Whisper at conversational speed. On CPU large-v3-turbo took ~6 s per
-utterance here; through MLX it takes ~0.6 s, against 0.46 s for base.en on CPU,
-and it stops turning "useAuthStore" into "use all stores". Numbers and their
-limits are in the README ("Switching the ears").
+Opt-in (`--stt whisper-gpu`, `pip install talk2me[whisper-gpu]`); base.en on the
+CPU stays the default. The big Whisper at conversational speed: on CPU
+large-v3-turbo took ~6 s per utterance here, through MLX ~0.55 s, against 0.46 s
+for base.en. Numbers and their limits are in the README ("Switching the ears").
 
 Costs vs base.en: a ~1.6 GB model download once, more RAM while loaded, and a
 heavy install (mlx-whisper's metadata pulls in torch, which it never imports).
@@ -82,7 +82,7 @@ class MLXWhisperSTT:
     @property
     def engine_name(self) -> str:
         """What's really transcribing, for the startup card. Duck-typed."""
-        return "whisper" if self._fallback is not None else "mlx-whisper"
+        return "whisper" if self._fallback is not None else "whisper-gpu"
 
     def set_notifier(self, notify: Callable[[str], None]) -> None:
         """Where one-line user notices go (download, fallback). Duck-typed."""
@@ -152,7 +152,7 @@ class MLXWhisperSTT:
         if hasattr(self._fallback, "set_context"):
             self._fallback.set_context(self._context_terms)
         self._notify(
-            f"GPU ears failed ({type(exc).__name__}: {str(exc)[:80]}), using "
+            f"whisper-gpu failed ({type(exc).__name__}: {str(exc)[:80]}), using "
             "whisper on the CPU instead"
         )
 

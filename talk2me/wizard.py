@@ -18,7 +18,7 @@ import sys
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from .factory import mlx_whisper_supported
+from .factory import whisper_gpu_supported
 from .retro import CYAN, GREEN, THEME
 
 CONFIG_DIR = os.path.expanduser("~/.talk2me")
@@ -110,9 +110,9 @@ def _installed_voices() -> list[str]:
     return sorted(dict.fromkeys(names), key=lambda n: (rank(n), n))
 
 
-def _offer_install(p, name: str, pip_name: str) -> bool:
+def _offer_install(p, name: str, module: str, pip_name: str) -> bool:
     """True once the engine's package is importable; offers a pip install first."""
-    if importlib.util.find_spec(name.replace("-", "_")) is not None:
+    if importlib.util.find_spec(module) is not None:
         return True
     if not Confirm.ask(
         f"  {name} isn't installed. Install it now? (pip, one-time; "
@@ -199,26 +199,26 @@ def run_wizard(existing: dict | None = None) -> dict:
     # 2 — the ears
     p()
     ear_choices = ["whisper", "parakeet"]
-    if mlx_whisper_supported():
-        ear_choices.insert(0, "mlx-whisper")
+    if whisper_gpu_supported():
+        ear_choices.insert(1, "whisper-gpu")
         p(f"[bold {CYAN}]2 · the ears[/]  Speech-to-text engine. "
-          "[dim]mlx-whisper (recommended): Whisper large-v3-turbo on your "
-          "GPU, the best at coding talk, ~2 GB RAM and a 1.6 GB download once. "
-          "whisper: base.en on the CPU, lighter, runs everywhere. parakeet: "
-          "fastest, but English-only with no custom vocab.[/]")
+          "[dim]whisper (default): base.en on the CPU, light, runs everywhere. "
+          "whisper-gpu: Whisper large-v3-turbo on your GPU, ~2 GB RAM and a "
+          "1.6 GB download. parakeet: fastest, but English-only with no custom "
+          "vocab.[/]")
     else:
         p(f"[bold {CYAN}]2 · the ears[/]  Speech-to-text engine. "
           "[dim]whisper: runs everywhere, CPU, any language. parakeet: "
           "Apple-Silicon GPU only, English-only.[/]")
-    ear_default = prev.get("stt") if prev.get("stt") in ear_choices else ear_choices[0]
+    ear_default = prev.get("stt") if prev.get("stt") in ear_choices else "whisper"
     stt = Prompt.ask("  ears", choices=ear_choices, default=ear_default)
-    if stt == "mlx-whisper" and not _offer_install(p, "mlx-whisper", "mlx-whisper"):
+    if stt == "whisper-gpu" and not _offer_install(p, stt, "mlx_whisper", "mlx-whisper"):
         stt = "whisper"
-    if stt == "parakeet" and not _offer_install(p, "parakeet-mlx", "parakeet-mlx"):
+    if stt == "parakeet" and not _offer_install(p, stt, "parakeet_mlx", "parakeet-mlx"):
         stt = "whisper"
     language = prev.get("language") or "en"
     whisper_model: str | None = prev.get("whisper_model")
-    if stt in ("whisper", "mlx-whisper"):
+    if stt in ("whisper", "whisper-gpu"):
         p("  [dim]language: a 2-letter code (en, es, de, fr, pt, ja…) or "
           "'auto' to detect per sentence. Voice commands (pause/wake/"
           "approve) stay English for now.[/]")

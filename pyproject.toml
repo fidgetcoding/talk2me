@@ -20,10 +20,6 @@ dependencies = [
     # Native AEC (vpio.py): macOS voice-processing capture. Darwin-only; every
     # other platform rides the userspace echo-gate fallback.
     "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",
-    # GPU ears (stt/mlx_whisper.py), the default on Apple Silicon. Everywhere
-    # else, and on 3.14 where mlx wheels depend on the macOS version, the ears
-    # stay on faster-whisper. Metadata pulls in torch; it's never imported.
-    "mlx-whisper>=0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +34,10 @@ kitten = ["kittentts>=0.1"]
 # accurate and ~10x faster than local Whisper; ~2 GB RAM; English-only; pure
 # MLX (no torch). Install with: pip install talk2me[parakeet]
 parakeet = ["parakeet-mlx>=0.3"]
+# Whisper large-v3-turbo on the Apple-Silicon GPU (--stt whisper-gpu): 1.6 GB
+# model download on first use, ~2 GB RAM. Metadata pulls in torch, which it never
+# imports. Install with: pip install talk2me[whisper-gpu]
+whisper-gpu = ["mlx-whisper>=0.4.3"]
 
 [project.scripts]
 talk2me = "talk2me.__main__:main"

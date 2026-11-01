@@ -148,27 +148,22 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
-        "--stt", default="auto",
-        choices=["auto", "mlx-whisper", "whisper", "parakeet"],
+        "--stt", default="whisper", choices=["whisper", "whisper-gpu", "parakeet"],
         help=(
-            "transcription engine. auto (default): mlx-whisper on Apple "
-            "Silicon, whisper everywhere else. mlx-whisper: Whisper "
-            "large-v3-turbo on the GPU, ~2 GB RAM, 1.6 GB download once. "
-            "whisper: base.en on the CPU, runs anywhere. parakeet: Apple-Silicon "
-            "GPU, fastest, English-only, no vocab biasing "
+            "transcription engine. whisper (default): base.en on the CPU, runs "
+            "anywhere, supports --vocab hotword biasing. whisper-gpu: Whisper "
+            "large-v3-turbo on the Apple-Silicon GPU, ~2 GB RAM, 1.6 GB download "
+            "on first use (`pip install -e \".[whisper-gpu]\"`). parakeet: "
+            "Apple-Silicon GPU, fastest, English-only, no vocab biasing "
             "(`pip install -e \".[parakeet]\"`)."
         ),
     )
-    p.add_argument(
-        "--whisper-model", default=None,
-        help="CPU whisper model (default base.en). Setting it selects --stt whisper "
-        "unless --stt says otherwise.",
-    )
+    p.add_argument("--whisper-model", default="base.en")
     p.add_argument(
         "--language", default="en",
         help=(
             "transcription language: a 2-letter code (es, de, fr…) or 'auto' "
-            "to detect per utterance. mlx-whisper handles these as is. CPU "
+            "to detect per utterance. whisper-gpu handles these as is. CPU "
             "whisper needs a multilingual model, e.g. --whisper-model base. "
             "The .en models are English-only, and so is parakeet. Voice "
             "COMMANDS (pause/wake/approve) stay English for now."
@@ -378,9 +373,7 @@ def _parse_args(argv: list[str]) -> Config:
 
     from .config import DEFAULT_ALLOWED_TOOLS, DEFAULT_DISALLOWED_TOOLS
 
-    stt, stt_notice = factory.resolve_stt(
-        a.stt, whisper_model_set=a.whisper_model is not None
-    )
+    stt, stt_notice = factory.resolve_stt(a.stt)
 
     return Config(
         debug=a.debug,
@@ -411,7 +404,7 @@ def _parse_args(argv: list[str]) -> Config:
         input_mode=input_mode,
         stt=stt,
         stt_notice=stt_notice,
-        whisper_model=a.whisper_model or "base.en",
+        whisper_model=a.whisper_model,
         language=a.language,
         tts=a.tts,
         voice=a.voice,

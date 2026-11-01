@@ -1,4 +1,4 @@
-"""The GPU ears, with a fake mlx_whisper. No MLX, no model, no audio device, so
+"""The opt-in GPU ears, with a fake mlx_whisper. No MLX, no model, no audio device, so
 it runs in CI on Linux. What's locked: the lazy contract, one worker thread for
 everything, what reaches the decoder, the silence guard, the first-run download
 notice, and every road to the CPU fallback.
@@ -239,7 +239,7 @@ async def test_fallback_mid_session() -> None:
     stt = _engine(fake, fallback=lambda: cpu)
     stt.set_notifier(notes.append)
     stt.warmup()
-    _report("healthy after warmup", stt.engine_name == "mlx-whisper")
+    _report("healthy after warmup", stt.engine_name == "whisper-gpu")
     text = await stt.transcribe(AUDIO, 16000)
     _report(
         "a Metal error mid-session keeps the utterance",
@@ -275,7 +275,7 @@ class NoticingSTT(FakeSTT):
 
 
 async def test_orchestrator_wiring() -> None:
-    cfg = Config(stt="mlx-whisper")
+    cfg = Config(stt="whisper-gpu")
     stt = NoticingSTT([])
     orch = Orchestrator(
         cfg=cfg,

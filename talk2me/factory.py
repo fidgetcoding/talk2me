@@ -51,38 +51,32 @@ def build_vad(cfg: Config) -> VAD:
     raise ValueError(f"unknown vad: {cfg.vad!r}")
 
 
-def mlx_whisper_supported() -> bool:
+def whisper_gpu_supported() -> bool:
     """Apple Silicon only. A Rosetta Python reports x86_64 here, correctly."""
     return sys.platform == "darwin" and platform.machine() == "arm64"
 
 
-def mlx_whisper_installed() -> bool:
+def whisper_gpu_installed() -> bool:
     # find_spec, not import: the real import costs seconds and belongs on the
     # engine's worker thread. An import that still fails later hits the
     # engine's own fallback.
     return importlib.util.find_spec("mlx_whisper") is not None
 
 
-def resolve_stt(requested: str, *, whisper_model_set: bool = False) -> tuple[str, str | None]:
-    """Turn the --stt value into a concrete engine, plus a one-line notice when
-    the user should know they didn't get what they'd expect.
-
-    Asking for a specific CPU model (--whisper-model) counts as asking for the
-    CPU engine: that flag means nothing to the others.
+def resolve_stt(requested: str) -> tuple[str, str | None]:
+    """Turn the --stt value into the engine that can actually run, plus a one-line
+    notice when that isn't the one asked for. Only whisper-gpu can miss: it's
+    opt-in, so a config copied from another machine may ask for it without it.
     """
-    if requested == "auto" and whisper_model_set:
-        return "whisper", None
-    if requested == "auto" and not mlx_whisper_supported():
-        return "whisper", None
-    if requested not in ("auto", "mlx-whisper"):
+    if requested != "whisper-gpu":
         return requested, None
-    if not mlx_whisper_supported():
-        return "whisper", "mlx-whisper needs Apple Silicon, using whisper on the CPU"
-    if not mlx_whisper_installed():
+    if not whisper_gpu_supported():
+        return "whisper", "whisper-gpu needs Apple Silicon, using whisper on the CPU"
+    if not whisper_gpu_installed():
         return "whisper", (
-            "GPU ears aren't installed (pip install mlx-whisper), using whisper on the CPU"
+            "whisper-gpu isn't installed (pip install mlx-whisper), using whisper on the CPU"
         )
-    return "mlx-whisper", None
+    return "whisper-gpu", None
 
 
 def _build_whisper(cfg: Config) -> STT:
@@ -100,7 +94,7 @@ def _build_whisper(cfg: Config) -> STT:
 def build_stt(cfg: Config) -> STT:
     if cfg.stt == "whisper":
         return _build_whisper(cfg)
-    if cfg.stt == "mlx-whisper":
+    if cfg.stt == "whisper-gpu":
         from .stt.mlx_whisper import MLXWhisperSTT
 
         return MLXWhisperSTT(

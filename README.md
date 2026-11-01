@@ -43,7 +43,7 @@ t2m
 
 That's it. That's the command. Talk.
 
-On Apple Silicon that line brings the GPU ears with it, so expect a few minutes and a chunky dependency pile. Want Parakeet, the speed option, in there too? Same line, one flag:
+Want GPU ears on Apple Silicon baked in from the start? Same line, one flag: `--parakeet` for the fastest, `--whisper-gpu` for the big Whisper. Both are chunky dependency piles, so give it a few minutes:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --parakeet
@@ -66,9 +66,9 @@ And the laziest path of all: paste this repo's URL into Claude Code and say *"in
 
 ### First launch
 
-A bare first `t2m` (no flags, no saved setup) walks you through it: pick the **brain** (Claude by default — or **Kimi, GLM, DeepSeek**, which run through the same agent via their official Anthropic-compatible endpoints with your API key; "opus 4.6" style shorthand works), the **ears** (Whisper on your GPU if you've got Apple Silicon, CPU whisper, or parakeet; it offers to install what's missing), the **voice** (it recommends Ava (Premium) and tells you where to get her), **barge-in** (on, explained), **tools** (ask out loud first by default, auto-approve if you want it, both explained), and the **folder** you're working on. Answers save to `~/.talk2me/config.json` and become your defaults — flags always override. Change your mind any time: `t2m --setup`, or **Ctrl-T** mid-session (macOS) to reopen the menu without losing your place.
+A bare first `t2m` (no flags, no saved setup) walks you through it: pick the **brain** (Claude by default — or **Kimi, GLM, DeepSeek**, which run through the same agent via their official Anthropic-compatible endpoints with your API key; "opus 4.6" style shorthand works), the **ears** (whisper by default, or the GPU options on Apple Silicon; it offers to install what's missing), the **voice** (it recommends Ava (Premium) and tells you where to get her), **barge-in** (on, explained), **tools** (ask out loud first by default, auto-approve if you want it, both explained), and the **folder** you're working on. Answers save to `~/.talk2me/config.json` and become your defaults — flags always override. Change your mind any time: `t2m --setup`, or **Ctrl-T** mid-session (macOS) to reopen the menu without losing your place.
 
-First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody. On Apple Silicon the first launch also downloads the ears, about 1.6 GB, one time. It tells you when that's happening, so it won't look hung.
+First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody.
 
 **Pro tip:** when your agent is doing the installing, give it this repo's link too. It's open source — you can do whatever tf you want — and an agent that has read the source debugs your machine's quirks (weird audio devices, mic permissions, your cursed Bluetooth setup) in one turn instead of guessing.
 
@@ -129,12 +129,12 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default, speakers included). |
 | `t2m --auto-approve` | Tools run with nobody asking. Fast, but anything the mic hears can start them. The default asks out loud first (`--gated`). See [Saying yes out loud](#saying-yes-out-loud). |
 | `t2m --stt parakeet` | The speed option: about 0.1s per sentence on the GPU, English-only (Apple Silicon; `pip install -e ".[parakeet]"` first). See [Switching the ears](#switching-the-ears). |
-| `t2m --stt whisper` | The small CPU ears: base.en, lighter on RAM, no big download. |
+| `t2m --stt whisper-gpu` | The big Whisper on the GPU: large-v3-turbo, about 0.55s per sentence, ~2 GB RAM, 1.6 GB download on first use (Apple Silicon; `pip install -e ".[whisper-gpu]"` first). |
 | `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
 | `t2m --agent codex` | OpenAI's Codex CLI as the brain (`codex login` first). Same voice loop, same feed; safety = Codex's own sandbox. |
 | `t2m --backend-base-url … --backend-auth-env MY_KEY` | A different brain entirely — Kimi/GLM/DeepSeek publish Anthropic-compatible endpoints; the key stays in your env, never a file. Easiest via `t2m --setup`. |
-| `t2m --language es` (or `auto`) | Talk to it in another language. The GPU ears just do it; CPU whisper needs `--whisper-model base` (the `.en` models and parakeet are English-only). Voice commands stay English for now. |
+| `t2m --language es` (or `auto`) | Talk to it in another language (whisper; pairs with `--whisper-model base` — the `.en` models and parakeet are English-only; `--stt whisper-gpu` needs no extra flag). Voice commands stay English for now. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
@@ -233,12 +233,12 @@ The one-line version: **if the screen printed a marker recently, it's not broken
 
 ## How long things take
 
-Measured on an M-series MacBook Pro, `--model haiku`. Your numbers will vary; `--debug` prints yours per turn.
+Measured on an M-series MacBook Pro, `--model haiku`, whisper base.en. Your numbers will vary; `--debug` prints yours per turn.
 
 | Stage | Typical | The knob |
 |---|---|---|
 | You stop talking → turn ends | **1.2s** (fixed silence window) | `--silence-ms`. Lower = snappier but cuts off your thinking pauses. |
-| Turn ends → transcript | ~0.55s on the GPU ears, 0.3–0.5s on CPU base.en | `--stt parakeet` is the fast end, ~0.1s. |
+| Turn ends → transcript | 0.3–0.5s on base.en | `--stt parakeet` is the fast end, ~0.1s. |
 | Transcript → first token | 1.3–2.5s (simple), 3–7s+ (tool-using turns) | Model choice. Tool turns are just slower — watch the `[tool]` lines. |
 | First token → first sound | 1–2s (TTS render of the first clause) | Shorter first sentences start faster; a streaming TTS engine is the future fix. |
 | **Total: silence → hearing the answer** | **~4–6s** simple, more with tools | |
@@ -377,7 +377,7 @@ t2m
 
 Start talking. Hit `Ctrl-C` when you're done. (`t2m` and `talk2me` are the same command — the short one exists because you'll type it a lot.)
 
-Two things to expect the first time. On Apple Silicon it downloads the ears once (about 1.6 GB) and says so while it does. And when the agent wants to run or change something, it asks you out loud, so answer "approve" or "deny" (or take the training wheels off with `--auto-approve`).
+One thing to expect the first time: when the agent wants to run or change something, it asks you out loud, so answer "approve" or "deny" (or take the training wheels off with `--auto-approve`).
 
 One rule to internalize: **the agent works on whatever directory you launch from** — same as the `claude` CLI. `cd` into your project first (or pass `--cwd ~/some/project`), and the startup line confirms it: `working on: /path/you/meant`. Launch from your home folder and it'll happily rummage around your home folder.
 
@@ -404,45 +404,45 @@ Speed is separate: `--rate 236` is the default (~1.35× the sleepy stock pace), 
 
 ## Switching the ears
 
-Three engines ship, one flag apart. If you don't pick, Apple Silicon gets the GPU ears and everything else gets CPU whisper. A pick saved by the wizard stays yours, so an older setup keeps the ears it had until you run `t2m --setup`.
+Three engines ship, one flag apart. **whisper with base.en is the default**, everywhere. The other two are opt-in, for Apple Silicon, and nothing extra gets installed or downloaded unless you ask for it.
 
-| | **mlx-whisper** (default on Apple Silicon) | **whisper** (default elsewhere) | **parakeet** |
+| | **whisper** (default) | **whisper-gpu** | **parakeet** |
 |---|---|---|---|
-| Model | Whisper large-v3-turbo | Whisper base.en | Parakeet TDT v2 |
-| Runs on | Apple-Silicon GPU | CPU, any Mac/Linux | Apple-Silicon GPU |
-| Speed | ~0.55s | ~0.46s | **~0.11s** |
-| Custom vocab (`--vocab`) | ✅ as a prompt | ✅ as hotwords | ❌ |
-| Other languages | ✅ | with `--whisper-model base` | ❌ English only |
-| RAM while running | ~2 GB | ~0.5 GB | ~2 GB |
-| Download | 1.6 GB, once | ~150 MB, once | ~600 MB+, once |
-| Install | included on Apple Silicon | included | `pip install -e ".[parakeet]"` (or the `--parakeet` installer flag) |
+| Model | Whisper base.en | Whisper large-v3-turbo | Parakeet TDT v2 |
+| Runs on | CPU, any Mac/Linux | Apple-Silicon GPU | Apple-Silicon GPU |
+| Speed | ~0.46s | ~0.55s | **~0.11s** |
+| Custom vocab (`--vocab`) | ✅ as hotwords | ✅ as a prompt | ❌ |
+| Other languages | with `--whisper-model base` | ✅ | ❌ English only |
+| RAM while running | ~0.5 GB | ~2 GB | ~2 GB |
+| Download | ~150 MB, once | 1.6 GB, once | ~600 MB+, once |
+| Install | included | `pip install -e ".[whisper-gpu]"` (or the `--whisper-gpu` installer flag) | `pip install -e ".[parakeet]"` (or the `--parakeet` installer flag) |
 
 ```bash
-t2m                    # the default for your machine
-t2m --stt whisper      # small and CPU-only
+t2m                    # whisper base.en
+t2m --stt whisper-gpu  # the big Whisper, on the GPU
 t2m --stt parakeet     # the fast ones
 ```
 
-No GPU ears available? It says so in one line and drops to CPU whisper. Same if they break mid-session, and you keep the sentence you were saying.
+Asked for `whisper-gpu` where it can't run? It says so in one line and uses whisper. Same if it breaks mid-session, and you keep the sentence you were saying. Its first launch announces the 1.6 GB download, so it won't look hung.
 
 ### The numbers, and how much to trust them
 
-I wanted the best listener I could get, so I raced them: 24 clips, 8 coding sentences read by 3 voices ("Refactor useAuthStore so the orchestrator stops polling"), on one M2 Max.
+I raced them: 24 clips, 8 coding sentences read by 3 voices ("Refactor useAuthStore so the orchestrator stops polling"), on one M2 Max.
 
 | Engine | Median per clip | Worst | Word errors | What its misses look like |
 |---|---|---|---|---|
-| whisper base.en, CPU (the old default) | 0.46s | 0.60s | 12.5% | "use all stores", "piedest", "Superbase" |
-| whisper large-v3-turbo, CPU | 6.17s | 6.43s | 11.2% | Good ears, and you'd die waiting |
-| **large-v3-turbo, GPU (the new default)** | **~0.55s** | 0.7s, 1.1s when cold | 13.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
+| **whisper base.en, CPU (the default)** | **0.46s** | 0.60s | 12.5% | "use all stores", "piedest", "Superbase" |
+| whisper large-v3-turbo, CPU | 6.17s | 6.43s | 11.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
+| large-v3-turbo, GPU (`whisper-gpu`) | ~0.55s | 0.7s, 1.1s when cold | 13.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
 | parakeet v2, GPU | 0.11s | 0.27s | 13.2% | "use auth store", "super base" |
 | parakeet v3, GPU | 0.12s | 0.13s | 14.5% | "use aut store", "py test" |
 
-Now the fine print, because a table like that can lie to you:
+That's data, not a verdict, and here's the fine print:
 
-- **Those voices are synthetic.** macOS `say` reading into a file, one Mac. `python -m tests.manual_stt_bench` reruns the race if you want your own numbers. The latency numbers are solid. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it. Nobody has fully field-tested these ears with an actual voice yet (see [Not done yet](#not-done-yet)).
-- **Those speeds are on a quiet Mac.** With other jobs grinding in the background, the same race came back around 1s for the GPU ears, 0.66s for base.en and 0.31s for parakeet. The word errors didn't move.
-- **Word-error rate undersells the GPU ears.** It scores "use AuthStore" as a miss. A coding agent knows what you meant. "use all stores" sends it hunting for something that doesn't exist. That difference is why turbo won despite a worse score than base.en.
-- **Vocab is where it pulls away.** Run through the actual engine, turbo drops to 10.9% with just some unrelated terms in its prompt, and to 6.6% when the prompt knows the words in the test. That second number is a best case: I handed it the answers. But it's also what happens after the agent says `useAuthStore` to you, because talk2me feeds the names it just used into the ears.
+- **Those voices are synthetic.** macOS `say` reading into a file, one Mac. `python -m tests.manual_stt_bench` reruns the race if you want your own numbers. The latency holds up. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it.
+- **Those speeds are on a quiet Mac.** With other jobs grinding in the background, the same race came back around 1s for `whisper-gpu`, 0.66s for base.en and 0.31s for parakeet. The word errors didn't move.
+- **Word-error rate can't see meaning.** It scores "use AuthStore" and "use all stores" the same way, and only one of those points a coding agent at the right thing. Read the misses column too.
+- **Vocab moves the number.** Run through the engine, `whisper-gpu` drops to 10.9% with some unrelated terms in its prompt, and to 6.6% when the prompt knows the words in the test. That second one is a best case: I handed it the answers. base.en has its own version of this in hotwords, and it didn't get the same test, so don't compare those.
 
 More engines can slide in the same way. Everything hides behind one contract, so adding one is a single file, and your muscle memory doesn't change.
 
@@ -490,11 +490,12 @@ Files land as `t2m-2026-07-19-014212.md`, one per session, appended live (a cras
 | `talk2me --voice "Ava (Premium)"` | A voice from this decade. Download it first: System Settings → Accessibility → Read & Speak → the ⓘ next to System voice → grab an (Enhanced)/(Premium) voice. |
 | `talk2me --rate 260` | Talk faster (words/min). Default 236 ≈ 1.35× the macOS stock pace. |
 | `talk2me --vocab Lorecraft --vocab Morgen` | Teach it your weird proper nouns so it stops inventing spellings. |
-| `talk2me --stt parakeet` | The fast ears: Apple-Silicon GPU transcription, about 5× quicker than the GPU Whisper default. `pip install -e ".[parakeet]"` first. |
+| `talk2me --stt parakeet` | The fast ears: Apple-Silicon GPU transcription, about 4× quicker than base.en on the same test. `pip install -e ".[parakeet]"` first. |
+| `talk2me --stt whisper-gpu` | Whisper large-v3-turbo on the Apple-Silicon GPU. `pip install -e ".[whisper-gpu]"` first. |
 | `talk2me --tts null` | Answers on screen, no voice out. |
 | `talk2me --with-user-config` | Load your full user-level Claude config into the agent. Off by default because hooks and skills measurably slow every turn and their chatter gets read aloud. Project CLAUDE.md always loads. |
 
-The rest of the knobs, for completeness: `--cwd` (which directory the agent works in — defaults to where you launched), `--vocab-file terms.txt` (bias terms in bulk, one per line), `--whisper-model small.en` (a different CPU whisper; bigger = better ears, slower, and setting it picks the CPU engine), `--vad-aggressiveness 3` (webrtc noise filtering, 0–3), and `--dangerously-allow-tools` (auto-approve everything — **text mode only**, refused in voice mode on purpose: ambient audio should never carry that much power).
+The rest of the knobs, for completeness: `--cwd` (which directory the agent works in — defaults to where you launched), `--vocab-file terms.txt` (bias terms in bulk, one per line), `--whisper-model small.en` (bigger whisper = better ears, slower), `--vad-aggressiveness 3` (webrtc noise filtering, 0–3), and `--dangerously-allow-tools` (auto-approve everything — **text mode only**, refused in voice mode on purpose: ambient audio should never carry that much power).
 
 ## The debugging playbook
 
@@ -522,7 +523,7 @@ That was hook and CLAUDE.md inheritance — fixed by default now (the agent load
 Wrong output device (check `--output-device` / `--list-devices`), or macOS routed audio elsewhere when a BT device connected mid-session. Restart talk2me after changing audio devices — PortAudio's device list is a snapshot.
 
 **First utterance after startup takes forever.**
-It shouldn't anymore — the model loads before the mic opens (`(loading the ears…)`). If you see that line for more than ~10s on parakeet, it's downloading the model from Hugging Face (first run only, ~600MB+). The GPU Whisper ears announce their own download (first run only, about 1.6 GB). After a fresh install, the first launch can also sit for up to a minute while it loads the new libraries for the first time. Later launches take a couple of seconds.
+It shouldn't anymore — the model loads before the mic opens (`(loading the ears…)`). If you see that line for more than ~10s on parakeet, it's downloading the model from Hugging Face (first run only, ~600MB+). `--stt whisper-gpu` announces its own download (first use only, about 1.6 GB), and right after installing it, its first launch can sit for up to a minute while the new libraries load for the first time.
 
 **The count-to-fifty test sounds mushy.**
 Digit runs at speed are the hardest thing you can ask a TTS voice to say. The stock voice garbles them; a Premium voice (Ava) mostly doesn't. This is a voice-quality ceiling, not a bug — the streaming-TTS engine on the roadmap is the real fix.
@@ -548,7 +549,7 @@ Every swappable part hides behind a contract: voice detection, transcription, th
 Out of the box:
 
 - **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room, and the RIGHT pick under native AEC (the voice processor's noise floor reads as speech to webrtc, so native mode auto-swaps webrtc back to energy with a note). Off native mode, two sharper options ship: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file). Separately from the pick, every utterance must also convince a bundled Silero speech CLASSIFIER before it can interrupt or be transcribed — that's the layer that makes typing, taps, and coughs invisible (`--no-speech-check` to disable).
-- **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter. On Apple Silicon that's large-v3-turbo on the GPU through mlx-whisper. Elsewhere, or with `--stt whisper`, it's base.en on the CPU through faster-whisper. `--stt parakeet` (install with `pip install -e ".[parakeet]"`) is NVIDIA's Parakeet on the GPU: the speed option, English-only, no `--vocab`. Same contract for all three. One engine quirk worth knowing: turbo's no-speech detector read zero on everything I tried through MLX, so left alone it answers silence with "Thank you." Every utterance passes a Silero check first, and silence stays silent. [The race results](#the-numbers-and-how-much-to-trust-them) are above; the original research lives in `docs/stt-upgrade-research.md`.
+- **Transcription:** Whisper base.en, running on your CPU through faster-whisper. No cloud, no per-minute meter. Two opt-ins for Apple Silicon: `--stt whisper-gpu` is large-v3-turbo on the GPU through mlx-whisper, and `--stt parakeet` is NVIDIA's Parakeet on the GPU, fastest, English-only, no `--vocab`. Same contract for all three. One `whisper-gpu` quirk worth knowing: turbo's no-speech detector read zero on everything I tried through MLX, so left alone it answers silence with "Thank you." Every utterance passes a Silero check first, and silence stays silent. [The race results](#the-numbers-and-how-much-to-trust-them) are above; the original research lives in `docs/stt-upgrade-research.md`.
 - **The mouth:** macOS `say`, rendered a chunk ahead of playback so the voice doesn't stall between sentences. `--tts kitten` (install with `pip install -e ".[kitten]"`) is a local neural voice that works on any OS. `--tts null` keeps it text-only.
 - **The agent:** Claude Code by default, over its structured streaming interface — including the tool-permission wire behind the spoken approval gate (pinned byte-for-byte in `docs/permission-spike-results.md`). `--agent codex` swaps in OpenAI's Codex CLI (one `codex exec` per turn, resumed between turns — schema pinned live in `tests/test_codex_translate.py`). Kimi, GLM, and DeepSeek ride the Claude pipe via their official Anthropic-compatible endpoints (the wizard sets it up). Anything else hides behind the same one-file contract (`AgentBackend`) — fork away; that's what the MIT license is for.
 - **The brain-to-ear glue:** after every reply, the identifiers the agent just used (file names, function names) get fed to the transcriber as bias terms — because those are exactly the words you're about to say back.
@@ -562,7 +563,7 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **The echo-gate fallback is young.** On macOS the native canceller carries speakers talk-over now, but wherever the fallback gate runs (Linux, `--aec gate`), its residual threshold was tuned on synthetic fixtures plus one laptop — a very reverberant room may need the bar moved. `--debug` prints the residual on every rejected onset so tuning is evidence, not vibes.
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 - **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
-- **The new ears on a real voice.** The GPU Whisper default has only heard files so far: the synthetic-voice race, spoken-command clips, and those same files replayed through the full loop with a fake mic, spoken "approve" and "deny" included. It hasn't been through a real mic in a real room. If it's worse than the numbers suggest, `--stt whisper` is one flag away, and I want to hear about it.
+- **`whisper-gpu` on a real voice.** It has only heard files so far: the synthetic-voice race, spoken-command clips, and those same files replayed through the full loop with a fake mic, spoken "approve" and "deny" included. It hasn't been through a real mic in a real room, which is one reason it's opt-in.
 - **Voice commands are English-only.** `--language es` transcribes your Spanish fine, but "pause"/"wake up"/"approve" still only land in English.
 - **Voice-lock is young.** It ships (see [Voice-lock](#voice-lock-only-you)) but speaker verification is probabilistic, and on some mic/room combos the calibration comes out too weak to enforce — the lock then runs in observe mode (scores logged, nothing blocked) rather than risk going deaf on its own owner.
 
@@ -577,7 +578,7 @@ The short version of a long fight with physics:
 - **v2.3.0** — voice-lock. Only-you speaker verification, fully local. Shipped, then field-tested into observe-only: on a laptop mic, your own voice scatters wider than the gap to a stranger's. An honest loss — the scores still log, the idea still stands.
 - **v2.4.0** — the echo gate. Speakers talk-over without headphones, by matching the mic against the exact playback. Zero false cuts in the field — but a couch-voice talk-over lost the volume war near max. Kept as the fallback layer.
 - **v2.5.0** — the one we were chasing. macOS's own echo canceller (the FaceTime one) cleans the mic at the driver: its own voice comes out unintelligible to the transcriber at any volume, so you just talk. Plus the ⌨ input line — type at it while it works and it cuts in like a barge — and snappier pause/wake.
-- **v2.6.0** is new ears and better manners. Whisper large-v3-turbo on the Apple-Silicon GPU becomes the default listener, after [a race on 24 clips](#the-numbers-and-how-much-to-trust-them). Voice stops auto-approving tools: a safety audit flagged it, it was right, and now it asks out loud unless you say otherwise. The denylist grew from 8 rules to 69 after I tested the old one against the real CLI and watched `rm -fr` stroll past. The installer pins to release tags instead of `main`.
+- **v2.6.0** is better manners. Voice stops auto-approving tools: a safety audit flagged it, it was right, and now it asks out loud unless you say otherwise. The denylist grew from 8 rules to 69 after I tested the old one against the real CLI and watched `rm -fr` stroll past. The installer pins to release tags instead of `main`. And [a race on 24 clips](#the-numbers-and-how-much-to-trust-them) got written down: base.en stays the default, Whisper large-v3-turbo on the Apple-Silicon GPU joins as the opt-in `--stt whisper-gpu`.
 
 That's the destination we set out for: a voice loop you can talk over, type over, and trust on open speakers. It got there. What's in [Not done yet](#not-done-yet) is real, mapped, and none of it is a mystery — the seams were built for this (swap a VAD, an STT, a TTS, a whole agent backend, or the renderer without touching the loop). **The rest is for the community to keep evolving.** Fork it, gut it, teach it new tricks — PRs and weird ideas welcome.
 
@@ -603,7 +604,7 @@ Everywhere:
 - **Python 3.11+**
 - **A microphone**, ideally close to your face.
 
-**macOS** — the platform this is built and daily-driven on. `pip install -e .` is all the setup there is: the audio library ships with PortAudio bundled, and the default voice is the built-in `say`. On Apple Silicon you need macOS 13 or newer, because the GPU ears' MLX dependency publishes nothing older and the install stops there. On Python 3.14 the GPU ears are skipped and you get CPU whisper, so stick to 3.11 through 3.13 if you want them.
+**macOS** — the platform this is built and daily-driven on. `pip install -e .` is all the setup there is: the audio library ships with PortAudio bundled, and the default voice is the built-in `say`. The optional `whisper-gpu` extra wants macOS 13 or newer, because MLX publishes nothing older.
 
 **Linux** — honestly: the headless tests pass in CI, the live mic loop is untested. What's known:
 
@@ -621,7 +622,7 @@ Plain scripts. No frameworks to install. The whole loop is tested without a mic 
 python -m tests.test_segment        # the part that finds where your sentence ends
 python -m tests.test_loop_offline   # the full conversation, faked end to end
 python -m tests.test_permission     # the spoken approve/deny gate, all paths
-python -m tests.test_mlx_whisper    # the GPU ears with a fake model: one thread, the silence guard, every road to the fallback
+python -m tests.test_mlx_whisper    # the opt-in GPU ears with a fake model: one thread, the silence guard, every road to the fallback
 python -m tests.test_barge_in       # interrupting it mid-sentence
 python -m tests.test_echogate       # speakers talk-over: its own echo never cuts, you always can
 python -m tests.test_continuation   # "wait, I wasn't done" stitching

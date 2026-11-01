@@ -3,6 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --parakeet
+#   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --whisper-gpu
 #   curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --v1
 #
 # Installs the newest release tag, not whatever is on main right now; pass
@@ -15,14 +16,15 @@ REPO="https://github.com/fidgetcoding/talk2me.git"
 DIR="${TALK2ME_HOME:-$HOME/.talk2me}"
 BIN="$HOME/.local/bin"
 REF=""          # any branch or tag: --ref main, --ref v1.0.0 (--v1 is shorthand)
-PARAKEET=0
+EXTRA=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --parakeet) PARAKEET=1 ;;
+    --parakeet) EXTRA="[parakeet]" ;;
+    --whisper-gpu) EXTRA="[whisper-gpu]" ;;
     --v1) REF="v1" ;;
     --ref) shift; REF="${1:-}"; [ -n "$REF" ] || { echo "❌ --ref needs a value"; exit 1; } ;;
-    *) echo "❌ unknown flag: $1 (known: --parakeet, --ref <branch|tag>, --v1)"; exit 1 ;;
+    *) echo "❌ unknown flag: $1 (known: --parakeet, --whisper-gpu, --ref <branch|tag>, --v1)"; exit 1 ;;
   esac
   shift
 done
@@ -64,15 +66,8 @@ fi
 echo "→ building venv…"
 "$PY" -m venv "$DIR/venv"
 "$DIR/venv/bin/pip" install -q --upgrade pip
-if [ "$PARAKEET" = "1" ]; then
-  echo "→ installing with the Parakeet GPU ears (Apple Silicon)…"
-  "$DIR/venv/bin/pip" install -q -e "$DIR/repo[parakeet]"
-else
-  if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ]; then
-    echo "→ installing, GPU ears included. Big dependencies, so a few minutes on a slow line…"
-  fi
-  "$DIR/venv/bin/pip" install -q -e "$DIR/repo"
-fi
+[ -z "$EXTRA" ] || echo "→ installing with the GPU ears $EXTRA (Apple Silicon). Big dependencies, so a few minutes on a slow line…"
+"$DIR/venv/bin/pip" install -q -e "$DIR/repo$EXTRA"
 
 mkdir -p "$BIN"
 ln -sf "$DIR/venv/bin/talk2me" "$BIN/talk2me"
