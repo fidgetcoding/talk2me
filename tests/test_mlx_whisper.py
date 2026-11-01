@@ -131,6 +131,9 @@ async def test_prompt_shape() -> None:
 
 
 async def test_languages_and_rates() -> None:
+    spanish = _engine(FakeMLX(), language="es", vocab=["sí", "no"])
+    _report("other languages skip the English prompt", spanish._initial_prompt() == "sí, no.")
+    _report("no terms in another language means no prompt", _engine(FakeMLX(), language="es")._initial_prompt() is None)
     fake = FakeMLX()
     stt = _engine(fake, language="auto")
     await stt.transcribe(AUDIO, 16000)

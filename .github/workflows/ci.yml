@@ -119,6 +119,9 @@ jobs:
       - name: test_mlx_whisper
         run: python -m tests.test_mlx_whisper
 
+      - name: test_voice_commands
+        run: python -m tests.test_voice_commands
+
       - name: test_sandbox
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true

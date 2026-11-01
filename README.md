@@ -135,7 +135,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
 | `t2m --agent codex` | OpenAI's Codex CLI as the brain (`codex login` first). Same voice loop, same feed; safety = Codex's own sandbox. |
 | `t2m --backend-base-url … --backend-auth-env MY_KEY` | A different brain entirely — Kimi/GLM/DeepSeek publish Anthropic-compatible endpoints; the key stays in your env, never a file. Easiest via `t2m --setup`. |
-| `t2m --language es` (or `auto`) | Talk to it in another language (whisper; pairs with `--whisper-model base` — the `.en` models and parakeet are English-only; `--stt whisper-gpu` needs no extra flag). Voice commands stay English for now. |
+| `t2m --language es` (or `auto`) | Talk to it in another language (whisper; pairs with `--whisper-model base` — the `.en` models and parakeet are English-only; `--stt whisper-gpu` needs no extra flag). Voice commands come along for Spanish, French, German, Italian and Portuguese, and English always works. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
@@ -565,7 +565,7 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 - **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
 - **`whisper-gpu` on a real voice.** It has only heard files so far: the synthetic-voice race, spoken-command clips, and those same files replayed through the full loop with a fake mic, spoken "approve" and "deny" included. It hasn't been through a real mic in a real room, which is one reason it's opt-in.
-- **Voice commands are English-only.** `--language es` transcribes your Spanish fine, but "pause"/"wake up"/"approve" still only land in English.
+- **Voice commands in other languages are young.** Spanish, French, German, Italian and Portuguese work now, typed or spoken, with `--language`. On files read by synthetic voices, single command words landed 68 of 80 times on `--whisper-model base` and 72 of 80 on `whisper-gpu` (it was 35 of 80 before I started feeding the engines those words as hints). Very short words are the hard part: "oui" and "no" still get lost, and a miss just means it asks again. No real accents tested, nothing past those five languages, and its own spoken replies ("Approve or deny?") are still English.
 - **Voice-lock is young.** It ships (see [Voice-lock](#voice-lock-only-you)) but speaker verification is probabilistic, and on some mic/room combos the calibration comes out too weak to enforce — the lock then runs in observe mode (scores logged, nothing blocked) rather than risk going deaf on its own owner.
 
 ## The road here
@@ -633,7 +633,7 @@ python -m tests.manual_denylist_check # the denylist against the real `claude`, 
 python -m tests.manual_stt_bench      # the ears race: real latency, synthetic voices, from files
 ```
 
-That's the highlight reel — 23 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
+That's the highlight reel — 24 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
 
 What those can't tell you is how well it actually hears, because the fake transcriber always gets it right. That part got measured separately, on real audio from files: see [the numbers](#the-numbers-and-how-much-to-trust-them), and the caveat that goes with them. `manual_denylist_check` is worth rerunning after a `claude` upgrade, since how the rules match is the CLI's call, not mine. Nothing in any of this opens your mic or speakers.
 

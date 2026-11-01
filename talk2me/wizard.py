@@ -221,8 +221,8 @@ def run_wizard(existing: dict | None = None) -> dict:
     whisper_model: str | None = prev.get("whisper_model")
     if stt in ("whisper", "whisper-gpu"):
         p("  [dim]language: a 2-letter code (en, es, de, fr, pt, ja…) or "
-          "'auto' to detect per sentence. Voice commands (pause/wake/"
-          "approve) stay English for now.[/]")
+          "'auto' to detect per sentence. Voice commands (pause, wake, approve) "
+          "work in es, fr, de, it and pt too; English always works.[/]")
         language = Prompt.ask("  language", default=language).strip() or "en"
         if stt == "whisper" and language != "en" and (whisper_model or "base.en").endswith(".en"):
             # .en models are English-only; swap to the multilingual sibling.

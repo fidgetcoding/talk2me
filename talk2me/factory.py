@@ -15,6 +15,7 @@ import sys
 
 from .config import Config
 from .protocols import STT, TTS, VAD, AgentBackend
+from .voicecommands import bias_terms
 
 
 def frame_samples(cfg: Config) -> int:
@@ -86,7 +87,7 @@ def _build_whisper(cfg: Config) -> STT:
     # see the module docstring in stt/whisper.py for why not initial_prompt.
     return WhisperSTT(
         model=cfg.whisper_model,
-        vocab=cfg.vocab,
+        vocab=[*cfg.vocab, *bias_terms(cfg.language)],
         language=cfg.language,
     )
 
@@ -99,7 +100,7 @@ def build_stt(cfg: Config) -> STT:
 
         return MLXWhisperSTT(
             model=cfg.mlx_whisper_model,
-            vocab=cfg.vocab,
+            vocab=[*cfg.vocab, *bias_terms(cfg.language)],
             language=cfg.language,
             fallback=lambda: _build_whisper(cfg),
         )

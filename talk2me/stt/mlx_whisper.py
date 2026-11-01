@@ -94,7 +94,7 @@ class MLXWhisperSTT:
         if self._fallback is not None and hasattr(self._fallback, "set_context"):
             self._fallback.set_context(self._context_terms)
 
-    def _initial_prompt(self) -> str:
+    def _initial_prompt(self) -> str | None:
         # Static vocab first, then live context, deduped; stop at the ceiling.
         seen: set[str] = set()
         terms: list[str] = []
@@ -106,6 +106,10 @@ class MLXWhisperSTT:
             seen.add(key)
             terms.append(term)
             length += len(term) + 2
+        # English words in the prompt pull other languages toward English: spoken
+        # Portuguese "aprova" came back as "A prova", and "sim" as "Scene".
+        if self._language != "en":
+            return f"{', '.join(terms)}." if terms else None
         return f"{_BASE_PROMPT} Terms: {', '.join(terms)}." if terms else _BASE_PROMPT
 
     def _resolve_model(self) -> str:

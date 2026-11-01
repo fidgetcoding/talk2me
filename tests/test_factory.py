@@ -167,7 +167,8 @@ def test_build_stt_mlx_whisper() -> bool:
         and isinstance(stt, STT)
         and stt._mlx is None
         and "mlx_whisper" not in sys.modules
-        and stt._vocab == ["Lorecraft"]
+        # Spanish also gets its command words as bias terms.
+        and stt._vocab[0] == "Lorecraft" and "sí" in stt._vocab
         and stt._language == "es"
         and isinstance(stt._make_fallback(), WhisperSTT)
     )

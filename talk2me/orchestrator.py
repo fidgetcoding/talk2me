@@ -16,6 +16,7 @@ keeps collecting the interrupting utterance, which becomes the next user turn.
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import re
 import subprocess
@@ -27,6 +28,7 @@ from collections.abc import AsyncIterator
 
 import numpy as np
 
+from . import voicecommands
 from .audio import Mic, Speaker
 from .config import Config
 from .continuity import list_sessions, record_title, save_last_session
@@ -524,7 +526,7 @@ class Orchestrator:
             # (live 2026-07-20: typed lines silently queued behind minutes
             # of work). Ear flips first — typing doesn't share the audio
             # channel, so pause/wake need not touch the running turn at all.
-            intent = control_intent(text)
+            intent = control_intent(text, self.cfg.language)
             if intent in ("pause", "resume"):
                 await self._set_paused(intent == "pause", spoken=False)
                 return
@@ -549,7 +551,7 @@ class Orchestrator:
 
     async def _run_user_turn(self, text: str, *, typed: bool) -> None:
         # Controls first: "pause"/"wake up" work identically typed or spoken.
-        intent = control_intent(text)
+        intent = control_intent(text, self.cfg.language)
         if self._paused:
             if intent == "resume":
                 await self._set_paused(False)
@@ -620,7 +622,7 @@ class Orchestrator:
                 # pause never cancels a job. Checked before continuation
                 # stitching so a control word can't be glued onto the
                 # previous turn.
-                intent = control_intent(barge)
+                intent = control_intent(barge, self.cfg.language)
                 if intent == "sessions":
                     # Never swap conversations out from under running work.
                     self.render.status_note(
@@ -758,16 +760,25 @@ class Orchestrator:
         pick: int | None = None
         for attempt in range(2):
             heard = await self._listen_once(PERMISSION_LISTEN_TIMEOUT_S)
-            words = re.findall(r"[a-z0-9]+", heard.lower())
+            words = re.findall(r"[a-z0-9]+", voicecommands.fold(heard))
             normalized = " ".join(words)
             if not heard:
                 continue
-            if normalized in _PICK_CANCEL or "cancel" in words:
+            vocabs = voicecommands.active(self.cfg.language)
+            joined = f" {normalized} "
+            if (
+                normalized in _PICK_CANCEL
+                or "cancel" in words
+                or any(f" {c} " in joined for v in vocabs for c in v.cancel)
+            ):
                 self.render.status_note("okay — staying here")
                 await self._speak_confirm("Okay, staying here.")
                 return
+            picks = dict(_PICK_WORDS)
+            for v in vocabs:
+                picks.update({w: i + 1 for i, group in enumerate(v.picks) for w in group})
             for w in words:
-                n = _PICK_WORDS.get(w)
+                n = picks.get(w)
                 if n is not None and 1 <= n <= len(sessions):
                     pick = n
                     break
@@ -1090,7 +1101,7 @@ class Orchestrator:
                         raw = await self.stt.transcribe(
                             utterance, self.mic.sample_rate
                         )
-                        if control_intent(collapse_stutter(raw)) == "resume":
+                        if control_intent(collapse_stutter(raw), self.cfg.language) == "resume":
                             # Wake WITHOUT touching the running turn: screen
                             # confirm only — a spoken one would talk over the
                             # agent. Barge re-arms naturally (paused is False).
@@ -1448,7 +1459,7 @@ class Orchestrator:
             self.mic.set_muted(False)
             self.vad.reset()
             heard = await self._listen_once(PERMISSION_LISTEN_TIMEOUT_S)
-            decision = match_intent(heard)
+            decision = match_intent(heard, self.cfg.language)
             if heard:
                 self.render.permission_heard(heard, decision)
             if decision is not None:
@@ -1716,9 +1727,6 @@ _PAUSE_COMMANDS = frozenset(
 _RESUME_COMMANDS = frozenset(
     ("unpause", "wake up", "resume listening", "start listening", "im back")
 )
-# Token unions for the stacked-command pass in control_intent().
-_PAUSE_TOKENS = frozenset(w for p in _PAUSE_COMMANDS for w in p.split())
-_RESUME_TOKENS = frozenset(w for p in _RESUME_COMMANDS for w in p.split())
 # Voice-lock mode switches: "team session" opens the ears to everyone;
 # "solo session" locks them back to the enrolled voice.
 _TEAM_COMMANDS = frozenset(
@@ -1780,31 +1788,44 @@ _FILLER_WORDS = frozenset(
 )
 
 
-def _single_control_intent(text: str) -> str | None:
+@functools.lru_cache(maxsize=16)
+def _control_tables(language: str | None) -> tuple[frozenset, dict[str, frozenset]]:
+    """English, plus whatever --language switches on (voicecommands.py)."""
+    vocabs = voicecommands.active(language)
+    fillers = _FILLER_WORDS.union(*(v.fillers for v in vocabs))
+    tables = {
+        "pause": _PAUSE_COMMANDS.union(*(v.pause for v in vocabs)),
+        "resume": _RESUME_COMMANDS.union(*(v.resume for v in vocabs)),
+        "sessions": _SESSION_COMMANDS.union(*(v.sessions for v in vocabs)),
+        "team": _TEAM_COMMANDS.union(*(v.team for v in vocabs)),
+        "solo": _SOLO_COMMANDS.union(*(v.solo for v in vocabs)),
+    }
+    return fillers, tables
+
+
+def _single_control_intent(text: str, language: str | None = "en") -> str | None:
     """Whole-phrase match with consecutive-stutter collapse ("Pause. Pause,
     Listening." still lands the command — live-observed) and end-filler
     stripping ("Hey actually, pause." / "pause please")."""
-    words = re.findall(r"[a-z]+", text.lower().replace("'", ""))
+    fillers, tables = _control_tables(language)
+    words = re.findall(r"[a-z]+", voicecommands.fold(text))
     deduped = [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
-    while deduped and deduped[0] in _FILLER_WORDS:
+    # Before filler stripping: Portuguese "so eu" starts with an English filler.
+    for intent, phrases in tables.items():
+        if " ".join(deduped) in phrases:
+            return intent
+    while deduped and deduped[0] in fillers:
         deduped.pop(0)
-    while deduped and deduped[-1] in _FILLER_WORDS:
+    while deduped and deduped[-1] in fillers:
         deduped.pop()
     normalized = " ".join(deduped)
-    if normalized in _PAUSE_COMMANDS:
-        return "pause"
-    if normalized in _RESUME_COMMANDS:
-        return "resume"
-    if normalized in _SESSION_COMMANDS:
-        return "sessions"
-    if normalized in _TEAM_COMMANDS:
-        return "team"
-    if normalized in _SOLO_COMMANDS:
-        return "solo"
+    for intent, phrases in tables.items():
+        if normalized in phrases:
+            return intent
     return None
 
 
-def control_intent(text: str) -> str | None:
+def control_intent(text: str, language: str | None = "en") -> str | None:
     """Map an utterance to "pause" / "resume" / None.
 
     Two passes: the whole utterance first, then — because the STT often glues
@@ -1813,12 +1834,12 @@ def control_intent(text: str) -> str | None:
     segment carries the same intent. Mixed content ("Keep working. Sleep.")
     stays None: a real instruction must never be swallowed as a control word.
     """
-    whole = _single_control_intent(text)
+    whole = _single_control_intent(text, language)
     if whole is not None:
         return whole
     segments = [s for s in re.split(r"[.!?;,]+", text) if s.strip()]
     if len(segments) >= 2:
-        intents = {_single_control_intent(s) for s in segments}
+        intents = {_single_control_intent(s, language) for s in segments}
         if len(intents) == 1 and None not in intents:
             return intents.pop()
     # Third pass: STACKED repeats of one command with no punctuation between
@@ -1828,21 +1849,21 @@ def control_intent(text: str) -> str | None:
     # outside word ("go to the sleep folder") disqualifies — a real
     # instruction is never swallowed. Pause/resume only: those are the
     # commands where a miss strands the session.
-    words = re.findall(r"[a-z]+", text.lower().replace("'", ""))
-    words = [w for w in words if w not in _FILLER_WORDS]
+    fillers, tables = _control_tables(language)
+    words = re.findall(r"[a-z]+", voicecommands.fold(text))
+    words = [w for w in words if w not in fillers]
     if not words:
         return None
     joined = f" {' '.join(words)} "
-    for intent, phrases, vocab in (
-        ("pause", _PAUSE_COMMANDS, _PAUSE_TOKENS),
-        ("resume", _RESUME_COMMANDS, _RESUME_TOKENS),
-    ):
+    for intent in ("pause", "resume"):
+        phrases = tables[intent]
+        vocab = {w for p in phrases for w in p.split()}
         if set(words) <= vocab and any(f" {p} " in joined for p in phrases):
             return intent
     return None
 
 
-def match_intent(text: str) -> str | None:
+def match_intent(text: str, language: str | None = "en") -> str | None:
     """Map a transcribed utterance to "approve" / "deny" / None (unclear).
 
     Deny tokens win over approve tokens ("no, don't do it" must deny), and an
@@ -1851,13 +1872,15 @@ def match_intent(text: str) -> str | None:
     """
     normalized = text.lower()
     tokens = set(re.findall(r"[a-z']+", normalized))
-    if tokens & _DENY_TOKENS:
+    # Deny in ANY active language outranks approve in any of them.
+    foreign = voicecommands.verdict(text, language)
+    if tokens & _DENY_TOKENS or foreign == "deny":
         return "deny"
     if tokens & _APPROVE_TOKENS:
         return "approve"
     if any(phrase in normalized for phrase in _APPROVE_PHRASES):
         return "approve"
-    return None
+    return foreign
 
 
 def _permission_detail(ev: PermissionRequest) -> str:

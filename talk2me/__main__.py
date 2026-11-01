@@ -190,7 +190,8 @@ def _parse_args(argv: list[str]) -> Config:
             "to detect per utterance. whisper-gpu handles these as is. CPU "
             "whisper needs a multilingual model, e.g. --whisper-model base. "
             "The .en models are English-only, and so is parakeet. Voice "
-            "COMMANDS (pause/wake/approve) stay English for now."
+            "COMMANDS (pause/wake/approve) also work in es, fr, de, it and pt; "
+            "English always works."
         ),
     )
     p.add_argument(
