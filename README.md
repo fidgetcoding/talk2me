@@ -603,7 +603,7 @@ Everywhere:
 - **Python 3.11+**
 - **A microphone**, ideally close to your face.
 
-**macOS** — the platform this is built and daily-driven on. `pip install -e .` is all the setup there is: the audio library ships with PortAudio bundled, and the default voice is the built-in `say`.
+**macOS** — the platform this is built and daily-driven on. `pip install -e .` is all the setup there is: the audio library ships with PortAudio bundled, and the default voice is the built-in `say`. On Apple Silicon you need macOS 13 or newer, because the GPU ears' MLX dependency publishes nothing older and the install stops there. On Python 3.14 the GPU ears are skipped and you get CPU whisper, so stick to 3.11 through 3.13 if you want them.
 
 **Linux** — honestly: the headless tests pass in CI, the live mic loop is untested. What's known:
 
