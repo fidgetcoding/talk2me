@@ -31,7 +31,7 @@ Most of those owner rejections are on clips of 1.5 seconds or less. It's a filte
 
 **Fewer tracebacks.** No `claude` on PATH, a bad `--cwd`, a busy phone port, no PortAudio, a mistyped model: each is one sentence now. `--language es` on the default model moves to the multilingual one instead of hearing Spanish as English gibberish. `--version` exists, and `--help` starts by saying what this is.
 
-**Bugs the new tests caught:** a crash on Ctrl-C on Linux, three separate Windows crashes, and a phone hang-up on a torn packet.
+**Bugs the new tests caught:** a crash on Ctrl-C on Linux, four separate Windows failures, and a phone hang-up on a torn packet.
 
 ## How I tested it
 
