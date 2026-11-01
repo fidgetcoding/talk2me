@@ -119,6 +119,9 @@ jobs:
       - name: test_mlx_whisper
         run: python -m tests.test_mlx_whisper
 
+      - name: test_long_session
+        run: python -m tests.test_long_session
+
       - name: test_recovery
         run: python -m tests.test_recovery
 
