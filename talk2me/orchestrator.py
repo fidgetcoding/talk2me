@@ -188,6 +188,7 @@ class Orchestrator:
         # In-flight typed turns spawned by _typed_worker (pruned as they
         # finish; cancelled at teardown).
         self._typed_tasks: list[asyncio.Task] = []
+        self._faults: set[tuple[str, str]] = set()
         # The cbreak input line (typeline.py) when stdin is a real TTY;
         # closed at teardown to restore the terminal.
         self._typeline = None
@@ -284,8 +285,7 @@ class Orchestrator:
                 if self._fatal:
                     break
                 t_captured = time.monotonic()
-                if self._speech_check is not None and not await asyncio.to_thread(
-                    self._speech_check, utterance, self.mic.sample_rate
+                if self._speech_check is not None and not await self._guarded(self._speech_check, utterance, self.mic.sample_rate
                 ):
                     # Typing, taps, a cough — the capture VAD was fooled but
                     # the classifier wasn't. Drop SILENTLY (typing must not
@@ -307,8 +307,7 @@ class Orchestrator:
                         self.render.debug("(speech check: not speech — dropped)")
                     continue
                 self._lock_rejects = 0
-                if self._echo_gate is not None and not await asyncio.to_thread(
-                    self._echo_gate.foreign, utterance, self.mic.sample_rate
+                if self._echo_gate is not None and not await self._guarded(self._echo_gate.foreign, utterance, self.mic.sample_rate
                 ):
                     # Speakers full duplex: the segmenter captured our own
                     # spoken confirmation ("Paused. Say wake up…") coming
@@ -323,7 +322,7 @@ class Orchestrator:
                     self.render.debug(
                         f"(voice score {self._speech_check.last_score:+.2f})"
                     )
-                raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
+                raw = await self._transcribe(utterance, self.mic.sample_rate)
                 if self.cfg.debug:
                     self.render.debug(
                         f"[t] stt {time.monotonic() - t_captured:.2f}s"
@@ -1104,11 +1103,10 @@ class Orchestrator:
                     if w_trailing >= silence_needed or len(w_buf) >= max_frames:
                         utterance = np.concatenate(w_buf).astype(np.float32)
                         w_buf, w_voiced, w_trailing, w_started = [], 0, 0, False
-                        if self._speech_check is not None and not await asyncio.to_thread(
-                            self._speech_check, utterance, self.mic.sample_rate
+                        if self._speech_check is not None and not await self._guarded(self._speech_check, utterance, self.mic.sample_rate
                         ):
                             continue
-                        raw = await self.stt.transcribe(
+                        raw = await self._transcribe(
                             utterance, self.mic.sample_rate
                         )
                         if control_intent(collapse_stutter(raw), self.cfg.language) == "resume":
@@ -1146,8 +1144,7 @@ class Orchestrator:
                             # pre-warmed at startup; this costs ~a millisecond.)
                             if self._speech_check is not None:
                                 onset_audio = np.concatenate(buf).astype(np.float32)
-                                if not await asyncio.to_thread(
-                                    self._speech_check,
+                                if not await self._guarded(self._speech_check,
                                     onset_audio,
                                     self.mic.sample_rate,
                                 ):
@@ -1178,8 +1175,7 @@ class Orchestrator:
                                 # keep playing; the window re-arms so a real
                                 # talk-over still cuts within ~an onset.
                                 onset_audio = np.concatenate(buf).astype(np.float32)
-                                if not await asyncio.to_thread(
-                                    self._echo_gate.foreign,
+                                if not await self._guarded(self._echo_gate.foreign,
                                     onset_audio,
                                     self.mic.sample_rate,
                                 ):
@@ -1274,13 +1270,12 @@ class Orchestrator:
         if not cut or not buf:
             return None
         utterance = np.concatenate(buf).astype(np.float32)
-        if self._speech_check is not None and not await asyncio.to_thread(
-            self._speech_check, utterance, self.mic.sample_rate
+        if self._speech_check is not None and not await self._guarded(self._speech_check, utterance, self.mic.sample_rate
         ):
             # The onset passed the gate but the full collection is noise —
             # None routes into the repeat-your-question recovery upstream.
             return None
-        raw = await self.stt.transcribe(utterance, self.mic.sample_rate)
+        raw = await self._transcribe(utterance, self.mic.sample_rate)
         if raw and looks_hallucinated(raw):
             # A noise-triggered cut with a hallucinated transcript: returning
             # None routes into the repeat-your-question recovery upstream.
@@ -1352,7 +1347,7 @@ class Orchestrator:
     async def _speak(self, text: str) -> None:
         """Direct, serial speech — used by the permission gate's prompts. Turn
         prose goes through the render/play pipeline instead."""
-        await self.speaker.play(self.tts.synthesize(text))
+        await self._play(self.tts.synthesize(text))
 
     async def _speak_confirm(self, text: str) -> None:
         """Speak a short status line with the half-duplex mute held, so the
@@ -1362,6 +1357,42 @@ class Orchestrator:
         await self._speak(text)
         self.mic.set_muted(False)
         self.vad.reset()
+
+    # ---- a broken part costs that part, not the session --------------------
+
+    def _report_fault(self, part: str, exc: Exception) -> None:
+        """Say so once per kind of failure: a dead device fails on every chunk."""
+        key = (part, type(exc).__name__)
+        if key not in self._faults:
+            self._faults.add(key)
+            self.render.error(f"[{part}] {type(exc).__name__}: {str(exc)[:120]} (still going)")
+
+    async def _transcribe(self, audio: np.ndarray, sample_rate: int) -> str:
+        """An engine error is an utterance nobody heard, same as silence."""
+        try:
+            return await self.stt.transcribe(audio, sample_rate)
+        except Exception as exc:  # noqa: BLE001  whatever the engine throws
+            self._report_fault("ears", exc)
+            return ""
+
+    async def _guarded(self, check, audio: np.ndarray, sample_rate: int) -> bool:
+        """Run a speech or echo check. If the check itself breaks, the audio passes:
+        going deaf for good is worse, and the spoken gate still stands."""
+        try:
+            return await asyncio.to_thread(check, audio, sample_rate)
+        except Exception as exc:  # noqa: BLE001  whatever the model throws
+            self._report_fault("audio check", exc)
+            return True
+
+    async def _play(self, blocks) -> bool:
+        """A pulled headset or a dead device loses the sound, not the conversation.
+        Speaker.play retires its stream on an error, so the next chunk tries a fresh
+        one, and the answer keeps printing either way."""
+        try:
+            return await self.speaker.play(blocks)
+        except Exception as exc:  # noqa: BLE001  PortAudio, a phone bridge, a bad render
+            self._report_fault("speaker", exc)
+            return False
 
     # ---- speech pipeline -------------------------------------------------
 
@@ -1460,7 +1491,7 @@ class Orchestrator:
                         nl=True,
                     )
             self._last_audible = time.monotonic()
-            await self.speaker.play(_iter_blocks(item))
+            await self._play(_iter_blocks(item))
             self._last_audible = time.monotonic()
 
     async def _handle_permission(self, ev: PermissionRequest) -> None:
@@ -1596,20 +1627,18 @@ class Orchestrator:
         if not started or not buf:
             return ""
         utterance = np.concatenate(buf).astype(np.float32)
-        if self._speech_check is not None and not await asyncio.to_thread(
-            self._speech_check, utterance, self.mic.sample_rate
+        if self._speech_check is not None and not await self._guarded(self._speech_check, utterance, self.mic.sample_rate
         ):
             # Typing during a continuation window or a permission prompt must
             # never be stitched into a sentence or read as a verdict.
             return ""
-        if self._echo_gate is not None and not await asyncio.to_thread(
-            self._echo_gate.foreign, utterance, self.mic.sample_rate
+        if self._echo_gate is not None and not await self._guarded(self._echo_gate.foreign, utterance, self.mic.sample_rate
         ):
             # A late echo tail of the prompt itself must never read as an
             # approve/deny verdict or a session pick.
             return ""
         return collapse_stutter(
-            await self.stt.transcribe(utterance, self.mic.sample_rate)
+            await self._transcribe(utterance, self.mic.sample_rate)
         )
 
     async def _extend_unfinished(self, text: str) -> str:

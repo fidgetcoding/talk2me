@@ -61,7 +61,11 @@ def _parse_args(argv: list[str]) -> Config:
     has_separator = "--" in argv
     argv = [x for x in argv if x != "--setup"]
     if run_setup and sys.stdin.isatty():
-        saved = run_wizard(saved)
+        try:
+            saved = run_wizard(saved)
+        except EOFError:
+            # Ctrl-D at a prompt. Nothing was saved, and that's fine.
+            raise SystemExit("\nsetup cancelled, nothing saved") from None
 
     p = argparse.ArgumentParser(
         prog="t2m",
@@ -85,13 +89,20 @@ def _parse_args(argv: list[str]) -> Config:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--version", action="version", version=f"talk2me {__version__}")
-    p.add_argument(
+    basics = p.add_argument_group("Start here")
+    tools = p.add_argument_group("What the agent may do")
+    ears = p.add_argument_group("How it hears you")
+    voice = p.add_argument_group("How it talks back")
+    brain = p.add_argument_group("A different brain")
+    devices = p.add_argument_group("Devices and phone")
+    misc = p.add_argument_group("Screen and logs")
+    basics.add_argument("--version", action="version", version=f"talk2me {__version__}")
+    basics.add_argument(
         "--setup", action="store_true",
         help="run the guided setup (brain, ears, voice, barge-in, tools, "
         "folder), save it as your defaults, then launch",
     )
-    p.add_argument(
+    brain.add_argument(
         "--agent", default="claude", choices=["claude", "codex"],
         help=(
             "which coding agent is the brain. claude = Claude Code CLI "
@@ -99,8 +110,8 @@ def _parse_args(argv: list[str]) -> Config:
             "tool safety comes from its sandbox, so --gated doesn't apply)."
         ),
     )
-    p.add_argument("--model", default=None, help="the agent's model (e.g. haiku, sonnet, opus)")
-    p.add_argument(
+    basics.add_argument("--model", default=None, help="the agent's model (e.g. haiku, sonnet, opus)")
+    brain.add_argument(
         "--backend-base-url", default=None, dest="backend_base_url",
         help=(
             "Anthropic-compatible endpoint for a different brain — Kimi "
@@ -108,15 +119,15 @@ def _parse_args(argv: list[str]) -> Config:
             "one. Pair with --backend-auth-env."
         ),
     )
-    p.add_argument(
+    brain.add_argument(
         "--backend-auth-env", default=None, dest="backend_auth_env",
         help=(
             "NAME of the env var holding the API key for --backend-base-url "
             "(e.g. MOONSHOT_API_KEY). The key itself never lands in a file."
         ),
     )
-    p.add_argument("--cwd", default=None, help="working dir for the agent")
-    p.add_argument(
+    basics.add_argument("--cwd", default=None, help="working dir for the agent")
+    tools.add_argument(
         "--gated", action=argparse.BooleanOptionalAction, default=None,
         help=(
             "spoken-approval mode, the DEFAULT for voice: tools outside a "
@@ -125,7 +136,7 @@ def _parse_args(argv: list[str]) -> Config:
             "stays blocked in every mode."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--auto-approve", action="store_false", dest="gated",
         help=(
             "tools just run with nobody asking, like the Claude app. Fast, but "
@@ -134,7 +145,7 @@ def _parse_args(argv: list[str]) -> Config:
             "everything."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--sandbox", action=argparse.BooleanOptionalAction, default=False,
         help=(
             "run the agent inside an OS sandbox (macOS sandbox-exec, Linux "
@@ -145,14 +156,14 @@ def _parse_args(argv: list[str]) -> Config:
             "so this does nothing with --agent codex."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--sandbox-allow-host", action="append", default=[], dest="sandbox_allow_hosts",
         help=(
             "extra host the sandboxed agent may reach on port 443, repeatable. "
             "'.npmjs.org' with the dot covers subdomains too."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--sandbox-localhost", action="store_true",
         help=(
             "macOS: let the sandboxed agent reach other services on this Mac's "
@@ -160,12 +171,12 @@ def _parse_args(argv: list[str]) -> Config:
             "private loopback, so its own dev servers already work."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--permission-mode", default="default", choices=SAFE_PERMISSION_MODES,
         help="fine-tune the posture used WITH --gated (bypass values blocked here)",
     )
-    p.add_argument("--text", action="store_true", help="type instead of talk (no audio)")
-    p.add_argument(
+    basics.add_argument("--text", action="store_true", help="type instead of talk (no audio)")
+    tools.add_argument(
         "--dangerously-allow-tools", action="store_true",
         help=(
             "TEXT MODE ONLY. Forward --permission-mode bypassPermissions to "
@@ -175,7 +186,7 @@ def _parse_args(argv: list[str]) -> Config:
             "only when you fully trust the typed input."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--no-voice-approval", action="store_true",
         help=(
             "disable the spoken approve/deny gate for tool calls. Tools outside "
@@ -183,7 +194,7 @@ def _parse_args(argv: list[str]) -> Config:
             "agent can't do one-off gated actions)."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--allow-tool", action="append", default=[],
         help=(
             "extra auto-approved tool rule, repeatable — e.g. "
@@ -191,14 +202,14 @@ def _parse_args(argv: list[str]) -> Config:
             "allowlist; everything else goes through the voice gate."
         ),
     )
-    p.add_argument(
+    tools.add_argument(
         "--deny-tool", action="append", default=[],
         help=(
             "extra hard-denied tool rule, repeatable — denied in every mode, "
             "never asked out loud."
         ),
     )
-    p.add_argument(
+    ears.add_argument(
         "--stt", default="whisper", choices=["whisper", "whisper-gpu", "parakeet"],
         help=(
             "transcription engine. whisper (default): base.en on the CPU, runs "
@@ -209,12 +220,12 @@ def _parse_args(argv: list[str]) -> Config:
             "(`pip install -e \".[parakeet]\"`)."
         ),
     )
-    p.add_argument(
+    ears.add_argument(
         "--whisper-model", default="base.en",
         help="which CPU whisper model (default base.en). Bigger hears better and "
         "answers slower: small.en, medium.en",
     )
-    p.add_argument(
+    ears.add_argument(
         "--language", default="en",
         help=(
             "transcription language: a 2-letter code (es, de, fr…) or 'auto' "
@@ -225,56 +236,56 @@ def _parse_args(argv: list[str]) -> Config:
             "English always works."
         ),
     )
-    p.add_argument(
+    voice.add_argument(
         "--tts", default="say", choices=["say", "espeak", "kitten", "null"],
         help="speech engine: say (macOS built-in; falls to espeak-ng where there's "
         "no say), espeak (espeak-ng, apt-get away on Linux), kitten (local neural, "
         "`pip install talk2me[kitten]`), null (no voice out)",
     )
-    p.add_argument("--voice", default=None, help="engine-specific voice id")
-    p.add_argument(
+    voice.add_argument("--voice", default=None, help="engine-specific voice id")
+    voice.add_argument(
         "--rate", type=int, default=236, dest="rate_wpm",
         help="speech rate in words/minute (say engine; macOS default ~175, "
         "talk2me default 236 ≈ 1.35x).",
     )
-    p.add_argument(
+    ears.add_argument(
         "--vad", default="energy", choices=["energy", "silero", "webrtc"],
         help="voice-activity detector. webrtc is more robust across mics (BT).",
     )
-    p.add_argument(
+    ears.add_argument(
         "--vad-aggressiveness", type=int, default=2, choices=[0, 1, 2, 3],
         help="webrtc only: 0 (lenient) .. 3 (aggressive noise filtering)",
     )
-    p.add_argument(
+    ears.add_argument(
         "--energy-threshold", type=float, default=0.012,
         help="how loud counts as you talking. Raise it in a noisy room (try 0.02)",
     )
-    p.add_argument(
+    ears.add_argument(
         "--silence-ms", type=int, default=1200,
         help="trailing silence (ms) that ends your turn; lower = snappier but "
         "cuts off mid-sentence thinking pauses",
     )
-    p.add_argument(
+    devices.add_argument(
         "--list-devices", action="store_true",
         help="print available input/output audio devices and exit",
     )
-    p.add_argument(
+    devices.add_argument(
         "--input-device", default=None,
         help="mic device: PortAudio index or name substring (e.g. MacBook)",
     )
-    p.add_argument(
+    devices.add_argument(
         "--output-device", default=None,
         help="playback device: index or name substring (e.g. AirPods)",
     )
-    p.add_argument(
+    ears.add_argument(
         "--vocab", action="append", default=[],
         help="bias term for STT (repeatable): --vocab Lorecraft --vocab Morgen",
     )
-    p.add_argument(
+    ears.add_argument(
         "--vocab-file", default=None,
         help="file of bias terms, one per line or comma-separated",
     )
-    p.add_argument(
+    brain.add_argument(
         "--with-user-config", action="store_true",
         help=(
             "load your full user-level Claude config (hooks, skills, user "
@@ -283,7 +294,7 @@ def _parse_args(argv: list[str]) -> Config:
             "CLAUDE.md / settings always load either way."
         ),
     )
-    p.add_argument(
+    voice.add_argument(
         "--barge-in", action=argparse.BooleanOptionalAction, default=True,
         help=(
             "full-duplex (ON by default): the mic stays live while the agent "
@@ -294,7 +305,7 @@ def _parse_args(argv: list[str]) -> Config:
             "half-duplex."
         ),
     )
-    p.add_argument(
+    voice.add_argument(
         "--aec", choices=["auto", "native", "gate", "off"], default="auto",
         help=(
             "how speakers barge-in filters the agent's own voice. auto "
@@ -304,30 +315,30 @@ def _parse_args(argv: list[str]) -> Config:
             "while it speaks)."
         ),
     )
-    p.add_argument(
+    voice.add_argument(
         "--no-aec", dest="aec", action="store_const", const="off",
         help="alias for --aec off (kept from v2.4)",
     )
-    p.add_argument(
+    misc.add_argument(
         "--save-dir", default=os.environ.get("TALK2ME_SAVE_DIR") or None,
         help="save a plain-markdown transcript of every session into this "
         "folder (persistent default: export TALK2ME_SAVE_DIR=~/talk2me-logs)",
     )
-    p.add_argument(
+    voice.add_argument(
         "--ticks", action=argparse.BooleanOptionalAction, default=False,
         help=(
             "audible 'still working' blip every ~8 quiet seconds during long "
             "tool runs. OFF by default — the work panel shows it on screen."
         ),
     )
-    p.add_argument(
+    basics.add_argument(
         "--continue", "-c", action="store_true", dest="resume",
         help=(
             "pick up where you left off: resume the last session for this "
             "working directory (the agent keeps its memory of what you built)"
         ),
     )
-    p.add_argument(
+    devices.add_argument(
         "--phone", action="store_true",
         help=(
             "use your phone as the mic + speaker (for SSH sessions from an "
@@ -337,11 +348,11 @@ def _parse_args(argv: list[str]) -> Config:
             "phone's own echo cancellation does the heavy lifting."
         ),
     )
-    p.add_argument(
+    devices.add_argument(
         "--phone-port", type=int, default=8765,
         help="port for the --phone bridge (default 8765)",
     )
-    p.add_argument(
+    ears.add_argument(
         "--voice-lock", action=argparse.BooleanOptionalAction, default=False,
         dest="voice_lock",
         help=(
@@ -351,7 +362,7 @@ def _parse_args(argv: list[str]) -> Config:
             "'solo session'."
         ),
     )
-    p.add_argument(
+    ears.add_argument(
         "--enroll-voice", action="store_true", dest="enroll_voice",
         help=(
             "record your voiceprint (read 7 short prompts, about a minute), calibrate "
@@ -359,7 +370,7 @@ def _parse_args(argv: list[str]) -> Config:
             "on. Re-run any time to re-calibrate."
         ),
     )
-    p.add_argument(
+    ears.add_argument(
         "--speech-check", action=argparse.BooleanOptionalAction, default=True,
         help=(
             "confirm audio is actually speech (Silero classifier) before "
@@ -367,14 +378,14 @@ def _parse_args(argv: list[str]) -> Config:
             "coughs. --no-speech-check restores raw-VAD behavior."
         ),
     )
-    p.add_argument(
+    misc.add_argument(
         "--plain", action="store_true",
         help=(
             "classic v1 output: no colors, no panels. Auto-selected when "
             "stdout isn't a terminal, NO_COLOR is set, or rich is missing."
         ),
     )
-    p.add_argument(
+    misc.add_argument(
         "--debug", action="store_true",
         help="print VAD speech/turn transitions (for tuning --energy-threshold)",
     )
@@ -1063,7 +1074,10 @@ def main(argv: list[str] | None = None) -> int:
             # flags on the original command line still win).
             from .wizard import load_saved_config, run_wizard
 
-            run_wizard(load_saved_config())
+            try:
+                run_wizard(load_saved_config())
+            except EOFError:
+                print("\nsetup cancelled, keeping your settings", flush=True)
     except KeyboardInterrupt:
         print("\nbye.", flush=True)
         # Hard exit, deliberately: interpreter teardown after Ctrl-C kept

@@ -57,6 +57,21 @@ def _sanitize(text: str) -> str:
     return _CONTROL_CHARS.sub("", text)
 
 
+def _tool_input(value) -> dict:
+    return _sanitize_deep(value) if isinstance(value, dict) else {}
+
+
+def _sanitize_deep(value):
+    """The same, through the nested strings of a tool's input."""
+    if isinstance(value, str):
+        return _sanitize(value)
+    if isinstance(value, dict):
+        return {k: _sanitize_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_deep(v) for v in value]
+    return value
+
+
 # Human summary of a tool call's input, for the transcript line. Deliberately
 # tiny: a filename, a pattern, the head of a command — never the full payload.
 _SUMMARY_MAX = 60
@@ -253,6 +268,9 @@ class ClaudeCodeBackend:
             cwd=self._cwd,
             env=env,
             limit=_STREAM_LIMIT,
+            # No controlling terminal: a sandboxed script could otherwise push
+            # keystrokes into the shell waiting behind us, with TIOCSTI on /dev/tty.
+            start_new_session=self._sandbox is not None,
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
@@ -326,8 +344,12 @@ class ClaudeCodeBackend:
                 "response": inner,
             },
         }
-        self._proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
-        await self._proc.stdin.drain()
+        # The agent can die while we wait on a verdict. The reader reports that.
+        try:
+            self._proc.stdin.write((json.dumps(msg) + "\n").encode("utf-8"))
+            await self._proc.stdin.drain()
+        except (BrokenPipeError, ConnectionError, RuntimeError, OSError):
+            return
 
     async def switch_session(self, resume_session_id: str) -> None:
         """Swap the live conversation for an earlier one (the spoken session
@@ -424,7 +446,13 @@ class ClaudeCodeBackend:
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue  # non-JSON noise; ignore
-                for ev in self._translate(obj):
+                # One line that isn't shaped as expected costs that line. A CLI
+                # version skew must not end the session (and stderr has the rest).
+                try:
+                    events = self._translate(obj) if isinstance(obj, dict) else []
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    continue
+                for ev in events:
                     await self._events.put(ev)
             # Natural EOF: claude closed stdout on its own, so the conversation
             # cannot continue (a deliberate close() cancels this task before the
@@ -504,10 +532,10 @@ class ClaudeCodeBackend:
                         request_id=str(
                             obj.get("request_id") or req.get("request_id") or ""
                         ),
-                        tool_name=str(
+                        tool_name=_sanitize(str(
                             req.get("tool_name") or req.get("tool") or "tool"
-                        ),
-                        tool_input=req.get("input") or req.get("tool_input") or {},
+                        )),
+                        tool_input=_tool_input(req.get("input") or req.get("tool_input")),
                     )
                 ]
 
@@ -518,7 +546,9 @@ class ClaudeCodeBackend:
         if etype == "content_block_delta":
             delta = event.get("delta") or {}
             if delta.get("type") == "text_delta":
-                text = delta.get("text", "")
+                # Agent text reaches the terminal and `say`. A file it read could hold
+                # escape codes that retitle the window or write the clipboard.
+                text = _sanitize(str(delta.get("text") or ""))
                 if text:
                     self._turn_text.append(text)
                     self._turn_streamed = True
@@ -526,13 +556,13 @@ class ClaudeCodeBackend:
             elif delta.get("type") == "thinking_delta":
                 # Extended-thinking stream: surfaced for the screen only —
                 # never spoken, never in the turn rollup.
-                thought = delta.get("thinking", "")
+                thought = _sanitize(str(delta.get("thinking") or ""))
                 if thought:
                     return [ThinkingDelta(text=thought)]
         elif etype == "content_block_start":
             block = event.get("content_block") or {}
             if block.get("type") == "tool_use":
-                return [ToolActivity(name=block.get("name", "tool"))]
+                return [ToolActivity(name=_sanitize(str(block.get("name") or "tool")))]
         return []
 
     def _translate_assistant_message(self, message: dict) -> list[AgentEvent]:
@@ -556,7 +586,7 @@ class ClaudeCodeBackend:
                 # The stream path already announced this call by name (lowest
                 # latency); this full-message copy carries the arguments, so it
                 # goes out as an `upgrade` — detail, not a second call.
-                name = block.get("name", "tool")
+                name = _sanitize(str(block.get("name") or "tool"))
                 inp = block.get("input") or {}
                 out.append(
                     ToolActivity(
@@ -567,7 +597,7 @@ class ClaudeCodeBackend:
                     )
                 )
             elif btype == "text":
-                text = block.get("text", "")
+                text = _sanitize(str(block.get("text") or ""))
                 if text:
                     text_parts.append(text)
 

@@ -8,6 +8,10 @@ A script is a JSON list with one entry per user turn:
   {"say": "..."}                        just reply
   {"say": "...", "hold": 20}            reply, then keep the turn open up to 20 s
                                         unless an interrupt arrives
+  {"raw": ["line", ...], "say": "..."}  write these lines to stdout first, as is
+  {"huge": 20000000, "say": "..."}      write one line that long first
+  {"die": 3}                            exit with that code mid-turn
+  {"ask": "x", "die": 3}                exit while waiting on the verdict
 """
 
 import json
@@ -52,15 +56,24 @@ def read_message(timeout: float | None = None) -> dict | None:
 
 
 def run_turn(turn: dict) -> None:
+    for line in turn.get("raw", []):
+        sys.stdout.write(line + "\n")
+    if "huge" in turn:
+        sys.stdout.write("x" * turn["huge"] + "\n")
+    sys.stdout.flush()
     if "ask" in turn:
         emit({
             "type": "control_request",
             "request_id": "req-1",
             "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": turn["ask"]}},
         })
+        if "die" in turn:
+            raise SystemExit(turn["die"])
         reply = read_message()
         behavior = reply["response"]["response"]["behavior"]
         log(event="permission", behavior=behavior)
+    if "die" in turn:
+        raise SystemExit(turn["die"])
     say(turn.get("say", "ok."))
     deadline = time.monotonic() + turn.get("hold", 0)
     while time.monotonic() < deadline:

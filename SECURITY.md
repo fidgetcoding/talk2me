@@ -93,13 +93,16 @@ script runs with no sandbox first, so a pass can't mean the attack was broken.
 `tests/manual_sandbox_check.py` does it through the real `claude` CLI: its own Write
 tool, then a script it wrote and ran.
 
+It also keeps out what would run later, outside it: agent hooks and rules, `~/.claude.json` (MCP servers live there), editor tasks, git hooks and config. On a Mac it can't signal other processes, and on both systems the agent starts with no controlling terminal, so a script can't type into your shell. Tokens and agent sockets are scrubbed from its environment, except the agent's own key.
+
 What it still can't do:
 
 - **The project is writable, by design.** A bad instruction can still wreck
   uncommitted work. Hooks, git config and agent settings inside the project stay
   read-only, because those would run later outside the sandbox. On Mac that also
   means `git init` fails inside it. On Linux only the ones that already exist get
-  locked.
+  locked, and talk2me tells you at the end of the session if the agent made a new one
+  at the top of the project.
 - **The model API is reachable, also by design.** A script could send data to
   `api.anthropic.com` using somebody else's key. Every host you add with
   `--sandbox-allow-host` is another way out.
@@ -108,6 +111,8 @@ What it still can't do:
   keychain the same way the CLI does. It also means the keychain files stay writable
   on a Mac, because the CLI rotates its login token there, so a script could damage
   them. It can't send what it finds anywhere but the allowed hosts.
+- **On Linux, Unix sockets outside `/run` stay reachable.** The sandbox hides `/run`, where docker and dbus usually live, but a socket somewhere else on disk can still be connected to. On a Mac they're blocked.
+- **Using up resources isn't stopped.** A fork bomb or a full disk is still your problem.
 - **The Mac's sandbox is deprecated and undocumented.** Apple still ships
   `sandbox-exec` and marks it deprecated. The rules that stop launching things
   outside it (`open`, `osascript`, `launchctl`) go by path plus a list of system
