@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "talk2me"
-version = "2.5.0"
+version = "2.6.0"
 description = "Hands-free voice loop for terminal coding agents (Claude Code by default)."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,10 @@ dependencies = [
     # Native AEC (vpio.py): macOS voice-processing capture. Darwin-only; every
     # other platform rides the userspace echo-gate fallback.
     "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",
+    # GPU ears (stt/mlx_whisper.py), the default on Apple Silicon. Everywhere
+    # else, and on 3.14 where mlx wheels depend on the macOS version, the ears
+    # stay on faster-whisper. Metadata pulls in torch; it's never imported.
+    "mlx-whisper>=0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
 ]
 
 [project.optional-dependencies]

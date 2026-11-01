@@ -2,6 +2,8 @@
 
 *Research report, 2026-07-18. Rec #1 (hotwords + decode pinning + live context seeding) shipped same day; #2 and #3 open.*
 
+*Update, v2.6.0 (2026-11-01): Whisper large-v3-turbo on the Apple-Silicon GPU, through mlx-whisper, is now the default on Apple Silicon. Parakeet stayed as the speed option. A 24-clip race on synthetic voices had it level with the other engines on word errors, with misses a coding agent can still read, and live context halves the errors when it knows the words. Results and caveats are in the README under "Switching the ears". The report below is as written in July.*
+
 ## The core reframe (read this first)
 
 Wispr Flow's quality is **~50% ASR, ~50% an LLM formatting/cleanup layer** — it says so itself: context-conditioned ASR then a fine-tuned Llama pass for "token-level formatting control," targeting <200ms ASR + <200ms LLM + <200ms network ([Wispr technical post](https://wisprflow.ai/post/technical-challenges), [Baseten case study](https://www.baseten.co/resources/customers/wispr-flow/)). Most of what "feels good" (filler removal, punctuation, list formatting, prose polish) is the LLM layer, not the acoustic model.

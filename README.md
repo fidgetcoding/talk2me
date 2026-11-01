@@ -23,7 +23,7 @@ You say something. It hears you, types it to your coding agent, reads the answer
 | [What it actually does](#what-it-actually-does) | [Interrupting it](#interrupting-it) | [Tuning the ears](#tuning-the-ears) |
 | [The trick](#the-trick) | [Finish your sentence](#finish-your-sentence) · [Pausing the ears](#pausing-the-ears) · [🔒 Voice-lock](#voice-lock-only-you) | [The debugging playbook](#the-debugging-playbook) |
 | [Requirements](#requirements) | [Hear Claude Code itself](#hear-claude-code-itself-hook-mode) · [📱 Phone mode](#phone-mode-ssh-from-your-iphone) | [Under the hood](#under-the-hood) |
-| [Tests](#tests) · [FAQ](#faq) · [Versions](#versions) | [Ways to run it](#ways-to-run-it) | [Not done yet](#not-done-yet) |
+| [Tests](#tests) · [FAQ](#faq) · [Versions](#versions) | [Ways to run it](#ways-to-run-it) | [Not done yet](#not-done-yet) · [How it evolved](#how-it-evolved) |
 
 ---
 
@@ -32,7 +32,7 @@ You say something. It hears you, types it to your coding agent, reads the answer
 One line, in any terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash
 ```
 
 Then:
@@ -43,20 +43,20 @@ t2m
 
 That's it. That's the command. Talk.
 
-Want the fast GPU ears (Apple Silicon) baked in from the start? Same line, one flag:
+On Apple Silicon that line brings the GPU ears with it, so expect a few minutes and a chunky dependency pile. Want Parakeet, the speed option, in there too? Same line, one flag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.sh | bash -s -- --parakeet
+curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --parakeet
 ```
 
 Other ways in, if that's your style:
 
 ```bash
 # pipx (isolated, on PATH, no thinking)
-pipx install "git+https://github.com/fidgetcoding/talk2me.git"
+pipx install "git+https://github.com/fidgetcoding/talk2me.git@v2.6.0"
 
 # plain pip, your venv, your rules
-pip install "git+https://github.com/fidgetcoding/talk2me.git"
+pip install "git+https://github.com/fidgetcoding/talk2me.git@v2.6.0"
 
 # or from a clone
 git clone https://github.com/fidgetcoding/talk2me.git && cd talk2me && pip install -e .
@@ -66,18 +66,18 @@ And the laziest path of all: paste this repo's URL into Claude Code and say *"in
 
 ### First launch
 
-A bare first `t2m` (no flags, no saved setup) walks you through it: pick the **brain** (Claude by default — or **Kimi, GLM, DeepSeek**, which run through the same agent via their official Anthropic-compatible endpoints with your API key; "opus 4.6" style shorthand works), the **ears** (whisper or the faster parakeet — it offers to install what's missing), the **voice** (it recommends Ava (Premium) and tells you where to get her), **barge-in** (on, explained), **tools** (auto-approve, explained), and the **folder** you're working on. Answers save to `~/.talk2me/config.json` and become your defaults — flags always override. Change your mind any time: `t2m --setup`, or **Ctrl-T** mid-session (macOS) to reopen the menu without losing your place.
+A bare first `t2m` (no flags, no saved setup) walks you through it: pick the **brain** (Claude by default — or **Kimi, GLM, DeepSeek**, which run through the same agent via their official Anthropic-compatible endpoints with your API key; "opus 4.6" style shorthand works), the **ears** (Whisper on your GPU if you've got Apple Silicon, CPU whisper, or parakeet; it offers to install what's missing), the **voice** (it recommends Ava (Premium) and tells you where to get her), **barge-in** (on, explained), **tools** (ask out loud first by default, auto-approve if you want it, both explained), and the **folder** you're working on. Answers save to `~/.talk2me/config.json` and become your defaults — flags always override. Change your mind any time: `t2m --setup`, or **Ctrl-T** mid-session (macOS) to reopen the menu without losing your place.
 
-First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody.
+First run on macOS pops a **microphone permission** dialog for your terminal — click Allow, or you'll be talking to nobody. On Apple Silicon the first launch also downloads the ears, about 1.6 GB, one time. It tells you when that's happening, so it won't look hung.
 
 **Pro tip:** when your agent is doing the installing, give it this repo's link too. It's open source — you can do whatever tf you want — and an agent that has read the source debugs your machine's quirks (weird audio devices, mic permissions, your cursed Bluetooth setup) in one turn instead of guessing.
 
 ### Versions
 
-`main` is **v2**: same voice loop, new retro face. **v1** is the launch build, frozen forever as the `v1` branch and the `v1.0.0` tag. If you liked it plain, it's one flag away:
+The installer grabs the newest tagged release, not whatever landed on `main` five minutes ago. Want the bleeding edge anyway? Add `--ref main`. **v2** is the same voice loop with a new retro face. **v1** is the launch build, frozen forever as the `v1` branch and the `v1.0.0` tag. If you liked it plain, it's one flag away:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/main/install.sh | bash -s -- --v1
+curl -fsSL https://raw.githubusercontent.com/fidgetcoding/talk2me/v2.6.0/install.sh | bash -s -- --v1
 ```
 
 Re-run the installer with a different `--ref` any time to switch versions in place. Pinning by pip works too: `pip install "git+https://github.com/fidgetcoding/talk2me.git@v1.0.0"`.
@@ -111,7 +111,7 @@ Everything on one screen. This is the whole manual for day one.
 | **"pause listening"** · "stop listening" · "sleep" · "go to sleep" · "go to bed" · "take a break" · "pause" | any time — even mid-task | Ears go quiet until you wake it. Never cancels running work: an interrupted task auto-resumes. |
 | **"wake up"** · "resume listening" · "I'm back" · "unpause" | while paused | Back to normal listening. |
 | **"resume previous session"** · "continue previous session" · "list sessions" | while it's listening | Speaks a numbered list of this folder's earlier sessions (named by their first instruction) — say a number to switch the live conversation onto it, or "cancel". |
-| **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (`--gated` mode only) | Runs or declines the tool call. Mumble twice = it declines for you. |
+| **"approve"** · "yes" · "go ahead" / **"deny"** · "no" · "stop" | it asks "Approve or deny?" (the default, unless you chose auto-approve) | Runs or declines the tool call. Mumble twice = it declines for you. |
 | **"team session"** · "everyone can talk" / **"solo session"** · "lock to my voice" | any time (voice-lock enrolled) | Opens the ears to everyone, or locks them back to your enrolled voice. |
 
 *Every command in this table also works typed — same words, Enter instead of silence.*
@@ -127,13 +127,14 @@ Everything on one screen. This is the whole manual for day one.
 | `wake up` / `unpause` + Enter | Wakes it from a typed or spoken pause. Also the universal unstick: typed input bypasses the audio gate entirely (voice-lock, noise, whatever — the keyboard always gets through). |
 | `t2m --continue` (or `-c`) | Pick up where you left off — resumes this folder's last session, memory intact. No more "what game?". |
 | `t2m --no-barge-in` | Turn interrupting OFF (barge-in is the default, speakers included). |
-| `t2m --gated` | Spoken approvals before any non-read tool runs (default is auto-approve, with the nasty stuff hard-blocked either way). |
-| `t2m --stt parakeet` | GPU ears — faster + more accurate (Apple Silicon; `pip install -e ".[parakeet]"` first). |
+| `t2m --auto-approve` | Tools run with nobody asking. Fast, but anything the mic hears can start them. The default asks out loud first (`--gated`). See [Saying yes out loud](#saying-yes-out-loud). |
+| `t2m --stt parakeet` | The speed option: about 0.1s per sentence on the GPU, English-only (Apple Silicon; `pip install -e ".[parakeet]"` first). See [Switching the ears](#switching-the-ears). |
+| `t2m --stt whisper` | The small CPU ears: base.en, lighter on RAM, no big download. |
 | `t2m --voice "Ava (Premium)" --rate 236` | A voice from this decade, at 1.35× speed. |
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
 | `t2m --agent codex` | OpenAI's Codex CLI as the brain (`codex login` first). Same voice loop, same feed; safety = Codex's own sandbox. |
 | `t2m --backend-base-url … --backend-auth-env MY_KEY` | A different brain entirely — Kimi/GLM/DeepSeek publish Anthropic-compatible endpoints; the key stays in your env, never a file. Easiest via `t2m --setup`. |
-| `t2m --language es` (or `auto`) | Talk to it in another language (whisper; pairs with `--whisper-model base` — the `.en` models and parakeet are English-only). Voice commands stay English for now. |
+| `t2m --language es` (or `auto`) | Talk to it in another language. The GPU ears just do it; CPU whisper needs `--whisper-model base` (the `.en` models and parakeet are English-only). Voice commands stay English for now. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
@@ -219,7 +220,7 @@ This is the section I wish every voice tool had. Voice interfaces fail silently 
 | `[tool] Bash` etc. (v1 / `--plain`) — or the live `working` panel (v2) | The agent is using a tool. Shown, never spoken. Tool-heavy turns take longer before you hear anything. | Patience — watch the tools tick by. |
 | `⚙ N tool calls · 42s` | The work panel folded into its receipt — the tool burst is over and the agent is talking (or done). | Nothing. |
 | *a soft "tink" every ~8s* (only with `--ticks`) | The working tick: mid-tool-run and fine, just busy. OFF by default — the work panel shows the same thing silently. | Nothing. |
-| `[permission] Bash: command=…` + a spoken question | The approval gate (`--gated` mode only). The agent wants to run something and the turn is PAUSED until you answer. | Say "approve" or "deny". Unclear twice = auto-deny. |
+| `[permission] Bash: command=…` + a spoken question | The approval gate, on by default. The agent wants to run something and the turn is PAUSED until you answer. | Say "approve" or "deny". Unclear twice = auto-deny. |
 | `[barge-in] listening…` | You talked over it (or something did). Playback and the agent's turn were cut; it's now collecting what you're saying. | Finish your sentence — it becomes the next message. |
 | `[go on…]` | Same cut, but it happened before the agent said anything — it thinks you're still finishing YOUR sentence. | Keep talking; your fragments get stitched together. |
 | `🗣 you (continued): …` | It stitched your interrupted sentence back together and sent the whole thing. | Nothing — this is the fix working. |
@@ -232,12 +233,12 @@ The one-line version: **if the screen printed a marker recently, it's not broken
 
 ## How long things take
 
-Measured on an M-series MacBook Pro, `--model haiku`, whisper base.en. Your numbers will vary; `--debug` prints yours per turn.
+Measured on an M-series MacBook Pro, `--model haiku`. Your numbers will vary; `--debug` prints yours per turn.
 
 | Stage | Typical | The knob |
 |---|---|---|
 | You stop talking → turn ends | **1.2s** (fixed silence window) | `--silence-ms`. Lower = snappier but cuts off your thinking pauses. |
-| Turn ends → transcript | 0.1–0.4s | `--stt parakeet` is the fast end. |
+| Turn ends → transcript | ~0.55s on the GPU ears, 0.3–0.5s on CPU base.en | `--stt parakeet` is the fast end, ~0.1s. |
 | Transcript → first token | 1.3–2.5s (simple), 3–7s+ (tool-using turns) | Model choice. Tool turns are just slower — watch the `[tool]` lines. |
 | First token → first sound | 1–2s (TTS render of the first clause) | Shorter first sentences start faster; a streaming TTS engine is the future fix. |
 | **Total: silence → hearing the answer** | **~4–6s** simple, more with tools | |
@@ -249,21 +250,25 @@ Measured on an M-series MacBook Pro, `--model haiku`, whisper base.en. Your numb
 
 A coding agent isn't just chat — sooner or later it wants to *do* something. Run a command. Write a file. Here's how talk2me handles that, in both of its moods:
 
-**The default: auto-approve.** Tools just run. You ask for a pong game, it writes the file, starts the server, tells you when it's playable — no "mother may I" at every step. This is the flow the phone apps taught you to expect, and after one session of approving every file write you'll know why it's the default.
-
-One guardrail survives even in auto-approve, because Claude's deny rules apply in **every** permission mode: the **hard denylist**. `sudo`, `rm -rf`, `git push`, `git reset --hard`, `curl`, `wget`, `ssh`, `dd` — blocked outright, not askable, no voice override. You can go fast AND not be able to nuke a repo by mumbling. Extend it anytime: `--deny-tool 'Bash(docker:*)'`.
-
-**The careful mode: `--gated`.** Everything outside a read-only allowlist pauses the turn and asks out loud:
+**The default: it asks first.** Anything outside a read-only allowlist pauses the turn and asks out loud:
 
 > **it:** "Claude wants to run the command npm install. Approve or deny?"
 > **you:** "go ahead"
 > *…it runs, and the answer keeps going.*
 
-Say "approve", "yes", "go ahead" — or "no", "stop", "deny". Unclear twice = it plays it safe and declines for you. Tune it with `--allow-tool 'Bash(make:*)'` for things you're tired of blessing. Use `--gated` when the agent is touching something you care about, or when you're demoing to someone whose trust you haven't earned yet.
+Say "approve", "yes", "go ahead" — or "no", "stop", "deny". Unclear twice = it plays it safe and declines for you. Tired of blessing the same thing? `--allow-tool 'Bash(make:*)'`.
 
-The startup line always tells you which mood you're in: `tools: auto-approve ⚡` or `tools: gated (spoken approvals)`.
+Why this is the default: a mic isn't a keyboard. It hears you, the TV, and your roommate reading a recipe, and Whisper will turn any of it into an instruction. Versions 2.2 through 2.5 defaulted to auto-approve anyway, and an audit called it out, fairly. So v2.6 flipped it. If you picked auto-approve in the wizard back then, your pick stands, and each launch reminds you in one line.
 
-(In `--text` mode the gate, when enabled, is a plain `approve? [y/N]` prompt. And the only way to drop the denylist itself is `--dangerously-allow-tools`, which refuses to run in voice mode at all — a zero-guardrail posture should require a keyboard.)
+**The fast mode: `--auto-approve`** (or pick it in `t2m --setup`). Tools just run. You ask for a pong game, it writes the file, starts the server, tells you when it's playable, no "mother may I" at every step. It's the flow the phone apps taught you to expect, and I get why you'd want it. Know the deal: anything the mic picks up can start a command, with nobody asking.
+
+**The denylist, in every mode.** `sudo`, recursive `rm`, `find -delete`, `git push`, `git reset --hard`, `curl`, `wget`, `ssh`, `scp`, `nc`, `dd`, one-liners like `python -c` and `bash -c`, and the absolute-path spellings of those: 69 rules, blocked outright, not askable, no voice override. Extend it anytime: `--deny-tool 'Bash(docker:*)'`.
+
+Don't mistake it for a sandbox, though. It reads the command line, and there are endless ways to spell a command. Write a script and run it, make a git alias, copy a binary to a new name: all of that walks right past. I tested exactly this against the real CLI, and [SECURITY.md](SECURITY.md) has the honest list of what gets through. For anything you can't afford to lose, use a throwaway checkout.
+
+The startup line always tells you which mood you're in: `tools: gated (spoken approvals)` or `tools: auto-approve ⚡`.
+
+(In `--text` mode nothing ambient can reach it, so typed input keeps auto-approve as its default. `--text --gated` gets you a plain `approve? [y/N]` prompt. And the only way to drop the denylist itself is `--dangerously-allow-tools`, which refuses to run in voice mode at all — a zero-guardrail posture should require a keyboard.)
 
 ## Interrupting it
 
@@ -372,6 +377,8 @@ t2m
 
 Start talking. Hit `Ctrl-C` when you're done. (`t2m` and `talk2me` are the same command — the short one exists because you'll type it a lot.)
 
+Two things to expect the first time. On Apple Silicon it downloads the ears once (about 1.6 GB) and says so while it does. And when the agent wants to run or change something, it asks you out loud, so answer "approve" or "deny" (or take the training wheels off with `--auto-approve`).
+
 One rule to internalize: **the agent works on whatever directory you launch from** — same as the `claude` CLI. `cd` into your project first (or pass `--cwd ~/some/project`), and the startup line confirms it: `working on: /path/you/meant`. Launch from your home folder and it'll happily rummage around your home folder.
 
 No `--model` flag needed — it uses whatever your `claude` defaults to, same as the regular UI. Pass `--model haiku` when you're testing and don't want to spend real-model money on "count to fifty."
@@ -397,23 +404,46 @@ Speed is separate: `--rate 236` is the default (~1.35× the sleepy stock pace), 
 
 ## Switching the ears
 
-Two transcription engines ship today, one flag apart:
+Three engines ship, one flag apart. If you don't pick, Apple Silicon gets the GPU ears and everything else gets CPU whisper. A pick saved by the wizard stays yours, so an older setup keeps the ears it had until you run `t2m --setup`.
 
-| | **whisper** (default) | **parakeet** |
-|---|---|---|
-| Runs on | CPU, any Mac/Linux | Apple-Silicon GPU |
-| Speed | ~0.3–0.4s per utterance | **~0.1–0.2s** |
-| Accuracy | good | **better** — nails "orchestrator.py" |
-| Custom vocab (`--vocab`) | ✅ | ❌ (raw accuracy compensates) |
-| RAM while running | ~0.5 GB | ~2 GB |
-| Install | included | `pip install -e ".[parakeet]"` (or the `--parakeet` installer flag) |
+| | **mlx-whisper** (default on Apple Silicon) | **whisper** (default elsewhere) | **parakeet** |
+|---|---|---|---|
+| Model | Whisper large-v3-turbo | Whisper base.en | Parakeet TDT v2 |
+| Runs on | Apple-Silicon GPU | CPU, any Mac/Linux | Apple-Silicon GPU |
+| Speed | ~0.55s | ~0.46s | **~0.11s** |
+| Custom vocab (`--vocab`) | ✅ as a prompt | ✅ as hotwords | ❌ |
+| Other languages | ✅ | with `--whisper-model base` | ❌ English only |
+| RAM while running | ~2 GB | ~0.5 GB | ~2 GB |
+| Download | 1.6 GB, once | ~150 MB, once | ~600 MB+, once |
+| Install | included on Apple Silicon | included | `pip install -e ".[parakeet]"` (or the `--parakeet` installer flag) |
 
 ```bash
-t2m                  # whisper
-t2m --stt parakeet   # the fast ones
+t2m                    # the default for your machine
+t2m --stt whisper      # small and CPU-only
+t2m --stt parakeet     # the fast ones
 ```
 
-First parakeet run downloads the model (one-time). More engines are planned — everything hides behind the same contract, so adding one is a single file, and your muscle memory doesn't change.
+No GPU ears available? It says so in one line and drops to CPU whisper. Same if they break mid-session, and you keep the sentence you were saying.
+
+### The numbers, and how much to trust them
+
+I wanted the best listener I could get, so I raced them: 24 clips, 8 coding sentences read by 3 voices ("Refactor useAuthStore so the orchestrator stops polling"), on one M2 Max.
+
+| Engine | Median per clip | Worst | Word errors | What its misses look like |
+|---|---|---|---|---|
+| whisper base.en, CPU (the old default) | 0.46s | 0.60s | 12.5% | "use all stores", "piedest", "Superbase" |
+| whisper large-v3-turbo, CPU | 6.17s | 6.43s | 11.2% | Good ears, and you'd die waiting |
+| **large-v3-turbo, GPU (the new default)** | **~0.55s** | 0.67s | 13.2% | "use AuthStore", "PyTest", "SupaBaseEdge" |
+| parakeet v2, GPU | 0.11s | 0.27s | 13.2% | "use auth store", "super base" |
+| parakeet v3, GPU | 0.12s | 0.13s | 14.5% | "use aut store", "py test" |
+
+Now the fine print, because a table like that can lie to you:
+
+- **Those voices are synthetic.** macOS `say` reading into a file, one Mac, one run of the race. The latency numbers are solid. The accuracy column is a hint at best, and real humans mumbling on a laptop mic may reorder it. Nobody has fully field-tested these ears with an actual voice yet (see [Not done yet](#not-done-yet)).
+- **Word-error rate undersells the GPU ears.** It scores "use AuthStore" as a miss. A coding agent knows what you meant. "use all stores" sends it hunting for something that doesn't exist. That difference is why turbo won despite a worse score than base.en.
+- **Vocab is where it pulls away.** Run through the actual engine, turbo drops to 10.9% with just some unrelated terms in its prompt, and to 6.6% when the prompt knows the words in the test. That second number is a best case: I handed it the answers. But it's also what happens after the agent says `useAuthStore` to you, because talk2me feeds the names it just used into the ears.
+
+More engines can slide in the same way. Everything hides behind one contract, so adding one is a single file, and your muscle memory doesn't change.
 
 ## Picking the brain
 
@@ -454,16 +484,16 @@ Files land as `t2m-2026-07-19-014212.md`, one per session, appended live (a cras
 | `talk2me --text` | Type instead of talk — for when you're in public and not ready to be the person speaking to their laptop. |
 | `talk2me --model sonnet` | Pick the Claude model, exactly like the `claude` CLI. See [Picking the brain](#picking-the-brain). |
 | `talk2me --no-barge-in` | The polite loop: it finishes, then listens. (Interrupting is on by default with headphones.) |
-| `talk2me --gated` | Spoken approvals for every non-read tool call. Default is auto-approve. See [Saying yes out loud](#saying-yes-out-loud). |
+| `talk2me --auto-approve` | Tools run with nobody asking. The default asks out loud first. See [Saying yes out loud](#saying-yes-out-loud). |
 | `talk2me --debug` | Prints every ear-state and the per-turn latency receipts. Use this the first session, and any time something feels off. |
 | `talk2me --voice "Ava (Premium)"` | A voice from this decade. Download it first: System Settings → Accessibility → Read & Speak → the ⓘ next to System voice → grab an (Enhanced)/(Premium) voice. |
 | `talk2me --rate 260` | Talk faster (words/min). Default 236 ≈ 1.35× the macOS stock pace. |
 | `talk2me --vocab Lorecraft --vocab Morgen` | Teach it your weird proper nouns so it stops inventing spellings. |
-| `talk2me --stt parakeet` | The fast ears: Apple-Silicon GPU transcription — more accurate than any local Whisper and ~10× faster. `pip install -e ".[parakeet]"` first. |
+| `talk2me --stt parakeet` | The fast ears: Apple-Silicon GPU transcription, about 5× quicker than the GPU Whisper default. `pip install -e ".[parakeet]"` first. |
 | `talk2me --tts null` | Answers on screen, no voice out. |
 | `talk2me --with-user-config` | Load your full user-level Claude config into the agent. Off by default because hooks and skills measurably slow every turn and their chatter gets read aloud. Project CLAUDE.md always loads. |
 
-The rest of the knobs, for completeness: `--cwd` (which directory the agent works in — defaults to where you launched), `--vocab-file terms.txt` (bias terms in bulk, one per line), `--whisper-model small.en` (bigger whisper = better ears, slower), `--vad-aggressiveness 3` (webrtc noise filtering, 0–3), and `--dangerously-allow-tools` (auto-approve everything — **text mode only**, refused in voice mode on purpose: ambient audio should never carry that much power).
+The rest of the knobs, for completeness: `--cwd` (which directory the agent works in — defaults to where you launched), `--vocab-file terms.txt` (bias terms in bulk, one per line), `--whisper-model small.en` (a different CPU whisper; bigger = better ears, slower, and setting it picks the CPU engine), `--vad-aggressiveness 3` (webrtc noise filtering, 0–3), and `--dangerously-allow-tools` (auto-approve everything — **text mode only**, refused in voice mode on purpose: ambient audio should never carry that much power).
 
 ## The debugging playbook
 
@@ -491,7 +521,7 @@ That was hook and CLAUDE.md inheritance — fixed by default now (the agent load
 Wrong output device (check `--output-device` / `--list-devices`), or macOS routed audio elsewhere when a BT device connected mid-session. Restart talk2me after changing audio devices — PortAudio's device list is a snapshot.
 
 **First utterance after startup takes forever.**
-It shouldn't anymore — the model loads before the mic opens (`(loading the ears…)`). If you see that line for more than ~10s on parakeet, it's downloading the model from Hugging Face (first run only, ~600MB+).
+It shouldn't anymore — the model loads before the mic opens (`(loading the ears…)`). If you see that line for more than ~10s on parakeet, it's downloading the model from Hugging Face (first run only, ~600MB+). The GPU Whisper ears announce their own download (first run only, about 1.6 GB). After a fresh install, the first launch can also sit for up to a minute while it loads the new libraries for the first time. Later launches take a couple of seconds.
 
 **The count-to-fifty test sounds mushy.**
 Digit runs at speed are the hardest thing you can ask a TTS voice to say. The stock voice garbles them; a Premium voice (Ava) mostly doesn't. This is a voice-quality ceiling, not a bug — the streaming-TTS engine on the roadmap is the real fix.
@@ -517,7 +547,7 @@ Every swappable part hides behind a contract: voice detection, transcription, th
 Out of the box:
 
 - **Ears (voice detection):** a simple loudness check by default — good enough for a quiet room, and the RIGHT pick under native AEC (the voice processor's noise floor reads as speech to webrtc, so native mode auto-swaps webrtc back to energy with a note). Off native mode, two sharper options ship: `--vad webrtc` (install with `pip install -e ".[webrtc]"`) holds up much better across mics, especially Bluetooth; `--vad silero` runs a small neural model (needs `pip install onnxruntime` plus the [silero_vad.onnx](https://github.com/snakers4/silero-vad) model file). Separately from the pick, every utterance must also convince a bundled Silero speech CLASSIFIER before it can interrupt or be transcribed — that's the layer that makes typing, taps, and coughs invisible (`--no-speech-check` to disable).
-- **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter. Or `--stt parakeet` (install with `pip install -e ".[parakeet]"`): NVIDIA's Parakeet on the Apple-Silicon GPU — better accuracy than any local Whisper at a tenth of the wait, for ~2 GB of RAM while it runs. English-only, and `--vocab` biasing stays a Whisper-only trick. The full research behind the tradeoff lives in `docs/stt-upgrade-research.md`.
+- **Transcription:** Whisper, running on your machine. No cloud, no per-minute meter. On Apple Silicon that's large-v3-turbo on the GPU through mlx-whisper. Elsewhere, or with `--stt whisper`, it's base.en on the CPU through faster-whisper. `--stt parakeet` (install with `pip install -e ".[parakeet]"`) is NVIDIA's Parakeet on the GPU: the speed option, English-only, no `--vocab`. Same contract for all three. One engine quirk worth knowing: turbo's no-speech detector read zero on everything I tried through MLX, so left alone it answers silence with "Thank you." Every utterance passes a Silero check first, and silence stays silent. [The race results](#the-numbers-and-how-much-to-trust-them) are above; the original research lives in `docs/stt-upgrade-research.md`.
 - **The mouth:** macOS `say`, rendered a chunk ahead of playback so the voice doesn't stall between sentences. `--tts kitten` (install with `pip install -e ".[kitten]"`) is a local neural voice that works on any OS. `--tts null` keeps it text-only.
 - **The agent:** Claude Code by default, over its structured streaming interface — including the tool-permission wire behind the spoken approval gate (pinned byte-for-byte in `docs/permission-spike-results.md`). `--agent codex` swaps in OpenAI's Codex CLI (one `codex exec` per turn, resumed between turns — schema pinned live in `tests/test_codex_translate.py`). Kimi, GLM, and DeepSeek ride the Claude pipe via their official Anthropic-compatible endpoints (the wizard sets it up). Anything else hides behind the same one-file contract (`AgentBackend`) — fork away; that's what the MIT license is for.
 - **The brain-to-ear glue:** after every reply, the identifiers the agent just used (file names, function names) get fed to the transcriber as bias terms — because those are exactly the words you're about to say back.
@@ -531,6 +561,7 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **The echo-gate fallback is young.** On macOS the native canceller carries speakers talk-over now, but wherever the fallback gate runs (Linux, `--aec gate`), its residual threshold was tuned on synthetic fixtures plus one laptop — a very reverberant room may need the bar moved. `--debug` prints the residual on every rejected onset so tuning is evidence, not vibes.
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
 - **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
+- **The new ears on a real voice.** The GPU Whisper default has only heard files so far: the synthetic-voice race, plus spoken-command clips. It hasn't been through a real mic in a real room. If it's worse than the numbers suggest, `--stt whisper` is one flag away, and I want to hear about it.
 - **Voice commands are English-only.** `--language es` transcribes your Spanish fine, but "pause"/"wake up"/"approve" still only land in English.
 - **Voice-lock is young.** It ships (see [Voice-lock](#voice-lock-only-you)) but speaker verification is probabilistic, and on some mic/room combos the calibration comes out too weak to enforce — the lock then runs in observe mode (scores logged, nothing blocked) rather than risk going deaf on its own owner.
 
@@ -545,8 +576,23 @@ The short version of a long fight with physics:
 - **v2.3.0** — voice-lock. Only-you speaker verification, fully local. Shipped, then field-tested into observe-only: on a laptop mic, your own voice scatters wider than the gap to a stranger's. An honest loss — the scores still log, the idea still stands.
 - **v2.4.0** — the echo gate. Speakers talk-over without headphones, by matching the mic against the exact playback. Zero false cuts in the field — but a couch-voice talk-over lost the volume war near max. Kept as the fallback layer.
 - **v2.5.0** — the one we were chasing. macOS's own echo canceller (the FaceTime one) cleans the mic at the driver: its own voice comes out unintelligible to the transcriber at any volume, so you just talk. Plus the ⌨ input line — type at it while it works and it cuts in like a barge — and snappier pause/wake.
+- **v2.6.0** is new ears and better manners. Whisper large-v3-turbo on the Apple-Silicon GPU becomes the default listener, after [a race on 24 clips](#the-numbers-and-how-much-to-trust-them). Voice stops auto-approving tools: a safety audit flagged it, it was right, and now it asks out loud unless you say otherwise. The denylist grew from 8 rules to 69 after I tested the old one against the real CLI and watched `rm -fr` stroll past. The installer pins to release tags instead of `main`.
 
 That's the destination we set out for: a voice loop you can talk over, type over, and trust on open speakers. It got there. What's in [Not done yet](#not-done-yet) is real, mapped, and none of it is a mystery — the seams were built for this (swap a VAD, an STT, a TTS, a whole agent backend, or the renderer without touching the loop). **The rest is for the community to keep evolving.** Fork it, gut it, teach it new tricks — PRs and weird ideas welcome.
+
+## How it evolved
+
+The README tells you where this landed. The receipts live in `docs/`, warts included, and a couple of them argue with decisions I made later:
+
+- **[The security audit](docs/security-audit.md):** the original threat model, RCE by sound. It told me not to make bypass the default. I did anyway for a few versions, and the note in there says how that went.
+- **[SECURITY.md](SECURITY.md):** where the posture stands today, including what the denylist can't do.
+- **[The permission spike](docs/permission-spike-results.md):** the tool-approval wire pinned byte by byte, plus the denylist tested against the real CLI, what stopped and what didn't.
+- **[The permission design](docs/permission-handling-design.md):** how the spoken gate got designed before any of it worked.
+- **[The STT research](docs/stt-upgrade-research.md):** how to chase Wispr Flow quality locally, and why term accuracy matters more than pretty punctuation when the reader is a coding agent.
+- **[The AEC plan](docs/v2.5-aec-plan.md):** the long fight with physics, from echo gate to macOS's own canceller, phases and field protocol included.
+- **[Performance notes](docs/perf-notes.md), [architecture assessment](docs/architecture-assessment.md), [code review](docs/code-review.md), [integration plan](docs/integration-plan.md), [retro skin plan](docs/retro-skin-plan.md), [Wispr spike](docs/wispr-spike.md):** the rest of the paper trail.
+
+And the 7 tagged releases, if you want to run the past: [v1.0.0](https://github.com/fidgetcoding/talk2me/releases/tag/v1.0.0), [v2.0.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.0.0), [v2.1.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.1.0), [v2.2.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.2.0), [v2.3.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.3.0), [v2.3.1](https://github.com/fidgetcoding/talk2me/releases/tag/v2.3.1), [v2.5.0](https://github.com/fidgetcoding/talk2me/releases/tag/v2.5.0). (v2.4.0 never got its own tag; the echo gate lives in v2.5.0's history.) `./install.sh --ref v2.3.1` puts any of them on your machine.
 
 ## Requirements
 
@@ -574,14 +620,18 @@ Plain scripts. No frameworks to install. The whole loop is tested without a mic 
 python -m tests.test_segment        # the part that finds where your sentence ends
 python -m tests.test_loop_offline   # the full conversation, faked end to end
 python -m tests.test_permission     # the spoken approve/deny gate, all paths
+python -m tests.test_mlx_whisper    # the GPU ears with a fake model: one thread, the silence guard, every road to the fallback
 python -m tests.test_barge_in       # interrupting it mid-sentence
 python -m tests.test_echogate       # speakers talk-over: its own echo never cuts, you always can
 python -m tests.test_continuation   # "wait, I wasn't done" stitching
 python -m tests.test_flow           # run-on speech chunking + unfinished-sentence holds
 python -m tests.manual_backend_check  # one real cheap turn against Claude Code
+python -m tests.manual_denylist_check # the denylist against the real `claude`, no model, no cost
 ```
 
-That's the highlight reel — seventeen suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
+That's the highlight reel — 22 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
+
+What those can't tell you is how well it actually hears, because the fake transcriber always gets it right. That part got measured separately, on real audio from files: see [the numbers](#the-numbers-and-how-much-to-trust-them), and the caveat that goes with them. `manual_denylist_check` is worth rerunning after a `claude` upgrade, since how the rules match is the CLI's call, not mine. Nothing in any of this opens your mic or speakers.
 
 ## FAQ
 
@@ -598,7 +648,7 @@ The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voic
 Because my hands are busy and my mouth isn't.
 
 **Is this going to hear my roommate and start talking to Claude?**
-Typing, taps, coughs, and fan hum — no: a real speech classifier gates every utterance now. An actual human voice at conversation volume — yes, it can't tell your roommate from you yet. Telling voices apart (enroll yours once, everyone else stops existing) is the planned v3. Until then: "pause listening", or `--energy-threshold` up.
+Typing, taps, coughs, and fan hum — no: a real speech classifier gates every utterance now. An actual human voice at conversation volume — yes, it can't tell your roommate from you yet. Telling voices apart (enroll yours once, everyone else stops existing) is the planned v3. Until then: "pause listening", or `--energy-threshold` up. And since the gate can't tell voices apart either, your roommate can say "approve" too, so don't run this next to a prankster.
 
 **Can the brain be something other than Claude?**
 Yes — `--agent codex` runs OpenAI's Codex CLI, and Kimi / GLM / DeepSeek plug in through their official Anthropic-compatible endpoints (`t2m --setup` walks you through it). Same loop, same feed, different mind.
