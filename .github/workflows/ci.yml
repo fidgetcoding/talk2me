@@ -160,6 +160,33 @@ jobs:
           echo "$failed suites failed"
           exit "$failed"
 
+  linux-live:
+    name: Live voice loop, virtual sound cards (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install PortAudio, PulseAudio and a voice
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 pulseaudio pulseaudio-utils espeak-ng
+      # No hardware here. Two null sinks stand in for a room and a speaker: what's
+      # played into t2m_room comes out of its monitor, the fake mic.
+      - name: Start the virtual sound cards
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=t2m_speaker
+          pactl load-module module-null-sink sink_name=t2m_room
+          pactl set-default-sink t2m_speaker
+          pactl set-default-source t2m_room.monitor
+      - run: pip install -e .
+      - name: Which devices PortAudio sees
+        run: python -m talk2me --list-devices
+      - name: The real loop through real PortAudio
+        env:
+          T2M_VIRTUAL_AUDIO: "1"
+        run: python -m tests.live_linux_audio_check
+
   sandbox-linux:
     name: OS sandbox, real claude CLI (Linux)
     runs-on: ubuntu-latest

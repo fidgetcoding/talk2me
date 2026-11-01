@@ -195,8 +195,9 @@ def _parse_args(argv: list[str]) -> Config:
         ),
     )
     p.add_argument(
-        "--tts", default="say", choices=["say", "kitten", "null"],
-        help="speech engine: say (macOS built-in), kitten (local neural, "
+        "--tts", default="say", choices=["say", "espeak", "kitten", "null"],
+        help="speech engine: say (macOS built-in; falls to espeak-ng where there's "
+        "no say), espeak (espeak-ng, apt-get away on Linux), kitten (local neural, "
         "`pip install talk2me[kitten]`), null (no voice out)",
     )
     p.add_argument("--voice", default=None, help="engine-specific voice id")

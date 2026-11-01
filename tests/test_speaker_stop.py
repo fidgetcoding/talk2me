@@ -38,6 +38,8 @@ class StubOutputStream:
         self.aborted = False
         self.closed = False
         self.writes = 0
+        self.writing = False
+        self.closed_mid_write = False
 
     def start(self) -> None:
         pass
@@ -49,11 +51,14 @@ class StubOutputStream:
         self.aborted = True
 
     def close(self) -> None:
+        self.closed_mid_write = self.writing
         self.closed = True
 
     def write(self, data) -> None:
         # Emulate a blocking device write (runs on the to_thread worker).
+        self.writing = True
         time.sleep(0.05)
+        self.writing = False
         self.writes += 1
         if self.aborted or self.closed:
             raise StubPortAudioError("write to aborted/closed stream")
@@ -101,6 +106,21 @@ async def main() -> int:
         check("no abort issued at the cut", not sp._stream.aborted)
         sp.stop()  # idle stop AFTER play returned: normal turn-end teardown
         check("idle stop after interrupt releases stream", sp._stream is None)
+
+        # --- Ctrl-C mid-write: the task dies, the write thread doesn't. The stream
+        # must not close under it (corrupted the heap on Linux's ALSA path). ---
+        sp3 = audio.Speaker(16000)
+        cut = asyncio.create_task(sp3.play(_blocks(50)))
+        await asyncio.sleep(0.02)
+        stream = sp3._stream
+        cut.cancel()
+        try:
+            await cut
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0.2)
+        check("cancelled play retires the stream", sp3._stream is None and stream.closed)
+        check("never closes under a running write", not stream.closed_mid_write)
 
         # --- normal completion still works on a fresh speaker ---
         sp2 = audio.Speaker(16000)

@@ -224,6 +224,11 @@ class Mic:
             yield await self._queue.get()
 
 
+# How long a stream teardown waits for an in-flight write. One block is ~130 ms; past
+# this the write is wedged, and leaking a handle beats hanging on it.
+WRITE_DRAIN_TIMEOUT_S = 2.0
+
+
 class Speaker:
     """Plays float32 mono PCM blocks. stop() abandons the current playback.
 
@@ -238,6 +243,8 @@ class Speaker:
     def __init__(
         self, sample_rate: int, device: int | None = None, echo_ref=None
     ) -> None:
+        self._write_idle = threading.Event()
+        self._write_idle.set()
         if sd is None:
             raise RuntimeError("sounddevice/portaudio unavailable")
         self.sample_rate = sample_rate
@@ -289,6 +296,11 @@ class Speaker:
         if stream is not None:
 
             def _teardown() -> None:
+                # Never while a write is still running on its worker thread: a
+                # cancelled play() leaves one behind, and closing under it
+                # corrupted the heap on Linux's ALSA path (exit -6 on Ctrl-C,
+                # caught by the virtual-device test).
+                self._write_idle.wait(WRITE_DRAIN_TIMEOUT_S)
                 try:
                     stream.stop()
                     stream.close()
@@ -298,6 +310,14 @@ class Speaker:
             threading.Thread(
                 target=_teardown, daemon=True, name="t2m-close"
             ).start()
+
+    def _write(self, stream, block: np.ndarray) -> None:
+        """Runs on a worker thread. Marks the write in flight for close()."""
+        self._write_idle.clear()
+        try:
+            stream.write(block)
+        finally:
+            self._write_idle.set()
 
     def switch_device(self, device: int | None) -> None:
         """Repoint playback at `device`. Closes the current stream; the next
@@ -339,7 +359,7 @@ class Speaker:
                 if self.echo_ref is not None:
                     self.echo_ref.add(block)
                 try:
-                    await asyncio.to_thread(stream.write, block.astype(np.float32))
+                    await asyncio.to_thread(self._write, stream, block.astype(np.float32))
                 except sd.PortAudioError:
                     if self._cancel.is_set():
                         # The stream died under a write that was already being

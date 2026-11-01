@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import platform
+import shutil
 import sys
 
 from .config import Config
@@ -113,9 +114,19 @@ def build_stt(cfg: Config) -> STT:
 
 
 def build_tts(cfg: Config) -> TTS:
+    if cfg.tts == "espeak":
+        from .tts.espeak import EspeakTTS
+
+        return EspeakTTS(voice=cfg.voice)
     if cfg.tts == "say":
         from .tts import SayTTS
+        from .tts.espeak import available as espeak_available
 
+        # No `say` (Linux): espeak-ng beats silence when it's there.
+        if not shutil.which("say") and espeak_available():
+            from .tts.espeak import EspeakTTS
+
+            return EspeakTTS()
         return SayTTS(voice=cfg.voice, rate_wpm=cfg.rate_wpm)
     if cfg.tts == "kitten":
         from .tts.kitten import KittenTTS

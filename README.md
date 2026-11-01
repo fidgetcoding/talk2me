@@ -562,7 +562,7 @@ Being honest about the edges, because shipping half-true READMEs is how trust di
 - **A streaming voice.** `say` renders a chunk at a time, so the voice still restarts at chunk boundaries and you can hear the intonation reset on long lists. I got the dead air out: chunks now render side by side, and sentences that are already waiting render together. Measured on files with a fake speaker, on a typical 10-sentence reply, the worst stop went from 380 to 880 ms down to 16 ms or less, and restarts went from 9 to 4 or 5 (`python -m tests.manual_voice_gap_check`). I haven't heard it through real speakers yet. A neural streaming TTS (Kokoro is the candidate) would remove the restarts altogether.
 - **Wispr hands-free.** I want to drive the dictation app I actually like instead of the basics. It's a real maybe — the keypress trick it needs isn't proven yet.
 - **The echo-gate fallback is young.** On macOS the native canceller carries speakers talk-over now, but wherever the fallback gate runs (Linux, `--aec gate`), its residual threshold was tuned on synthetic fixtures plus one laptop — a very reverberant room may need the bar moved. `--debug` prints the residual on every rejected onset so tuning is evidence, not vibes.
-- **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
+- **Linux with a real mic.** CI now runs the real loop on Linux through real PortAudio and PulseAudio with virtual sound cards: a clip played into a fake room comes out of the fake mic, goes through the speech gate, base.en and the spoken approval, and its voice lands on a fake speaker, barge-in and pause included (`tests/live_linux_audio_check.py`). It even caught a real crash on Ctrl-C. But nobody has talked to it on Linux with an actual mic in an actual room, and real drivers are where the surprises live.
 - **Phone mode on a real iPhone.** The Mac side is fully tested against a simulated phone; the Safari page hasn't been driven from actual hardware over an actual Blink tunnel yet.
 - **`whisper-gpu` on a real voice.** It has only heard files so far: the synthetic-voice race, spoken-command clips, and those same files replayed through the full loop with a fake mic, spoken "approve" and "deny" included. It hasn't been through a real mic in a real room, which is one reason it's opt-in.
 - **Voice commands in other languages are young.** Spanish, French, German, Italian and Portuguese work now, typed or spoken, with `--language`. On files read by synthetic voices, single command words landed 68 of 80 times on `--whisper-model base` and 72 of 80 on `whisper-gpu` (it was 35 of 80 before I started feeding the engines those words as hints). Very short words are the hard part: "oui" and "no" still get lost, and a miss just means it asks again. No real accents tested, nothing past those five languages, and its own spoken replies ("Approve or deny?") are still English.
@@ -607,11 +607,11 @@ Everywhere:
 
 **macOS** — the platform this is built and daily-driven on. `pip install -e .` is all the setup there is: the audio library ships with PortAudio bundled, and the default voice is the built-in `say`. The optional `whisper-gpu` extra wants macOS 13 or newer, because MLX publishes nothing older.
 
-**Linux** — honestly: the headless tests pass in CI, the live mic loop is untested. What's known:
+**Linux**: CI drives the live loop end to end on virtual sound cards, and the headless suites pass. No human has used a real mic on it yet. What's known:
 
 - PortAudio is not bundled on Linux — install the system library first: `sudo apt-get install libportaudio2` (Debian/Ubuntu) or `sudo dnf install portaudio` (Fedora). It sits on top of ALSA/PulseAudio/PipeWire, whichever you have.
-- There is no `say` on Linux, and the default voice **degrades to silence** rather than erroring. Pick a voice explicitly: `--tts kitten` (local neural voice, `pip install -e ".[kitten]"`) or `--tts null` (answers stay on screen).
-- Whisper transcription and the `--text` mode are plain CPU Python and should work as-is.
+- There is no `say` on Linux. Install `espeak-ng` and talk2me uses it automatically: it sounds like a robot, and it's one `apt-get` away. Otherwise pick a voice with `--tts kitten` (local neural voice, `pip install -e ".[kitten]"`) or `--tts null` (answers stay on screen). With none of those, the default voice degrades to silence rather than erroring.
+- Whisper transcription and the `--text` mode are plain CPU Python and work as-is.
 
 **Windows**: CI now runs every headless suite on a Windows runner, plus the real `python -m talk2me` through real pipes with a stand-in `claude.cmd`. That turned up real bugs, now fixed: it crashed importing a Unix-only terminal module, couldn't find an npm-installed `claude`, and died on `--vocab-file`. So `--text` works there. What it doesn't prove is anything about a live mic. The runner has no sound hardware, nobody has talked to it on Windows, and there's no built-in voice (`--tts kitten` should work; `--text` is the path I'd trust). `--sandbox` refuses to start on Windows.
 
@@ -646,7 +646,7 @@ No. It only speaks the assistant's actual sentences. The boring machinery stays 
 Because the interactive UI has no programmatic way in, and screen-scraping it is exactly the brittleness this project exists to avoid. The structured pipe is the reliable path — and for the "I just want the real UI, plus sound" case, [hook mode](#hear-claude-code-itself-hook-mode) does that.
 
 **Does it work on Windows or Linux?**
-The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voice that runs anywhere. Windows passes the headless tests and `--text`, and nobody has tried a mic on it. On Linux you also need the system PortAudio library for the mic — see [Requirements](#requirements). Fair warning: the Linux mic loop is CI-tested, not human-tested.
+The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voice that runs anywhere. Windows passes the headless tests and `--text`, and nobody has tried a mic on it. On Linux you also need the system PortAudio library for the mic — see [Requirements](#requirements). Fair warning: the Linux mic loop is tested on virtual sound cards in CI, not by a human with a mic.
 
 **Why not just type?**
 Because my hands are busy and my mouth isn't.
