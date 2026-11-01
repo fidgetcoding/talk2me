@@ -7,4 +7,9 @@ transcribes and feeds the agent, the agent's reply is spoken back, then it
 listens again. No push-to-talk.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("talk2me")
+except PackageNotFoundError:  # running from a checkout that was never installed
+    __version__ = "unknown"

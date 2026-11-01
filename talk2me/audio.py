@@ -96,6 +96,11 @@ def output_is_speakers(device: int | None) -> bool:
     return _name_looks_like_speakers(str(name))
 
 
+def audio_unavailable() -> bool:
+    """True when sounddevice or PortAudio couldn't load at all."""
+    return sd is None
+
+
 def format_device_table() -> str:
     """Human-readable input/output listing for `--list-devices`."""
     if sd is None:

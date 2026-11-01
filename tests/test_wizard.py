@@ -206,6 +206,13 @@ def test_session_continuity() -> None:
 
 def main() -> int:
     os.environ.setdefault("TALK2ME_CONFIG", "/nonexistent-t2m-test-config")
+    # CI has no `claude` on PATH, and these tests don't launch one.
+    from talk2me import factory, preflight
+
+    preflight.agent_problem = lambda _agent: None
+    # These check that a saved engine is kept, on machines with or without a GPU.
+    factory.whisper_gpu_supported = lambda: True
+    factory.parakeet_installed = lambda: True
     test_save_load_roundtrip()
     test_saved_config_becomes_defaults()
     test_saved_posture_is_respected()

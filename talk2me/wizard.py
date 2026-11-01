@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
 from .factory import whisper_gpu_supported
+from .preflight import agent_problem, no_voice_notice
 from .retro import CYAN, GREEN, THEME
 from .sandbox import available as sandbox_available
 
@@ -54,11 +55,18 @@ def normalize_model(text: str) -> str | None:
         return f"claude-{m.group(1).lower()}-{m.group(2)}-{m.group(3)}"
     return t
 
+_ECHO_LINE = (
+    "on speakers, macOS cancels its own audio out of the mic at the driver (the "
+    "FaceTime echo canceller), so only YOU can cut it off, at any volume."
+    if sys.platform == "darwin"
+    else "on speakers, it filters its own voice out of the mic, so only you can cut it off."
+)
+
 # Flags that mean the caller already knows what they want — a first launch
 # with any of these skips the wizard instead of interrogating a power user.
 IDENTITY_FLAGS = (
     "--model", "--stt", "--voice", "--setup", "--text", "--list-devices",
-    "--plain", "--help", "-h",
+    "--plain", "--help", "-h", "--version",
 )
 
 
@@ -172,6 +180,8 @@ def run_wizard(existing: dict | None = None) -> dict:
             p("  [warn]heads-up:[/] codex isn't logged in — run "
               "[bold]codex login[/] before launching")
     elif provider == "claude":
+        if agent_problem("claude"):
+            p(f"  [warn]heads-up:[/] {agent_problem('claude')}")
         p("  [dim]Enter = your `claude` CLI's default. Shorthand works: "
           "haiku · sonnet · opus · opus 4.6 · or any full model id.[/]")
         model = normalize_model(
@@ -234,8 +244,14 @@ def run_wizard(existing: dict | None = None) -> dict:
 
     # 3 — the voice
     p()
-    p(f"[bold {CYAN}]3 · the voice[/]  What it sounds like. "
-      "[dim]Recommended: Ava (Premium) — a voice from this decade.[/]")
+    if sys.platform == "darwin":
+        p(f"[bold {CYAN}]3 · the voice[/]  What it sounds like. "
+          "[dim]Recommended: Ava (Premium) — a voice from this decade.[/]")
+    elif no_voice_notice("say"):
+        p(f"[bold {CYAN}]3 · the voice[/]  [warn]{no_voice_notice('say')}[/]")
+    else:
+        p(f"[bold {CYAN}]3 · the voice[/]  [dim]espeak-ng, since there's no `say` here. "
+          "--tts kitten is a nicer local option.[/]")
     voice: str | None = prev.get("voice")
     if sys.platform == "darwin":
         voices = _installed_voices()
@@ -263,9 +279,7 @@ def run_wizard(existing: dict | None = None) -> dict:
     p()
     p(f"[bold {CYAN}]4 · interrupting[/]  Barge-in keeps the mic live while "
       "it talks — start speaking and it shuts up and listens, like a person. "
-      "[dim]Headphones or speakers both work: on speakers, macOS cancels its "
-      "own audio out of the mic at the driver (the FaceTime echo canceller), "
-      "so only YOU can cut it off — at any volume.[/]")
+      f"[dim]Headphones or speakers both work: {_ECHO_LINE}[/]")
     barge_in = Confirm.ask(
         "  barge-in on? (recommended)", default=prev.get("barge_in", True)
     )
@@ -316,7 +330,7 @@ def run_wizard(existing: dict | None = None) -> dict:
     # 7 — voice-lock
     p()
     p(f"[bold {CYAN}]7 · voice-lock[/]  Lock the ears to YOUR voice — other "
-      "people, the TV, and its own speaker output get ignored. "
+      "people and the TV mostly get ignored. "
       "[dim]You'll do a guided ~minute of enrollment on your next launch (different volumes and speeds — that's what makes it trust you); "
       "say \"team session\" any time to let everyone talk, \"solo session\" "
       "to lock back.[/]")

@@ -23,6 +23,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import uuid
 from collections.abc import AsyncIterator
 
@@ -383,6 +384,10 @@ class ClaudeCodeBackend:
                 except ProcessLookupError:
                     pass
                 await self._proc.wait()
+        if sys.platform == "win32":
+            # One beat for the pipe transports to close, or Windows prints
+            # "Exception ignored" noise over the goodbye when the loop shuts down.
+            await asyncio.sleep(0.1)
 
     # ---- stdout parsing --------------------------------------------------
 

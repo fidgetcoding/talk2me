@@ -119,6 +119,9 @@ jobs:
       - name: test_mlx_whisper
         run: python -m tests.test_mlx_whisper
 
+      - name: test_preflight
+        run: python -m tests.test_preflight
+
       - name: test_cli_smoke
         run: python -m tests.test_cli_smoke
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 
-from talk2me import factory
+from talk2me import factory, preflight
 from talk2me.backends import ClaudeCodeBackend
 from talk2me.config import Config
 from talk2me.factory import (
@@ -176,11 +176,12 @@ def test_build_stt_mlx_whisper() -> bool:
 
 
 def test_resolve_stt() -> bool:
-    real = factory.whisper_gpu_supported, factory.whisper_gpu_installed
+    real = factory.whisper_gpu_supported, factory.whisper_gpu_installed, factory.parakeet_installed
 
     def on(supported: bool, installed: bool) -> None:
         factory.whisper_gpu_supported = lambda: supported
         factory.whisper_gpu_installed = lambda: installed
+        factory.parakeet_installed = lambda: installed
 
     try:
         on(True, True)
@@ -192,7 +193,7 @@ def test_resolve_stt() -> bool:
         on(False, False)
         elsewhere = factory.resolve_stt("whisper-gpu")
     finally:
-        factory.whisper_gpu_supported, factory.whisper_gpu_installed = real
+        factory.whisper_gpu_supported, factory.whisper_gpu_installed, factory.parakeet_installed = real
     ok = (
         ready == ("whisper-gpu", None)
         and whisper == ("whisper", None)
@@ -319,6 +320,8 @@ def test_frame_samples() -> bool:
 def main() -> int:
     # Tests must never read a real ~/.talk2me/config.json: _parse_args loads it.
     os.environ["TALK2ME_CONFIG"] = "/nonexistent-t2m-test-config"
+    # CI has no `claude` on PATH, and these tests don't launch one.
+    preflight.agent_problem = lambda _agent: None
     results = [
         test_build_tts(),
         test_build_vad(),

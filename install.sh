@@ -20,8 +20,15 @@ EXTRA=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --parakeet) EXTRA="[parakeet]" ;;
-    --whisper-gpu) EXTRA="[whisper-gpu]" ;;
+    --help|-h)
+      echo "talk2me installer. Installs the newest release into ~/.talk2me and puts t2m on your PATH."
+      echo "  --ref <branch|tag>  a specific version (--ref main for the bleeding edge, --v1 for v1)"
+      echo "  --whisper-gpu       also install Whisper large-v3-turbo for the GPU (Apple Silicon)"
+      echo "  --parakeet          also install Parakeet for the GPU (Apple Silicon)"
+      exit 0 ;;
+    --parakeet|--whisper-gpu)
+      [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ] || { echo "❌ $1 needs Apple Silicon; the default ears work fine without it"; exit 1; }
+      EXTRA="[${1#--}]" ;;
     --v1) REF="v1" ;;
     --ref) shift; REF="${1:-}"; [ -n "$REF" ] || { echo "❌ --ref needs a value"; exit 1; } ;;
     *) echo "❌ unknown flag: $1 (known: --parakeet, --whisper-gpu, --ref <branch|tag>, --v1)"; exit 1 ;;

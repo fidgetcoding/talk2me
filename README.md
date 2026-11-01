@@ -135,7 +135,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --model haiku` | Cheap fast brain for casual chat; any `claude` model name works. |
 | `t2m --agent codex` | OpenAI's Codex CLI as the brain (`codex login` first). Same voice loop, same feed; safety = Codex's own sandbox. |
 | `t2m --backend-base-url … --backend-auth-env MY_KEY` | A different brain entirely — Kimi/GLM/DeepSeek publish Anthropic-compatible endpoints; the key stays in your env, never a file. Easiest via `t2m --setup`. |
-| `t2m --language es` (or `auto`) | Talk to it in another language (whisper; pairs with `--whisper-model base` — the `.en` models and parakeet are English-only; `--stt whisper-gpu` needs no extra flag). Voice commands come along for Spanish, French, German, Italian and Portuguese, and English always works. |
+| `t2m --language es` (or `auto`) | Talk to it in another language. CPU whisper moves from its English-only model to the multilingual one by itself, a one-time download. Parakeet is English-only. Voice commands come along for Spanish, French, German, Italian and Portuguese, and English always works. |
 | `t2m --save-dir ~/talk2me-logs` | Every session saved as live-written markdown. |
 | `t2m --plain` | The classic v1 look — no colors, no panels. (Auto-on for pipes, CI, and `NO_COLOR`.) |
 | `t2m --no-speech-check` | Disable the "was that actually a human talking?" classifier (on by default; rejects typing, taps, coughs). |
@@ -143,6 +143,7 @@ Everything on one screen. This is the whole manual for day one.
 | `t2m --enroll-voice` | Voice-lock: a guided minute of enrollment (varied volumes/speeds); from then on the mic answers to YOUR voice only — other people, the TV, and its own speaker output get ignored. `--voice-lock` / `--no-voice-lock` toggles it. |
 | `t2m --setup` | The guided setup menu — brain, ears, voice, barge-in, tools, folder. Saves as your defaults. |
 | `Ctrl-T` (macOS, mid-session) | Reopen that settings menu without losing your place; relaunches with the new picks. |
+| `t2m --version` | Which build you're on. |
 | `t2m --debug` | See every ear-state + latency numbers. Run this your first session. |
 
 Launch from the project folder you want it working on — the startup line confirms everything: model, ears, voice, barge, tools mode, directory.
@@ -415,7 +416,7 @@ Three engines ship, one flag apart. **whisper with base.en is the default**, eve
 | Runs on | CPU, any Mac/Linux | Apple-Silicon GPU | Apple-Silicon GPU |
 | Speed | ~0.46s | ~0.55s | **~0.11s** |
 | Custom vocab (`--vocab`) | ✅ as hotwords | ✅ as a prompt | ❌ |
-| Other languages | with `--whisper-model base` | ✅ | ❌ English only |
+| Other languages | ✅ (a one-time extra download) | ✅ | ❌ English only |
 | RAM while running | ~0.5 GB | ~2 GB | ~2 GB |
 | Download | ~150 MB, once | 1.6 GB, once | ~600 MB+, once |
 | Install | included | `pip install -e ".[whisper-gpu]"` (or the `--whisper-gpu` installer flag) | `pip install -e ".[parakeet]"` (or the `--parakeet` installer flag) |
@@ -654,7 +655,7 @@ python -m tests.manual_stt_bench      # the ears race: real latency, synthetic v
 python -m tests.manual_real_speech_bench --data <folder>  # the same ears on recordings of real people
 ```
 
-That's the highlight reel — 26 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push, and on Windows.
+That's the highlight reel — 27 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push, and on Windows.
 
 What those can't tell you is how well it actually hears, because the fake transcriber always gets it right. That part got measured separately, on real audio from files: see [the numbers](#the-numbers-and-how-much-to-trust-them), and the caveat that goes with them. `manual_denylist_check` is worth rerunning after a `claude` upgrade, since how the rules match is the CLI's call, not mine. Nothing in any of this opens your mic or speakers.
 

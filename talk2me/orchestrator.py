@@ -42,6 +42,7 @@ from .events import (
     ToolActivity,
     TurnComplete,
 )
+from .orchestrator_errors import StartupError
 from .protocols import STT, TTS, VAD, AgentBackend
 from .render import PlainRenderer, Renderer
 from .segment import segment_utterances
@@ -250,7 +251,16 @@ class Orchestrator:
             # Duck-typed too: engines that may download or fall back say so.
             if hasattr(self.stt, "set_notifier"):
                 self.stt.set_notifier(self.render.status_note)
-            await asyncio.to_thread(self.stt.warmup)
+            try:
+                await asyncio.to_thread(self.stt.warmup)
+            except Exception as exc:
+                # Usually the first-run model download with no network.
+                self.mic.stop()
+                await self.backend.close()
+                raise StartupError(
+                    f"couldn't load the ears ({type(exc).__name__}: {str(exc)[:120]}). "
+                    "The first run downloads the model, so check your connection."
+                ) from exc
             self.cfg.stt = getattr(self.stt, "engine_name", self.cfg.stt)
         if self._speech_check is not None and hasattr(self._speech_check, "warmup"):
             # Load the speech classifier BEFORE the mic opens — its first call

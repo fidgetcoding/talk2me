@@ -11,8 +11,9 @@ import asyncio
 import os
 import sys
 
-from . import factory
+from . import __version__, factory, preflight
 from .config import Config
+from .orchestrator_errors import StartupError
 
 # --- security caps / allowlists (security-audit.md M2, M3, H1, M1, L2) ---
 
@@ -55,12 +56,36 @@ def _parse_args(argv: list[str]) -> Config:
     # flags always win. `--setup` re-runs the wizard; a first interactive
     # launch with no config and no identity flags runs it automatically.
     saved = load_saved_config()
-    run_setup = "--setup" in argv or should_run_first_time(argv)
+    asks_help = any(x in argv for x in ("-h", "--help", "--version"))
+    run_setup = not asks_help and ("--setup" in argv or should_run_first_time(argv))
+    has_separator = "--" in argv
     argv = [x for x in argv if x != "--setup"]
     if run_setup and sys.stdin.isatty():
         saved = run_wizard(saved)
 
-    p = argparse.ArgumentParser(prog="talk2me", description=__doc__)
+    p = argparse.ArgumentParser(
+        prog="t2m",
+        description=(
+            "Talk to your coding agent, out loud. It hears you, sends your words to the "
+            "agent, reads the answer back and reopens the mic. Run it in your project's "
+            "folder and start talking."
+        ),
+        epilog=(
+            "start here:\n"
+            "  t2m                  just talk (asks out loud before running tools)\n"
+            "  t2m --setup          pick your agent, ears, voice and tools, saved for next time\n"
+            "  t2m --text           type instead of talk\n"
+            "  t2m --continue       pick up this folder's last session\n"
+            "  t2m --sandbox        have the OS keep the agent inside this project\n"
+            "  t2m --phone          use your iPhone as the mic and speaker, over SSH\n"
+            "  t2m --debug          show what it's hearing, when something seems off\n"
+            "\n"
+            "Flags beat your saved setup. Extra flags for `claude` go after --: t2m -- --verbose\n"
+            "The README has the whole story: https://github.com/fidgetcoding/talk2me"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--version", action="version", version=f"talk2me {__version__}")
     p.add_argument(
         "--setup", action="store_true",
         help="run the guided setup (brain, ears, voice, barge-in, tools, "
@@ -74,7 +99,7 @@ def _parse_args(argv: list[str]) -> Config:
             "tool safety comes from its sandbox, so --gated doesn't apply)."
         ),
     )
-    p.add_argument("--model", default=None, help="claude model (e.g. haiku, sonnet)")
+    p.add_argument("--model", default=None, help="the agent's model (e.g. haiku, sonnet, opus)")
     p.add_argument(
         "--backend-base-url", default=None, dest="backend_base_url",
         help=(
@@ -115,7 +140,9 @@ def _parse_args(argv: list[str]) -> Config:
             "run the agent inside an OS sandbox (macOS sandbox-exec, Linux "
             "bubblewrap): it can write only to the project, and reach only the "
             "model API. Unlike the denylist, a script can't walk past it. Off by "
-            "default because npm install and friends need --sandbox-allow-host."
+            "default because npm install and friends need --sandbox-allow-host. "
+            "Run it from a project folder, not your home. Codex has its own sandbox, "
+            "so this does nothing with --agent codex."
         ),
     )
     p.add_argument(
@@ -182,14 +209,18 @@ def _parse_args(argv: list[str]) -> Config:
             "(`pip install -e \".[parakeet]\"`)."
         ),
     )
-    p.add_argument("--whisper-model", default="base.en")
+    p.add_argument(
+        "--whisper-model", default="base.en",
+        help="which CPU whisper model (default base.en). Bigger hears better and "
+        "answers slower: small.en, medium.en",
+    )
     p.add_argument(
         "--language", default="en",
         help=(
             "transcription language: a 2-letter code (es, de, fr…) or 'auto' "
-            "to detect per utterance. whisper-gpu handles these as is. CPU "
-            "whisper needs a multilingual model, e.g. --whisper-model base. "
-            "The .en models are English-only, and so is parakeet. Voice "
+            "to detect per utterance. CPU whisper moves from a .en model to its "
+            "multilingual twin by itself (a one-time download). parakeet is "
+            "English-only. Voice "
             "COMMANDS (pause/wake/approve) also work in es, fr, de, it and pt; "
             "English always works."
         ),
@@ -214,7 +245,10 @@ def _parse_args(argv: list[str]) -> Config:
         "--vad-aggressiveness", type=int, default=2, choices=[0, 1, 2, 3],
         help="webrtc only: 0 (lenient) .. 3 (aggressive noise filtering)",
     )
-    p.add_argument("--energy-threshold", type=float, default=0.012)
+    p.add_argument(
+        "--energy-threshold", type=float, default=0.012,
+        help="how loud counts as you talking. Raise it in a noisy room (try 0.02)",
+    )
     p.add_argument(
         "--silence-ms", type=int, default=1200,
         help="trailing silence (ms) that ends your turn; lower = snappier but "
@@ -298,8 +332,8 @@ def _parse_args(argv: list[str]) -> Config:
         help=(
             "use your phone as the mic + speaker (for SSH sessions from an "
             "iPhone/iPad). Serves a one-tap page on localhost; forward the "
-            "port in your SSH app (Blink: -L 8765:localhost:8765) and open "
-            "http://localhost:8765 in Safari. Same loop, same barge-in — the "
+            "port in your SSH app (Blink: -L 8765:localhost:8765) and open the "
+            "link it prints in Safari. Same loop, same barge-in — the "
             "phone's own echo cancellation does the heavy lifting."
         ),
     )
@@ -311,8 +345,8 @@ def _parse_args(argv: list[str]) -> Config:
         "--voice-lock", action=argparse.BooleanOptionalAction, default=False,
         dest="voice_lock",
         help=(
-            "solo mode: the mic answers ONLY to your enrolled voice (other "
-            "people, the TV, its own speaker output are ignored). Needs a "
+            "solo mode: the mic filters for your enrolled voice, so other people "
+            "and the TV mostly get ignored. Clips under 0.8 s always pass. Needs a "
             "one-time --enroll-voice. Flip live by saying 'team session' / "
             "'solo session'."
         ),
@@ -320,8 +354,8 @@ def _parse_args(argv: list[str]) -> Config:
     p.add_argument(
         "--enroll-voice", action="store_true", dest="enroll_voice",
         help=(
-            "record your voiceprint (read 3 sentences, ~20s), calibrate the "
-            "lock against the agent's own voice, then launch with voice-lock "
+            "record your voiceprint (read 7 short prompts, about a minute), calibrate "
+            "the lock against the agent's own voice, then launch with voice-lock "
             "on. Re-run any time to re-calibrate."
         ),
     )
@@ -344,7 +378,7 @@ def _parse_args(argv: list[str]) -> Config:
         "--debug", action="store_true",
         help="print VAD speech/turn transitions (for tuning --energy-threshold)",
     )
-    p.add_argument("claude_args", nargs="*", help="extra args passed to `claude`")
+    p.add_argument("claude_args", nargs="*", help="extra flags for `claude`, after --")
     if saved:
         p.set_defaults(**{k: v for k, v in saved.items() if v is not None})
     a = p.parse_args(argv)
@@ -357,7 +391,25 @@ def _parse_args(argv: list[str]) -> Config:
         print(format_device_table())
         raise SystemExit(0)
 
+    # A bare word here is a typo (`t2m haiku`), not an instruction for the agent.
+    if a.claude_args and not has_separator:
+        p.error(
+            f"unexpected {a.claude_args[0]!r}. Did you mean --model {a.claude_args[0]}? "
+            "Flags for `claude` go after --"
+        )
+
+    for problem in (preflight.agent_problem(a.agent), preflight.cwd_problem(a.cwd)):
+        if problem:
+            p.error(problem)
+
     input_mode = "text" if a.text else "voice"
+    if input_mode == "voice":
+        for problem in (
+            preflight.voice_option_problem(a.vad, a.tts),
+            preflight.whisper_model_problem(a.whisper_model) if a.stt == "whisper" else None,
+        ):
+            if problem:
+                p.error(problem)
 
     # Default posture: voice is gated, because a mic is not a keyboard. It
     # stays that way until someone asks by name: --auto-approve, or a saved
@@ -404,11 +456,15 @@ def _parse_args(argv: list[str]) -> Config:
     if use_sandbox:
         from .sandbox import available
 
-        reason = available()
+        reason = available() or preflight.sandbox_project_problem(a.cwd or os.getcwd())
         if reason:
             p.error(reason)
 
     stt, stt_notice = factory.resolve_stt(a.stt)
+    whisper_model, language, language_notice = preflight.match_model_to_language(
+        stt, a.whisper_model, a.language
+    )
+    stt_notice = " · ".join(n for n in (stt_notice, language_notice) if n) or None
 
     return Config(
         debug=a.debug,
@@ -442,8 +498,8 @@ def _parse_args(argv: list[str]) -> Config:
         input_mode=input_mode,
         stt=stt,
         stt_notice=stt_notice,
-        whisper_model=a.whisper_model,
-        language=a.language,
+        whisper_model=whisper_model,
+        language=language,
         tts=a.tts,
         voice=a.voice,
         rate_wpm=a.rate_wpm,
@@ -561,14 +617,21 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
     import contextlib
     import signal
 
-    from .audio import Mic, Speaker, output_is_speakers, resolve_device
+    from .audio import (
+        Mic,
+        Speaker,
+        audio_unavailable,
+        output_is_speakers,
+        resolve_device,
+    )
     from .orchestrator import Orchestrator
     from .render import build_renderer
 
     renderer = build_renderer(cfg)
 
-    if cfg.stt_notice:
-        renderer.status_note(cfg.stt_notice)
+    for notice in (cfg.stt_notice, preflight.no_voice_notice(cfg.tts)):
+        if notice:
+            renderer.status_note(notice)
     if "bypass" in cfg.permission_mode.lower() and cfg.agent != "codex":
         renderer.status_note(
             "tools run with nobody asking, and anything the mic hears can start "
@@ -656,7 +719,14 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         from .phone import PhoneBridge, WebMic, WebSpeaker
 
         bridge = PhoneBridge(cfg.phone_port)
-        await bridge.start()
+        try:
+            await bridge.start()
+        except OSError:
+            renderer.device_error(
+                f"port {cfg.phone_port} is taken (another t2m --phone?). "
+                "Pick another with --phone-port, and match it in your SSH forward."
+            )
+            return 2, False
         renderer.status_note(
             f"phone bridge on {bridge.url()} — forward the port in your SSH "
             f"app (Blink: -L {cfg.phone_port}:localhost:{cfg.phone_port}), "
@@ -668,6 +738,12 @@ async def _run_voice(cfg: Config) -> tuple[int, bool]:
         mic = WebMic(bridge, factory.frame_samples(cfg))
         speaker = WebSpeaker(bridge, tts.sample_rate)
     else:
+        if audio_unavailable():
+            renderer.device_error(
+                "no audio library here, so no mic. On Linux: sudo apt-get install "
+                "libportaudio2. Or use --text to type, or --phone for your phone's mic."
+            )
+            return 2, False
         # Resolve name/index specs to PortAudio indices up front so a typo'd
         # device fails with a clean message before the agent process spins up.
         # Independent input/output indices are what enable the "BT out +
@@ -975,7 +1051,11 @@ def main(argv: list[str] | None = None) -> int:
             cfg = _parse_args(args)
             if cfg.input_mode == "text":
                 return asyncio.run(_run_text(cfg))
-            code, edit_requested = asyncio.run(_run_voice(cfg))
+            try:
+                code, edit_requested = asyncio.run(_run_voice(cfg))
+            except StartupError as exc:
+                print(f"talk2me: {exc}", file=sys.stderr, flush=True)
+                return 2
             if not edit_requested:
                 return code
             # Ctrl-T: session is down — run the wizard, then loop. The next

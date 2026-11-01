@@ -65,18 +65,34 @@ def whisper_gpu_installed() -> bool:
     return importlib.util.find_spec("mlx_whisper") is not None
 
 
+def parakeet_installed() -> bool:
+    return importlib.util.find_spec("parakeet_mlx") is not None
+
+
 def resolve_stt(requested: str) -> tuple[str, str | None]:
     """Turn the --stt value into the engine that can actually run, plus a one-line
-    notice when that isn't the one asked for. Only whisper-gpu can miss: it's
-    opt-in, so a config copied from another machine may ask for it without it.
+    notice when that isn't the one asked for. The opt-in engines can miss: a saved
+    config may ask for one this machine doesn't have, or one that no longer exists.
     """
-    if requested != "whisper-gpu":
+    if requested == "whisper":
         return requested, None
+    if requested == "parakeet":
+        if not whisper_gpu_supported():
+            return "whisper", "parakeet needs Apple Silicon, using whisper on the CPU"
+        if not parakeet_installed():
+            return "whisper", (
+                "parakeet isn't installed (pip install parakeet-mlx, or t2m --setup), "
+                "using whisper on the CPU"
+            )
+        return requested, None
+    if requested != "whisper-gpu":
+        return "whisper", f"no ears called {requested!r}, using whisper on the CPU"
     if not whisper_gpu_supported():
         return "whisper", "whisper-gpu needs Apple Silicon, using whisper on the CPU"
     if not whisper_gpu_installed():
         return "whisper", (
-            "whisper-gpu isn't installed (pip install mlx-whisper), using whisper on the CPU"
+            "whisper-gpu isn't installed (pip install mlx-whisper, or t2m --setup), "
+            "using whisper on the CPU"
         )
     return "whisper-gpu", None
 
