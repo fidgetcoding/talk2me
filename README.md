@@ -502,7 +502,7 @@ Files land as `t2m-2026-07-19-014212.md`, one per session, appended live (a cras
 | `talk2me` | Just talk. The main event. |
 | `talk2me --text` | Type instead of talk — for when you're in public and not ready to be the person speaking to their laptop. |
 | `talk2me --model sonnet` | Pick the Claude model, exactly like the `claude` CLI. See [Picking the brain](#picking-the-brain). |
-| `talk2me --no-barge-in` | The polite loop: it finishes, then listens. (Interrupting is on by default with headphones.) |
+| `talk2me --no-barge-in` | The polite loop: it finishes, then listens. (Interrupting is on by default.) |
 | `talk2me --auto-approve` | Tools run with nobody asking. The default asks out loud first. See [Saying yes out loud](#saying-yes-out-loud). |
 | `talk2me --debug` | Prints every ear-state and the per-turn latency receipts. Use this the first session, and any time something feels off. |
 | `talk2me --voice "Ava (Premium)"` | A voice from this decade. Download it first: System Settings → Accessibility → Read & Speak → the ⓘ next to System voice → grab an (Enhanced)/(Premium) voice. |
@@ -673,7 +673,7 @@ The default voice is Mac-only (`say`), but `--tts kitten` is a local neural voic
 Because my hands are busy and my mouth isn't.
 
 **Is this going to hear my roommate and start talking to Claude?**
-Typing, taps, coughs, and fan hum — no: a real speech classifier gates every utterance now. An actual human voice at conversation volume — yes, unless you've enrolled [voice-lock](#voice-lock-only-you), which tells voices apart. Otherwise: "pause listening", or `--energy-threshold` up. And since the gate can't tell voices apart either, your roommate can say "approve" too, so don't run this next to a prankster.
+Typing, taps, coughs, and fan hum — no: a real speech classifier gates every utterance now. An actual human voice at conversation volume: yes, unless you enroll [voice-lock](#voice-lock-only-you), and even then treat it as a filter. On recordings through a simulated laptop room about 6% of strangers still got through, anything under 0.8 seconds always passes, and if its calibration comes out weak it only observes. Without it: "pause listening", or `--energy-threshold` up. And without it the spoken gate can't tell voices apart either, so your roommate can say "approve" too, and don't run this next to a prankster.
 
 **Can the brain be something other than Claude?**
 Yes — `--agent codex` runs OpenAI's Codex CLI, and Kimi / GLM / DeepSeek plug in through their official Anthropic-compatible endpoints (`t2m --setup` walks you through it). Same loop, same feed, different mind.
@@ -681,3 +681,7 @@ Yes — `--agent codex` runs OpenAI's Codex CLI, and Kimi / GLM / DeepSeek plug 
 ---
 
 Built by [Nate](https://github.com/fidgetcoding) under the fidgetcoding flag. MIT licensed — take it, break it, make it weirder.
+
+Built by directing Claude Code. Every decision and every live test is mine. The code is mostly its.
+
+[MIT](LICENSE).
