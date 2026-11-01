@@ -559,7 +559,7 @@ Out of the box:
 
 Being honest about the edges, because shipping half-true READMEs is how trust dies:
 
-- **A streaming voice.** `say` renders each chunk fully before playing it, so there's a hard prosody reset at chunk boundaries — audible on long lists. A neural streaming TTS (Kokoro is the candidate) removes it. That's the next build.
+- **A streaming voice.** `say` renders a chunk at a time, so the voice still restarts at chunk boundaries and you can hear the intonation reset on long lists. I got the dead air out: chunks now render side by side, and sentences that are already waiting render together. Measured on files with a fake speaker, on a typical 10-sentence reply, the worst stop went from 380 to 880 ms down to 16 ms or less, and restarts went from 9 to 4 or 5 (`python -m tests.manual_voice_gap_check`). I haven't heard it through real speakers yet. A neural streaming TTS (Kokoro is the candidate) would remove the restarts altogether.
 - **Wispr hands-free.** I want to drive the dictation app I actually like instead of the basics. It's a real maybe — the keypress trick it needs isn't proven yet.
 - **The echo-gate fallback is young.** On macOS the native canceller carries speakers talk-over now, but wherever the fallback gate runs (Linux, `--aec gate`), its residual threshold was tuned on synthetic fixtures plus one laptop — a very reverberant room may need the bar moved. `--debug` prints the residual on every rejected onset so tuning is evidence, not vibes.
 - **Linux in the wild.** The headless tests run on Linux in CI, but nobody has driven the live mic loop there yet. See [Requirements](#requirements) for what should and shouldn't work.
@@ -633,7 +633,7 @@ python -m tests.manual_denylist_check # the denylist against the real `claude`, 
 python -m tests.manual_stt_bench      # the ears race: real latency, synthetic voices, from files
 ```
 
-That's the highlight reel — 24 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
+That's the highlight reel — 25 suites total (renderer byte-parity snapshots, the retro skin's markup-injection defense, the phone bridge driven by a real WebSocket client, the setup wizard's config plumbing, the Codex event translator against live-captured lines, audio devices, sentence chunking, and more), and CI runs every one of them on three Python versions per push.
 
 What those can't tell you is how well it actually hears, because the fake transcriber always gets it right. That part got measured separately, on real audio from files: see [the numbers](#the-numbers-and-how-much-to-trust-them), and the caveat that goes with them. `manual_denylist_check` is worth rerunning after a `claude` upgrade, since how the rules match is the CLI's call, not mine. Nothing in any of this opens your mic or speakers.
 

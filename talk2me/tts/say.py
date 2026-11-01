@@ -31,6 +31,9 @@ _BLOCK = 2048  # samples per yielded block (~128 ms @ 16 kHz)
 
 class SayTTS:
     sample_rate: int = 16000
+    # Each `say` launch costs ~1 s before any audio exists, so the orchestrator
+    # renders whatever text is waiting as one chunk instead of one per sentence.
+    merge_queued_text: bool = True
 
     def __init__(self, *, voice: str | None = None, rate_wpm: int | None = None) -> None:
         self._voice = voice

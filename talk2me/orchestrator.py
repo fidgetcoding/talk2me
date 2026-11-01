@@ -1357,7 +1357,8 @@ class Orchestrator:
 
     def _start_speech_pipeline(self) -> None:
         self._render_q = asyncio.Queue()
-        # maxsize=1: render exactly one chunk ahead of playback.
+        # maxsize=1: holds a chunk's render task, so at most three run at once (the
+        # one playing is done by then, in practice) and the backlog stays bounded.
         self._blocks_q = asyncio.Queue(maxsize=1)
         self._render_task = asyncio.create_task(self._render_worker())
         self._play_task = asyncio.create_task(self._play_worker())
@@ -1389,23 +1390,56 @@ class Orchestrator:
                 return
             if self._interrupted:
                 continue
-            blocks: list = []
-            try:
-                async for block in self.tts.synthesize(text):
-                    blocks.append(block)
-            except Exception as exc:  # noqa: BLE001  a bad render skips the chunk, not the turn
-                self.render.error(f"[tts] {exc!r}")
+            text, finished = self._merge_queued_text(text)
+            # A task, not an await: the next chunk starts rendering NOW, alongside
+            # this one. Rendering them in turn meant a short first sentence ran out
+            # before the second existed, which was the longest stop in a reply.
+            await self._blocks_q.put(asyncio.create_task(self._render_chunk(text)))
+            if finished:
+                await self._blocks_q.put(None)
+                return
+
+    async def _render_chunk(self, text: str) -> list | None:
+        blocks: list = []
+        try:
+            async for block in self.tts.synthesize(text):
+                blocks.append(block)
+        except Exception as exc:  # noqa: BLE001  a bad render skips the chunk, not the turn
+            self.render.error(f"[tts] {exc!r}")
+            return None
+        return blocks
+
+    def _merge_queued_text(self, text: str) -> tuple[str, bool]:
+        """Render everything already waiting as one chunk, for engines that ask.
+
+        `say` costs about a second just to start, so a short sentence finishes
+        playing before the next one is ready, and that wait is the audible stop.
+        Text rendered together also keeps its natural pauses and intonation.
+        Stops early on purpose: a long chunk takes longer to render, and past a
+        couple of sentences that wait outgrows what merging saves.
+        Returns (text, whether the end-of-speech marker came up while merging).
+        """
+        if not getattr(self.tts, "merge_queued_text", False):
+            return text, False
+        assert self._render_q is not None
+        while len(text) < MERGE_MAX_CHARS and not self._render_q.empty():
+            queued = self._render_q.get_nowait()
+            if queued is None:
+                return text, True
+            if self._interrupted:
                 continue
-            await self._blocks_q.put(blocks)
+            text = f"{text} {queued}"
+        return text, False
 
     async def _play_worker(self) -> None:
         assert self._blocks_q is not None
         first = True
         while True:
-            item = await self._blocks_q.get()
-            if item is None:
+            render = await self._blocks_q.get()
+            if render is None:
                 return
-            if self._interrupted:
+            item = await render
+            if self._interrupted or item is None:
                 continue
             if first:
                 first = False
@@ -1709,6 +1743,9 @@ def looks_hallucinated(raw: str) -> bool:
     words = re.findall(r"[a-z']+", raw.lower())
     return len(words) >= 5 and len(set(words)) <= 2
 
+
+# Stop adding to a merged TTS chunk past this many characters (_merge_queued_text).
+MERGE_MAX_CHARS = 120
 
 # Whole-utterance voice controls for the listening loop itself. Matched only
 # when the ENTIRE utterance is the command (normalized), so "pause listening
