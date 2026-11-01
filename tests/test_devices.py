@@ -5,12 +5,28 @@ portaudio has no devices (or isn't present at all).
 Run:  ./.venv/bin/python -m tests.test_devices
 """
 
+from types import SimpleNamespace
+from unittest import mock
+
+from talk2me import audio
 from talk2me.audio import (
     _name_looks_like_speakers,
     devices_of_kind,
     format_device_table,
     resolve_device,
 )
+
+
+def _table_with_fake_devices() -> str:
+    fake_sd = SimpleNamespace(
+        default=SimpleNamespace(device=(0, 1)),
+        query_devices=lambda: [
+            {"name": "Fake Mic", "max_input_channels": 1, "max_output_channels": 0},
+            {"name": "Fake Phones", "max_input_channels": 0, "max_output_channels": 2},
+        ],
+    )
+    with mock.patch.object(audio, "sd", fake_sd):
+        return format_device_table()
 
 
 def main() -> int:
@@ -41,7 +57,22 @@ def main() -> int:
         all(isinstance(i, int) and isinstance(n, str) for i, n in in_devs + out_devs),
     ))
     table = format_device_table()
-    results.append(("table mentions INPUT/OUTPUT", "INPUT" in table and "OUTPUT" in table))
+    if audio.sd is None:
+        results.append(("table says audio is unavailable", "unavailable" in table))
+    else:
+        results.append(("table mentions INPUT/OUTPUT", "INPUT" in table and "OUTPUT" in table))
+
+    # Table layout, on any machine: each device under its heading, defaults starred.
+    fake = _table_with_fake_devices()
+    results.append((
+        "table lists devices under their headings",
+        fake.index("INPUT") < fake.index("[0] Fake Mic")
+        < fake.index("OUTPUT") < fake.index("[1] Fake Phones"),
+    ))
+    results.append((
+        "table stars the defaults",
+        "  * [0] Fake Mic" in fake and "  * [1] Fake Phones" in fake,
+    ))
 
     # Speaker classifier: confident only on speaker-named devices — BT/jack
     # devices have arbitrary names and must NOT classify as speakers.

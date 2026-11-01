@@ -30,11 +30,24 @@ jobs:
       # sounddevice imports PortAudio at import time; the pure tests pull it in
       # transitively, so the shared lib must exist before install/run.
       - name: Install PortAudio system library
-        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 pulseaudio pulseaudio-utils
+
+      # Ubuntu 26.04's PortAudio refuses to initialize without a PulseAudio
+      # server to connect to, and runners have no sound hardware or server.
+      # A null sink gives it a server without any audio going anywhere.
+      - name: Start a silent PulseAudio server
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink
 
       # [webrtc] pulls webrtcvad-wheels so the WebRTC VAD contract test runs too.
       - name: Install package
         run: pip install -e ".[webrtc]"
+
+      # talk2me.audio treats a failed import as "no audio here" and carries on,
+      # which is right for users but would let this job test the wrong path.
+      - name: Check sounddevice loads
+        run: python -c "import sounddevice as sd; print(sd.get_portaudio_version()); print(sd.query_devices())"
 
       # Pure tests — no mic, no model download, no claude. Each returns a proper
       # exit code, so a FAIL fails the job. (The old `[ -f x ] && run || echo`
@@ -118,8 +131,10 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Pinned: this repo has no ruff config, so each release's default rules
+      # apply. Unpinned, ruff 0.16 turned this job red with no code change.
       - name: Install ruff
-        run: pip install ruff
+        run: pip install "ruff==0.17.3"
 
       - name: ruff check
         run: ruff check talk2me tests
