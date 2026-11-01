@@ -187,6 +187,38 @@ jobs:
           T2M_VIRTUAL_AUDIO: "1"
         run: python -m tests.live_linux_audio_check
 
+  phone-browser:
+    name: Phone page in real browsers over a real SSH tunnel (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install PortAudio, PulseAudio, a voice, sox and sshd
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 pulseaudio pulseaudio-utils espeak-ng sox openssh-server
+      - name: Start the virtual sound cards
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=t2m_speaker
+          pactl load-module module-null-sink sink_name=t2m_room
+          pactl set-default-sink t2m_speaker
+          pactl set-default-source t2m_room.monitor
+      # A throwaway key, for ssh -L to this same machine, standing in for Blink.
+      - name: Let ssh reach localhost
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+      - run: pip install -e . playwright
+      - run: playwright install --with-deps chromium webkit
+      - name: The phone page, in browsers, over the tunnel
+        env:
+          T2M_VIRTUAL_AUDIO: "1"
+        run: python -m tests.live_phone_browser_check
+
   sandbox-linux:
     name: OS sandbox, real claude CLI (Linux)
     runs-on: ubuntu-latest

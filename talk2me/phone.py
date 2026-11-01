@@ -122,7 +122,9 @@ class PhoneBridge:
                 if isinstance(message, bytes):
                     if self.mic_muted:
                         continue  # discarded at the source, like the local Mic
-                    pcm = np.frombuffer(message, dtype=np.int16)
+                    # An odd byte count is a torn packet. Dropping it beats frombuffer
+                    # raising and hanging up on the phone.
+                    pcm = np.frombuffer(message[: len(message) // 2 * 2], dtype=np.int16)
                     frame = pcm.astype(np.float32) / 32768.0
                     try:
                         self.mic_queue.put_nowait(frame)
@@ -144,6 +146,8 @@ class PhoneBridge:
         try:
             msg = json.loads(message)
         except json.JSONDecodeError:
+            return
+        if not isinstance(msg, dict):
             return
         if msg.get("type") == "played":
             try:

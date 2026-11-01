@@ -8,6 +8,7 @@ Run:  ./.venv/bin/python -m tests.test_phone
 """
 
 import asyncio
+import contextlib
 import http.client
 import json
 import struct
@@ -27,6 +28,121 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 async def _blocks(arrays):
     for a in arrays:
         yield a
+
+
+async def _rough_network(bridge: PhoneBridge, port: int) -> None:
+    """What a phone on a flaky tunnel really does: tears packets, drops, comes back."""
+    import websockets
+
+    url = f"ws://127.0.0.1:{port}/ws?t={bridge.token}"
+    speaker = WebSpeaker(bridge, sample_rate=16000)
+
+    async with websockets.connect(url) as ws:
+        await asyncio.wait_for(bridge.wait_connected(), timeout=5)
+        await ws.send(b"\x01\x02\x03")  # odd length: half a sample
+        await ws.send("not json at all")
+        await ws.send('{"type": "played", "id": "banana"}')
+        await ws.send(json.dumps(["wrong", "shape"]))
+        await ws.send((np.ones(480, dtype=np.int16) * 100).tobytes())
+        frame = await asyncio.wait_for(WebMic(bridge, 480).frames().__anext__(), timeout=5)
+        check("junk from the phone doesn't hang up", frame.shape == (480,))
+        while not bridge.mic_queue.empty():
+            bridge.mic_queue.get_nowait()
+
+        # A phone that floods faster than we read: bounded, newest audio wins.
+        for i in range(200):
+            await ws.send((np.ones(160, dtype=np.int16) * i).tobytes())
+        await asyncio.sleep(0.3)
+        depth = bridge.mic_queue.qsize()
+        newest = None
+        while not bridge.mic_queue.empty():
+            newest = bridge.mic_queue.get_nowait()
+        check("mic flood stays bounded", depth <= 64, f"depth={depth}")
+        check("mic flood keeps the newest audio", abs(float(newest[0]) - 199 / 32768) < 1e-5)
+
+        # The tunnel drops mid-sentence: play() must let go, not hang the loop.
+        play = asyncio.create_task(speaker.play(_blocks([np.zeros(1600, dtype=np.float32)])))
+        await asyncio.wait_for(ws.recv(), timeout=5)
+    played = await asyncio.wait_for(play, timeout=5)
+    check("tunnel drop mid-playback releases play()", played is False)
+    await asyncio.sleep(0.1)
+    check("disconnect is noticed", bridge._ws is None)
+
+    # Sending into no phone at all must not raise.
+    check("playback with no phone doesn't wedge", await asyncio.wait_for(
+        speaker.play(_blocks([np.zeros(160, dtype=np.float32)])), timeout=5) is False)
+
+    async with websockets.connect(url) as ws:
+        await asyncio.wait_for(bridge.wait_connected(), timeout=5)
+        check("phone reconnects with the same link", True)
+
+        # Safari reloading before the old socket dies: the newest one owns the bridge.
+        async with websockets.connect(url) as second:
+            await asyncio.sleep(0.1)
+            play = asyncio.create_task(speaker.play(_blocks([np.zeros(160, dtype=np.float32)])))
+            msg = await asyncio.wait_for(second.recv(), timeout=5)
+            chunk_id, _rate = struct.unpack_from("<II", msg)
+            await second.send(json.dumps({"type": "played", "id": chunk_id}))
+            check("newest connection gets the audio", await asyncio.wait_for(play, timeout=5) is True)
+        await asyncio.sleep(0.1)
+
+
+async def _whole_loop() -> None:
+    """The real orchestrator with the phone adapters, over a real socket: speech from
+    the 'phone' becomes a turn, the reply comes back as audio, and talking over it
+    flushes the page. The agent, ears and voice are fakes; the socket isn't."""
+    import websockets
+
+    from talk2me.config import Config
+    from talk2me.events import AssistantTextDelta, TurnComplete
+    from talk2me.orchestrator import Orchestrator
+    from talk2me.vad import EnergyVAD
+
+    from .fakes import FakeBackend, FakeSTT, FakeTTS
+
+    bridge = PhoneBridge(port=0)
+    await bridge.start()
+    url = f"ws://127.0.0.1:{bridge.port}/ws?t={bridge.token}"
+    backend = FakeBackend(scripts=[[AssistantTextDelta(text="Sure. It works."), TurnComplete(text="Sure. It works.")]])
+    tts = FakeTTS()
+    speech = (np.random.randn(480) * 0.2 * 32767).astype(np.int16).tobytes()
+    silence = np.zeros(480, dtype=np.int16).tobytes()
+    async with websockets.connect(url) as ws:
+        await asyncio.wait_for(bridge.wait_connected(), timeout=5)
+        orch = Orchestrator(
+            cfg=Config(silence_ms=300, min_speech_ms=100, phone=True),
+            backend=backend,
+            vad=EnergyVAD(sample_rate=16000, frame_samples=480, threshold=0.012),
+            stt=FakeSTT(["Run the tests."]),
+            tts=tts,
+            mic=WebMic(bridge, 480),
+            speaker=WebSpeaker(bridge, tts.sample_rate),
+        )
+        run = asyncio.create_task(orch.run())
+        await asyncio.sleep(0.2)
+        for _ in range(20):
+            await ws.send(speech)
+            await asyncio.sleep(0.005)
+        for _ in range(30):
+            await ws.send(silence)
+            await asyncio.sleep(0.005)
+        acks = 0
+        try:
+            while acks < 2:
+                msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                if isinstance(msg, bytes):
+                    chunk_id, _rate = struct.unpack_from("<II", msg)
+                    await ws.send(json.dumps({"type": "played", "id": chunk_id}))
+                    acks += 1
+        except TimeoutError:
+            pass
+        await asyncio.sleep(0.2)
+        check("phone speech became an agent turn", backend.sent == ["Run the tests."], str(backend.sent))
+        check("the reply came back as audio", acks >= 2, f"{acks} chunks")
+        run.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await run
+    await bridge.close()
 
 
 async def main() -> int:
@@ -124,8 +240,10 @@ async def main() -> int:
             and played is False,
         )
 
+    await _rough_network(bridge, port)
     await bridge.close()
     check("bridge closes cleanly", True)
+    await _whole_loop()
 
     passed = sum(1 for _, ok in RESULTS if ok)
     ok = passed == len(RESULTS)
