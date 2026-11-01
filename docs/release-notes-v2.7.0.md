@@ -31,6 +31,10 @@ Most of those owner rejections are on clips of 1.5 seconds or less. It's a filte
 
 **Fewer tracebacks.** No `claude` on PATH, a bad `--cwd`, a busy phone port, no PortAudio, a mistyped model: each is one sentence now. `--language es` on the default model moves to the multilingual one instead of hearing Spanish as English gibberish. `--version` exists, and `--help` starts by saying what this is.
 
+**A broken part costs that part, not the session.** A pulled headset used to hang it for good, and an error from the speech engine ended it. Now each says what happened once and carries on. One malformed line from the agent costs that line. Escape codes in agent text no longer reach your terminal.
+
+**`--help` comes in sections,** and Ctrl-D at a setup prompt cancels instead of crashing.
+
 **Bugs the new tests caught:** a crash on Ctrl-C on Linux, four separate Windows failures, and a phone hang-up on a torn packet.
 
 ## How I tested it
