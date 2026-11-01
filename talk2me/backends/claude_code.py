@@ -268,6 +268,9 @@ class ClaudeCodeBackend:
             cwd=self._cwd,
             env=env,
             limit=_STREAM_LIMIT,
+            # No controlling terminal: a sandboxed script could otherwise push
+            # keystrokes into the shell waiting behind us, with TIOCSTI on /dev/tty.
+            start_new_session=self._sandbox is not None,
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._drain_stderr())

@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,19 +46,21 @@ SECRET_PATHS: tuple[str, ...] = (
     "Library/Application Support/Firefox",
 )
 
-# Under $HOME, where the agent keeps session state.
+# Under $HOME, where the agent keeps session state. ~/.claude.json is deliberately
+# NOT here: it holds MCP servers, which run outside the sandbox on the next plain launch.
 AGENT_STATE_PATHS: tuple[str, ...] = (".claude", ".cache/claude", ".local/state/claude", ".config/claude")
-AGENT_STATE_PREFIX = ".claude.json"  # plus its atomic-write siblings, .claude.json.tmp.*
 
 # Inside the writable agent state and project, these change what runs LATER, outside
 # the sandbox, so they stay read-only. A hook planted here would be a clean escape.
 LOCKED_AGENT_FILES: tuple[str, ...] = (
     ".claude/settings.json", ".claude/settings.local.json", ".claude/CLAUDE.md", ".claude/hooks",
-    ".claude/commands", ".claude/agents", ".claude/skills", ".claude/plugins",
+    ".claude/commands", ".claude/agents", ".claude/skills", ".claude/plugins", ".claude/rules",
+    ".claude/output-styles",
 )
 LOCKED_PROJECT_FILES: tuple[str, ...] = (
-    ".git/hooks", ".git/config", ".claude/settings.json", ".claude/settings.local.json",
-    ".claude/hooks", ".claude/commands", ".claude/agents", ".claude/skills", ".mcp.json", ".envrc",
+    ".git/hooks", ".git/config", ".git/info", ".claude/settings.json", ".claude/settings.local.json",
+    ".claude/hooks", ".claude/commands", ".claude/agents", ".claude/skills", ".claude/rules", ".mcp.json",
+    ".envrc", ".vscode", ".husky",
 )
 
 # macOS services that launch or reach things outside the sandbox, plus audio: an
@@ -68,8 +71,17 @@ _DENIED_MACH_REGEX = (
 )
 _DENIED_EXECS = (
     "/usr/bin/open", "/usr/bin/osascript", "/bin/launchctl", "/usr/bin/pbcopy", "/usr/bin/pbpaste",
-    "/usr/bin/afplay", "/usr/bin/afrecord", "/usr/sbin/screencapture",
+    "/usr/bin/afplay", "/usr/bin/afrecord", "/usr/sbin/screencapture", "/usr/bin/sudo", "/usr/bin/su",
+    "/usr/bin/login", "/usr/bin/crontab", "/usr/bin/at", "/usr/bin/batch",
 )
+
+# Scrubbed from the agent's environment: doors out of the sandbox, and credentials
+# nothing in it needs. The agent's own key is the exception, it can't run without it.
+_DOOR_ENV = ("SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO", "DOCKER_HOST", "DBUS_SESSION_BUS_ADDRESS",
+             "TMUX", "TMUX_PANE", "STY", "XDG_RUNTIME_DIR", "KUBECONFIG")
+_SECRET_ENV = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|ACCESS_KEY|PRIVATE_KEY", re.IGNORECASE)
+_KEEP_ENV = ("ANTHROPIC_", "CLAUDE_")
+_HOST = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 
 
 class SandboxUnavailable(RuntimeError):
@@ -91,6 +103,8 @@ def host_allowed(host: str, port: int, allow_hosts: list[str]) -> bool:
     if port != 443:
         return False
     host = host.lower().rstrip(".")
+    if not _HOST.match(host):
+        return False  # "evil.test/.anthropic.com" ends right and means something else
     for rule in allow_hosts:
         rule = rule.lower()
         if host == rule.lstrip(".") or (rule.startswith(".") and host.endswith(rule)):
@@ -207,7 +221,6 @@ def seatbelt_profile(settings: SandboxSettings, proxy_port: int, scratch: str) -
     lines += [f"(allow file-write* (subpath {_quoted(_real(scratch))}))"]
     for rel in AGENT_STATE_PATHS:
         lines += [f"(allow file-write* (subpath {_quoted(os.path.join(home, rel))}))"]
-    lines += [f'(allow file-write* (regex #"^{_regex_escape(os.path.join(home, AGENT_STATE_PREFIX))}"))']
     # Reading and rotating the agent's login goes through the keychain files, in this
     # process. Without this a subscription login looks logged out, or loses a refresh.
     keychains = _quoted(os.path.join(home, "Library/Keychains"))
@@ -224,6 +237,8 @@ def seatbelt_profile(settings: SandboxSettings, proxy_port: int, scratch: str) -
         lines += [f"(deny file-read* (subpath {_quoted(os.path.join(home, rel))}))"]
     lines += ["", "; No launching things outside the sandbox, and no audio."]
     lines += [f'(deny mach-lookup (global-name-regex #"{_DENIED_MACH_REGEX}"))', "(deny appleevent-send)"]
+    lines += ["", "; Other people's processes are none of its business."]
+    lines += ["(deny signal)", "(allow signal (target same-sandbox))"]
     for path in _DENIED_EXECS:
         lines += [f"(deny process-exec (literal {_quoted(path)}))"]
     return "\n".join(lines) + "\n"
@@ -235,6 +250,8 @@ def bwrap_argv(settings: SandboxSettings, socket_dir: str, port: int) -> list[st
     project = _real(settings.project)
     argv = [
         "bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
+        # Sockets for docker, dbus and systemd live here. No network namespace stops those.
+        "--tmpfs", "/run",
         "--unshare-all", "--die-with-parent", "--new-session",
     ]
     argv += ["--bind", project, project]
@@ -243,9 +260,6 @@ def bwrap_argv(settings: SandboxSettings, socket_dir: str, port: int) -> list[st
         path = os.path.join(home, rel)
         if os.path.isdir(path):
             argv += ["--bind", path, path]
-    state_file = os.path.join(home, AGENT_STATE_PREFIX)
-    if os.path.exists(state_file):
-        argv += ["--bind", state_file, state_file]
     for rel in LOCKED_AGENT_FILES:
         path = os.path.join(home, rel)
         if os.path.exists(path):
@@ -264,6 +278,23 @@ def bwrap_argv(settings: SandboxSettings, socket_dir: str, port: int) -> list[st
     argv += [sys.executable, os.path.join(os.path.dirname(__file__), "sandbox_forward.py")]
     argv += [os.path.join(socket_dir, "proxy.sock"), str(port), "--"]
     return argv
+
+
+def _precreate_agent_locks(home: str) -> None:
+    """bwrap can only make existing paths read-only, so give the agent's config
+    paths something harmless to lock: empty folders, and an empty settings file."""
+    for rel in LOCKED_AGENT_FILES:
+        path = os.path.join(_real(home), rel)
+        if os.path.exists(path):
+            continue
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if rel.endswith(".json"):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{}\n")
+        elif rel.endswith(".md"):
+            open(path, "a", encoding="utf-8").close()
+        else:
+            os.makedirs(path, exist_ok=True)
 
 
 def available() -> str | None:
@@ -300,6 +331,7 @@ class Sandbox:
         self._proxy: AllowlistProxy | None = None
         self._dir: tempfile.TemporaryDirectory | None = None
         self.scratch = ""
+        self._locked_before: set[str] = set()
 
     async def start(self) -> None:
         reason = available()
@@ -308,6 +340,9 @@ class Sandbox:
         self._dir = tempfile.TemporaryDirectory(prefix="t2m-sandbox-")
         self.scratch = os.path.join(self._dir.name, "tmp")
         os.mkdir(self.scratch)
+        self._locked_before = self.locked_project_paths()
+        if sys.platform != "darwin":
+            _precreate_agent_locks(self.settings.home)
         unix_path = None
         if sys.platform != "darwin":
             unix_path = os.path.join(self._dir.name, "proxy.sock")
@@ -327,6 +362,9 @@ class Sandbox:
 
     def env(self, base: dict[str, str] | None = None) -> dict[str, str]:
         env = dict(os.environ if base is None else base)
+        for key in list(env):
+            if key in _DOOR_ENV or (_SECRET_ENV.search(key) and not key.startswith(_KEEP_ENV)):
+                del env[key]
         port = self.proxy.port if sys.platform == "darwin" else _LINUX_PROXY_PORT
         url = f"http://127.0.0.1:{port}"
         for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
@@ -342,7 +380,22 @@ class Sandbox:
             env["NO_PROXY"] = env["no_proxy"] = "localhost,127.0.0.1"
         return env
 
+    def locked_project_paths(self) -> set[str]:
+        project = _real(self.settings.project)
+        return {rel for rel in LOCKED_PROJECT_FILES if os.path.lexists(os.path.join(project, rel))}
+
+    def new_locked_paths(self) -> list[str]:
+        """Linux can only lock what already exists, so say what appeared. On a Mac the
+        rules cover new paths too, and this stays empty."""
+        return sorted(self.locked_project_paths() - self._locked_before)
+
     async def close(self) -> None:
+        for rel in self.new_locked_paths():
+            print(
+                f"(sandbox: the agent created {rel} in your project. That can run outside "
+                "the sandbox later, so look at it before you use it)",
+                flush=True,
+            )
         if self._proxy is not None:
             await self._proxy.close()
         if self._dir is not None:
