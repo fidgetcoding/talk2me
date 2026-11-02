@@ -1,6 +1,6 @@
 # talk2me v2.7.0: everything on my "isn't proven" list
 
-I keep a list of what doesn't work or isn't proven. This release is me going after all of it.
+I keep a list of what isn't proven yet. This release is me going after all of it.
 
 [FILL BEFORE TAGGING: one line on the live test, e.g. "I've now talked to this build on a real mic and a real iPhone." Delete anything it didn't pass.]
 
