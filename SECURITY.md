@@ -3,8 +3,8 @@
 talk2me runs a coding agent that can be driven by ambient audio, so its security
 posture is documented in unusual depth for a hobby-sized repo:
 
-- `docs/security-audit.md` — the standing audit (threat model: RCE-by-sound)
-- `docs/permission-handling-design.md` + `docs/permission-spike-results.md` —
+- `docs/security-audit.md`: the standing audit (threat model: RCE-by-sound)
+- `docs/permission-handling-design.md` + `docs/permission-spike-results.md`:
   the verified tool-permission wire
 
 ## The posture, honestly
@@ -14,7 +14,7 @@ hears you, the TV, and whoever just walked in, and Whisper will happily turn any
 of that into an instruction. So anything outside a short allowlist pauses the
 turn and asks out loud, and if the answer is unclear twice, it declines.
 
-v2.2 through v2.5 went the other way and defaulted voice to auto-approve. If you
+v1.0.0 through v2.5.0 went the other way and defaulted voice to auto-approve. If you
 ran the setup wizard back then and it saved `"gated": false`, you keep that until
 you change it, and each launch says so in one line.
 
@@ -127,5 +127,7 @@ What it still can't do:
 Every utterance-to-execution path is covered by headless tests, and the CI
 runs them all on every push.
 
-Found something? Open a GitHub issue — or email nate@lorecraft.io for anything
-sensitive.
+Found something? Report it privately through GitHub: the repo's **Security** tab →
+**Report a vulnerability**, or go straight to
+<https://github.com/fidgetcoding/talk2me/security/advisories/new>. Only the
+maintainer sees the report. Please don't open a public issue for a security problem.
