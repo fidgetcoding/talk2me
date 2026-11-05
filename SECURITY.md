@@ -127,7 +127,7 @@ What it still can't do:
 Every utterance-to-execution path is covered by headless tests, and the CI
 runs them all on every push.
 
-Found something? Report it privately through GitHub: the repo's **Security** tab →
-**Report a vulnerability**, or go straight to
-<https://github.com/fidgetcoding/talk2me/security/advisories/new>. Only the
-maintainer sees the report. Please don't open a public issue for a security problem.
+Found something? Email nate@lorecraft.io, or use GitHub's private reporting: the
+repo's **Security** tab → **Report a vulnerability**, also at
+<https://github.com/fidgetcoding/talk2me/security/advisories/new>. Please don't
+open a public issue for a security problem.
